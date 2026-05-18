@@ -438,35 +438,54 @@ export async function migrateSystemSettingKeysToApiKeyTable(): Promise<void> {
     custom: 'llm_custom_api_key',
   };
 
+  // ⚡ Bolt: Batch database operations to prevent N+1 queries
+  const slugs = Object.keys(PROVIDER_TO_SETTING_KEY);
+  const settingKeys = Object.values(PROVIDER_TO_SETTING_KEY);
+
+  // 1. Fetch all relevant AI Providers
+  const providers = await prisma.aIProvider.findMany({
+    where: { providerId: { in: slugs } },
+    select: { id: true, providerId: true },
+  });
+  const providerMap = new Map(providers.map(p => [p.providerId, p.id]));
+
+  // 2. Fetch all existing API key counts for these providers
+  const providerIds = providers.map(p => p.id);
+  const existingCounts = providerIds.length > 0 ? await prisma.aPIKey.groupBy({
+    by: ['providerId'],
+    where: { providerId: { in: providerIds } },
+    _count: { _all: true },
+  }) : [];
+  const countMap = new Map<string, number>(
+    existingCounts.map((c: any) => [c.providerId, c._count._all])
+  );
+
+  // 3. Fetch all relevant system settings
+  const settings = await prisma.systemSetting.findMany({
+    where: { key: { in: settingKeys } },
+    select: { key: true, value: true },
+  });
+  const settingMap = new Map<string, string>(settings.map(s => [s.key, s.value]));
+
   for (const [slug, settingKey] of Object.entries(PROVIDER_TO_SETTING_KEY)) {
     try {
-      // Check if provider already has keys in APIKey table
-      const provider = await prisma.aIProvider.findUnique({
-        where: { providerId: slug },
-        select: { id: true },
-      });
-      if (!provider) continue;
+      const providerId = providerMap.get(slug);
+      if (!providerId) continue;
 
-      const existingCount = await prisma.aPIKey.count({
-        where: { providerId: provider.id },
-      });
+      const existingCount = countMap.get(providerId) || 0;
       if (existingCount > 0) continue; // Already migrated
 
-      // Read plaintext from SystemSetting
-      const setting = await prisma.systemSetting.findUnique({
-        where: { key: settingKey },
-        select: { value: true },
-      });
-      if (!setting?.value || setting.value.trim() === '') continue;
+      const settingValue = settingMap.get(settingKey);
+      if (!settingValue || settingValue.trim() === '') continue;
 
       // Skip masked sentinel values
-      if (setting.value.startsWith('__')) continue;
+      if (settingValue.startsWith('__')) continue;
 
       // Create encrypted APIKey record
       await createApiKey({
         providerSlug: slug as LLMProviderValue,
         label: 'Primary (migrated)',
-        plaintextKey: setting.value,
+        plaintextKey: settingValue,
         isPrimary: true,
         createdBy: 'system:migration',
       });
