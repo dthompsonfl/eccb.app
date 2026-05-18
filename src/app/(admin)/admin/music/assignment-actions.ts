@@ -451,47 +451,52 @@ export async function getLibrarianDashboardStats() {
     const now = new Date();
 
     // Get counts by status
-    const statusCounts = await prisma.musicAssignment.groupBy({
-      by: ['status'],
-      _count: true,
-    });
-
-    // Get overdue assignments
-    const overdueCount = await prisma.musicAssignment.count({
-      where: {
-        status: { in: [AssignmentStatus.ASSIGNED, AssignmentStatus.PICKED_UP] },
-        dueDate: { lt: now },
-      },
-    });
-
-    // Get recent activity (last 7 days)
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const recentActivity = await prisma.musicAssignmentHistory.count({
-      where: {
-        performedAt: { gte: weekAgo },
-      },
-    });
-
-    // Get missing parts count
-    const missingCount = await prisma.musicAssignment.count({
-      where: {
-        status: AssignmentStatus.LOST,
-      },
-    });
-
-    // Get pending pickups (assigned but not picked up)
-    const pendingPickups = await prisma.musicAssignment.count({
-      where: {
-        status: AssignmentStatus.ASSIGNED,
-      },
-    });
-
-    // Get pending returns (picked up but not returned)
-    const pendingReturns = await prisma.musicAssignment.count({
-      where: {
-        status: AssignmentStatus.PICKED_UP,
-      },
-    });
+    const [
+      statusCounts,
+      overdueCount,
+      recentActivity,
+      missingCount,
+      pendingPickups,
+      pendingReturns
+    ] = await Promise.all([
+      // Get counts by status
+      prisma.musicAssignment.groupBy({
+        by: ['status'],
+        _count: true,
+      }),
+      // Get overdue assignments
+      prisma.musicAssignment.count({
+        where: {
+          status: { in: [AssignmentStatus.ASSIGNED, AssignmentStatus.PICKED_UP] },
+          dueDate: { lt: now },
+        },
+      }),
+      // Get recent activity (last 7 days)
+      prisma.musicAssignmentHistory.count({
+        where: {
+          performedAt: { gte: weekAgo },
+        },
+      }),
+      // Get missing parts count
+      prisma.musicAssignment.count({
+        where: {
+          status: AssignmentStatus.LOST,
+        },
+      }),
+      // Get pending pickups (assigned but not picked up)
+      prisma.musicAssignment.count({
+        where: {
+          status: AssignmentStatus.ASSIGNED,
+        },
+      }),
+      // Get pending returns (picked up but not returned)
+      prisma.musicAssignment.count({
+        where: {
+          status: AssignmentStatus.PICKED_UP,
+        },
+      }),
+    ]);
 
     // Get recent assignments needing attention
     const needsAttention = await prisma.musicAssignment.findMany({
