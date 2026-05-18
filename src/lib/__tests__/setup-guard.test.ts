@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 
 // Mock NextResponse
-vi.mock('next/server', () => {
+vi.mock('next/server', async () => {
   return {
     NextResponse: {
       json: (body: any, init?: any) => ({
@@ -28,7 +28,7 @@ vi.mock('@/lib/env', () => ({
 
 import { validateSetupRequest } from '../setup/setup-guard';
 
-describe('validateSetupRequest', () => {
+describe('validateSetupRequest', async () => {
   beforeEach(() => {
     // Ensure we test the fallback behavior by clearing process env overrides.
     delete process.env.SETUP_MODE;

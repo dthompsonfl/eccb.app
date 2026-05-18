@@ -73,6 +73,8 @@ const SECURITY_HEADERS = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
   // Prevent DNS prefetch leaking navigated origins
   'X-DNS-Prefetch-Control': 'off',
+  // Enable XSS filter in browsers
+  'X-XSS-Protection': '1; mode=block',
 };
 
 // Content Security Policy.
