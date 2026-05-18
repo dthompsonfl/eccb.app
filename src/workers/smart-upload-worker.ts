@@ -1003,10 +1003,24 @@ async function processSecondPass(job: Job<SmartUploadSecondPassJobData>): Promis
           }
         );
 
-        const adjResult = await callAdjudicatorLLM(
-          originalPageImages, llmConfig, adjudicatorPrompt,
-          pdfDocument ? [pdfDocument] : undefined,
-        );
+        let adjResult;
+        try {
+          adjResult = await callAdjudicatorLLM(
+            originalPageImages,
+            llmConfig,
+            adjudicatorPrompt,
+            pdfDocument ? [pdfDocument] : undefined,
+          );
+        } catch (adjError) {
+          const adjConfig = await buildAdapterConfigForStep(llmConfig, 'adjudicator');
+          logger.error('Adjudicator LLM call failed — check provider configuration', {
+            sessionId,
+            provider: adjConfig.provider,
+            model: adjConfig.model,
+            error: adjError instanceof Error ? adjError.message : String(adjError),
+          });
+          throw adjError;
+        }
         finalMetadata = adjResult.adjudicatedMetadata;
         finalConfidence = adjResult.finalConfidence;
         adjudicationData = {
@@ -1064,11 +1078,30 @@ Include a "corrections" field explaining any corrections made from the first pas
 
       await progress('analyzing', 50, 'Running full vision re-extraction');
 
-      const { parsed: secondPassResult, raw: secondPassRaw } = await callVerificationLLM(
-        originalPageImages, llmConfig, fallbackPrompt,
-        undefined,
-        pdfDocument ? [pdfDocument] : undefined,
-      );
+      let secondPassResult;
+      let secondPassRaw;
+
+      try {
+        const result = await callVerificationLLM(
+          originalPageImages,
+          llmConfig,
+          fallbackPrompt,
+          undefined,
+          pdfDocument ? [pdfDocument] : undefined,
+        );
+        secondPassResult = result.parsed;
+        secondPassRaw = result.raw;
+      } catch (verificationError) {
+        const verificationConfig = await buildAdapterConfigForStep(llmConfig, 'verification');
+        logger.error('Verification LLM call failed — check provider configuration for fallback', {
+          sessionId,
+          provider: verificationConfig.provider,
+          model: verificationConfig.model,
+          error: verificationError instanceof Error ? verificationError.message : String(verificationError),
+          recommendation: 'Operator should retry with alternative provider or manually review',
+        });
+        throw verificationError;
+      }
       const verificationConfidence = normalizeConfidence(
         (secondPassResult as unknown as Record<string, unknown>).verificationConfidence
         ?? secondPassResult.confidenceScore
@@ -1120,10 +1153,24 @@ Include a "corrections" field explaining any corrections made from the first pas
           }
         );
 
-        const adjResult = await callAdjudicatorLLM(
-          originalPageImages, llmConfig, adjudicatorPrompt,
-          pdfDocument ? [pdfDocument] : undefined,
-        );
+        let adjResult;
+        try {
+          adjResult = await callAdjudicatorLLM(
+            originalPageImages,
+            llmConfig,
+            adjudicatorPrompt,
+            pdfDocument ? [pdfDocument] : undefined,
+          );
+        } catch (adjError) {
+          const adjConfig = await buildAdapterConfigForStep(llmConfig, 'adjudicator');
+          logger.error('Adjudicator LLM call failed — check provider configuration', {
+            sessionId,
+            provider: adjConfig.provider,
+            model: adjConfig.model,
+            error: adjError instanceof Error ? adjError.message : String(adjError),
+          });
+          throw adjError;
+        }
         finalMetadata = adjResult.adjudicatedMetadata;
         finalConfidence = adjResult.finalConfidence;
         adjudicationData = {
