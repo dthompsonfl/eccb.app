@@ -132,7 +132,7 @@ async function getDatabaseStats(): Promise<DatabaseStats> {
     }),
   ]);
 
-  const now = new Date();
+  const _now = new Date();
   
   // Process member stats
   const members = {
