@@ -922,9 +922,7 @@ export async function deleteMusicPiece(id: string) {
     });
 
     // Delete files from storage
-    for (const file of files) {
-      await deleteFile(file.storageKey);
-    }
+    await Promise.all(files.map(file => deleteFile(file.storageKey)));
 
     // Delete from database (cascading will handle related records)
     const piece = await prisma.musicPiece.delete({
