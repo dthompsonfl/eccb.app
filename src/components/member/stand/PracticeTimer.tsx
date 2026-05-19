@@ -60,7 +60,28 @@ function formatRelative(iso: string): string {
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function normalizePracticeLog(entry: any): PracticeLog {
+  const durationSeconds =
+    typeof entry?.durationSeconds === 'number'
+      ? entry.durationSeconds
+      : typeof entry?.durationMinutes === 'number'
+        ? entry.durationMinutes * 60
+        : 0;
+
+  return {
+    id: entry.id,
+    pieceId: entry.pieceId,
+    pieceTitle: entry.piece?.title ?? entry.pieceTitle,
+    durationMinutes: Math.max(1, Math.round(durationSeconds / 60)),
+    notes: entry.notes ?? null,
+    practicedAt: entry.practicedAt,
+  };
 }
 
 export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerProps) {
@@ -83,16 +104,28 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
 
   const fetchLogs = useCallback(async () => {
     if (!pieceId) {
+      setLogs([]);
       setIsLoading(false);
       return;
     }
+
     setIsLoading(true);
     setError(null);
+
     try {
-      const res = await fetch(`/api/stand/practice-logs?pieceId=${encodeURIComponent(pieceId)}&limit=20`);
+      const res = await fetch(
+        `/api/stand/practice-logs?pieceId=${encodeURIComponent(pieceId)}&limit=20`
+      );
       if (!res.ok) throw new Error(`Status ${res.status}`);
+
       const data = await res.json();
-      setLogs(Array.isArray(data) ? data : []);
+      const rawLogs = Array.isArray(data)
+        ? data
+        : Array.isArray(data.logs)
+          ? data.logs
+          : [];
+
+      setLogs(rawLogs.map(normalizePracticeLog));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load logs');
     } finally {
@@ -104,7 +137,6 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
     fetchLogs();
   }, [fetchLogs]);
 
-  // Timer tick
   useEffect(() => {
     if (isRunning) {
       startTimeRef.current = Date.now() - elapsed * 1000;
@@ -113,14 +145,14 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
           setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
         }
       }, 500);
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
     }
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning]);
+  }, [isRunning, elapsed]);
 
   const handleStart = () => {
     setElapsed(0);
@@ -129,16 +161,20 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
 
   const handleStop = async () => {
     setIsRunning(false);
-    const durationMinutes = Math.max(1, Math.round(elapsed / 60));
     if (!pieceId) return;
+
     setIsSaving(true);
     try {
       const res = await fetch('/api/stand/practice-logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pieceId, durationMinutes }),
+        body: JSON.stringify({
+          pieceId,
+          durationSeconds: Math.max(60, elapsed),
+        }),
       });
       if (!res.ok) throw new Error('Failed to save session');
+
       setElapsed(0);
       await fetchLogs();
     } catch (err) {
@@ -152,6 +188,7 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
     e.preventDefault();
     const mins = parseInt(manualMinutes, 10);
     if (!pieceId || isNaN(mins) || mins <= 0) return;
+
     setIsManualSaving(true);
     try {
       const res = await fetch('/api/stand/practice-logs', {
@@ -159,11 +196,12 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pieceId,
-          durationMinutes: mins,
+          durationSeconds: mins * 60,
           notes: manualNotes.trim() || null,
         }),
       });
       if (!res.ok) throw new Error('Failed to save');
+
       setManualMinutes('');
       setManualNotes('');
       setShowManual(false);
@@ -178,7 +216,9 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
   const handleDelete = async (logId: string) => {
     setDeletingId(logId);
     try {
-      const res = await fetch(`/api/stand/practice-logs/${logId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/stand/practice-logs/${logId}`, {
+        method: 'DELETE',
+      });
       if (!res.ok) throw new Error('Delete failed');
       setLogs((prev) => prev.filter((l) => l.id !== logId));
     } catch (err) {
@@ -223,17 +263,17 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
         </div>
       </div>
 
-      {/* Context */}
       {pieceTitle && (
         <p className="text-xs text-muted-foreground">
           Piece: <span className="font-medium text-foreground">{pieceTitle}</span>
         </p>
       )}
       {!pieceId && (
-        <p className="text-xs text-muted-foreground">Select a piece to track practice time.</p>
+        <p className="text-xs text-muted-foreground">
+          Select a piece to track practice time.
+        </p>
       )}
 
-      {/* Timer controls */}
       {pieceId && (
         <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
           <span
@@ -253,7 +293,12 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
                 Start
               </Button>
             ) : (
-              <Button size="sm" variant="destructive" onClick={handleStop} disabled={isSaving}>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleStop}
+                disabled={isSaving}
+              >
                 {isSaving ? (
                   <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
                 ) : (
@@ -266,13 +311,17 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
         </div>
       )}
 
-      {/* Manual entry form */}
       {showManual && pieceId && (
-        <form onSubmit={handleManualSave} className="space-y-2 p-3 rounded-lg border bg-muted/20">
+        <form
+          onSubmit={handleManualSave}
+          className="space-y-2 p-3 rounded-lg border bg-muted/20"
+        >
           <p className="text-xs font-medium">Log time manually</p>
           <div className="flex items-center gap-2">
             <div className="flex-1">
-              <Label htmlFor="manual-mins" className="sr-only">Minutes</Label>
+              <Label htmlFor="manual-mins" className="sr-only">
+                Minutes
+              </Label>
               <Input
                 id="manual-mins"
                 type="number"
@@ -291,7 +340,11 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
               disabled={isManualSaving || !manualMinutes}
               className="h-8"
             >
-              {isManualSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Log'}
+              {isManualSaving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                'Log'
+              )}
             </Button>
           </div>
           <Textarea
@@ -305,19 +358,18 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
         </form>
       )}
 
-      {/* Error */}
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Summary */}
       {logs.length > 0 && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Total logged:</span>
           <Badge variant="outline">{totalHours} hrs</Badge>
-          <span>across {logs.length} session{logs.length !== 1 ? 's' : ''}</span>
+          <span>
+            across {logs.length} session{logs.length !== 1 ? 's' : ''}
+          </span>
         </div>
       )}
 
-      {/* Loading */}
       {isLoading && (
         <div className="flex items-center justify-center py-4 text-muted-foreground text-sm">
           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -325,7 +377,6 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
         </div>
       )}
 
-      {/* History */}
       {!isLoading && logs.length > 0 && (
         <ul className="space-y-1" aria-label="Practice history">
           {logs.map((log) => (
@@ -336,10 +387,14 @@ export function PracticeTimer({ className, pieceId, pieceTitle }: PracticeTimerP
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="font-semibold">{log.durationMinutes} min</span>
-                  <span className="text-muted-foreground">{formatRelative(log.practicedAt)}</span>
+                  <span className="text-muted-foreground">
+                    {formatRelative(log.practicedAt)}
+                  </span>
                 </div>
                 {log.notes && (
-                  <p className="text-muted-foreground mt-0.5 truncate">{log.notes}</p>
+                  <p className="text-muted-foreground mt-0.5 truncate">
+                    {log.notes}
+                  </p>
                 )}
               </div>
               <Button
