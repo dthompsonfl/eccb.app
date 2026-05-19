@@ -462,11 +462,13 @@ export async function closeQueues(): Promise<void> {
   queueEvents.clear();
 
   // Close queues
-  for (const [name, queue] of Object.entries(queues)) {
+  for (const name of Object.keys(queues) as Array<keyof QueueInstances>) {
+    const queue = queues[name];
     if (queue) {
       await queue.close();
       logger.debug(`Queue closed: ${name}`);
     }
+    queues[name] = null;
   }
 
   // Close Redis connection
@@ -474,6 +476,8 @@ export async function closeQueues(): Promise<void> {
     await redisConnection.quit();
     redisConnection = null;
   }
+
+  _queuesInitialized = false;
 
   logger.info('All queues closed');
 }
