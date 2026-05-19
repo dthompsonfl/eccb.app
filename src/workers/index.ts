@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import http from 'http';
-import { initializeQueues, closeQueues, addJob, getAllQueueStats } from '@/lib/jobs/queue';
+import { initializeQueues, closeQueues, addJob, getAllQueueStats, areQueuesInitialized } from '@/lib/jobs/queue';
 import { startEmailWorker, stopEmailWorker, isEmailWorkerRunning } from './email-worker';
 import {
   startSchedulerWorker,
@@ -23,7 +23,6 @@ import {
   closeStandSocketServer,
 } from '@/lib/websocket/stand-socket';
 import { getStandSettings } from '@/lib/stand/settings';
-import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
 
 /**
  * Worker Entry Point for ECCB Platform
@@ -170,7 +169,12 @@ function startHealthServer(): void {
     if (req.url === '/health') {
       try {
         const stats = await getAllQueueStats();
-        const workersHealthy = isEmailWorkerRunning() && isSchedulerWorkerRunning() && isSmartUploadProcessorWorkerRunning();
+        const workersHealthy =
+          areQueuesInitialized() &&
+          isEmailWorkerRunning() &&
+          isSchedulerWorkerRunning() &&
+          isSmartUploadProcessorWorkerRunning() &&
+          isOcrWorkerRunning();
 
         const health = {
           status: workersHealthy ? 'healthy' : 'unhealthy',
@@ -197,7 +201,12 @@ function startHealthServer(): void {
       }
     } else if (req.url === '/ready') {
       // Readiness probe - check if workers are ready to accept jobs
-      const ready = isEmailWorkerRunning() && isSchedulerWorkerRunning() && isSmartUploadProcessorWorkerRunning() && isOcrWorkerRunning();
+      const ready =
+        areQueuesInitialized() &&
+        isEmailWorkerRunning() &&
+        isSchedulerWorkerRunning() &&
+        isSmartUploadProcessorWorkerRunning() &&
+        isOcrWorkerRunning();
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ready, ocr: isOcrWorkerRunning(), sockets: isSocketWorkerRunning() }));
     } else {
@@ -321,11 +330,7 @@ async function main(): Promise<void> {
       
       const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
       const makeClient = (label: string) => {
-        const c = new Redis({
-          ...buildRedisOptionsFromUrl(REDIS_URL),
-          maxRetriesPerRequest: null,
-          lazyConnect: false,
-        });
+        const c = new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
         c.on('error', (e) => logger.error(`Socket Redis ${label} error`, { error: e.message }));
         return c;
       };

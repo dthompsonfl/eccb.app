@@ -41,6 +41,10 @@ let smartUploadProcessorWorker: ReturnType<typeof createWorker> | null = null;
  * This single worker handles process, secondPass, and autoCommit jobs.
  */
 export async function startSmartUploadProcessorWorker(): Promise<void> {
+  if (smartUploadProcessorWorker) {
+    return;
+  }
+
   // Load concurrency from DB config so operators can tune it without redeploying
   const llmCfg = await loadSmartUploadRuntimeConfig().catch(() => null);
   const concurrency = llmCfg?.maxConcurrent ?? 2;

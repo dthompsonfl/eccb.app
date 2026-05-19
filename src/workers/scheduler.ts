@@ -522,6 +522,10 @@ let notificationWorker: ReturnType<typeof createWorker> | null = null;
  * Start the scheduler workers
  */
 export function startSchedulerWorker(): void {
+  if (scheduledWorker || cleanupWorker || notificationWorker) {
+    return;
+  }
+
   // Worker for scheduled publishing and reminders
   scheduledWorker = createWorker({
     queueName: 'SCHEDULED',
