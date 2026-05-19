@@ -13,11 +13,13 @@ import {
   requireStandAccess,
   annotationVisibilityFilter,
   assertCanWriteLayer,
+  canAccessPiece,
 } from '@/lib/stand/access';
 import { getStandSettings } from '@/lib/stand/settings';
 import {
   jsonOk,
   json400,
+  json404,
   json500,
   parseBody,
   cuidSchema,
@@ -35,6 +37,23 @@ const annotationCreateSchema = z.object({
   sectionId: cuidSchema.nullable().optional(),
 });
 
+function normalizeStrokeData(strokeData: unknown): Record<string, unknown> {
+  if (typeof strokeData === 'string') {
+    try {
+      const parsed = JSON.parse(strokeData);
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return strokeData && typeof strokeData === 'object'
+    ? (strokeData as Record<string, unknown>)
+    : {};
+}
+
 export async function GET(request: NextRequest) {
   try {
     const rateLimited = await applyRateLimit(request, 'stand-annotation');
@@ -50,7 +69,9 @@ export async function GET(request: NextRequest) {
 
     if (!musicId) return json400('musicId query param required');
 
-    // Build visibility filter using centralized helper
+    const hasPieceAccess = await canAccessPiece(ctx.userId, musicId);
+    if (!hasPieceAccess) return json404('Piece not found');
+
     const visibilityFilter = annotationVisibilityFilter(ctx, musicId);
     const where: Record<string, unknown> = { ...visibilityFilter };
     if (page) where.page = parseInt(page, 10);
@@ -75,7 +96,12 @@ export async function GET(request: NextRequest) {
       orderBy: [{ page: 'asc' }, { createdAt: 'asc' }],
     });
 
-    return jsonOk({ annotations });
+    return jsonOk({
+      annotations: annotations.map((annotation) => ({
+        ...annotation,
+        strokeData: normalizeStrokeData(annotation.strokeData),
+      })),
+    });
   } catch (error) {
     console.error('[Annotations GET]', error);
     return json500();
@@ -95,11 +121,12 @@ export async function POST(request: NextRequest) {
 
     const { musicId, page, layer, strokeData, sectionId } = parsed;
 
-    // Enforce layer write permissions
+    const hasPieceAccess = await canAccessPiece(ctx.userId, musicId);
+    if (!hasPieceAccess) return json404('Piece not found');
+
     const layerErr = assertCanWriteLayer(ctx, layer, sectionId);
     if (layerErr) return layerErr;
 
-    // Enforce stroke data size limit
     const settings = await getStandSettings();
     const strokeJson = JSON.stringify(strokeData);
     if (strokeJson.length > settings.maxStrokeDataBytes) {
@@ -108,15 +135,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Enforce per-page annotation count limit
-    const [count, piece] = await Promise.all([
-      prisma.annotation.count({
-        where: { musicId, page, userId: ctx.userId, layer: 'PERSONAL' },
-      }),
-      prisma.musicPiece.findUnique({ where: { id: musicId }, select: { id: true } }),
-    ]);
-
-    if (!piece) return json400('Invalid musicId');
+    const count = await prisma.annotation.count({
+      where: { musicId, page, userId: ctx.userId, layer: 'PERSONAL' },
+    });
 
     if (layer === 'PERSONAL' && count >= settings.maxAnnotationsPerPage) {
       return json400(
@@ -129,13 +150,24 @@ export async function POST(request: NextRequest) {
         musicId,
         page,
         layer,
-        strokeData: JSON.stringify(strokeData),
+        strokeData: strokeJson,
         userId: ctx.userId,
-        sectionId: layer === 'SECTION' ? (sectionId ?? ctx.userSectionIds[0] ?? null) : null,
+        sectionId:
+          layer === 'SECTION'
+            ? (sectionId ?? ctx.userSectionIds[0] ?? null)
+            : null,
       },
     });
 
-    return jsonOk({ annotation }, 201);
+    return jsonOk(
+      {
+        annotation: {
+          ...annotation,
+          strokeData: normalizeStrokeData(annotation.strokeData),
+        },
+      },
+      201
+    );
   } catch (error) {
     console.error('[Annotations POST]', error);
     return json500();

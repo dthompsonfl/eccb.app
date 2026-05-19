@@ -1,7 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { useStandStore, StandPiece } from '@/store/standStore';
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+} from 'react';
+import { useStandStore, type Annotation, StandPiece } from '@/store/standStore';
 import { useStandSync } from '@/hooks/use-stand-sync';
 import { useAudioTracker } from '@/hooks/useAudioTracker';
 import { NavigationControls } from './NavigationControls';
@@ -23,9 +31,6 @@ import { SetlistsPanel } from './SetlistsPanel';
 import { PracticeTimer } from './PracticeTimer';
 import { AudioLinkEditor } from './AudioLinkEditor';
 import { PartSelector } from './PartSelector';
-
-// ── Serialised types coming from the server page ────────────────
-// All Date fields are pre-serialised to ISO strings on the server.
 
 interface SerializedMusicFile {
   id: string;
@@ -112,6 +117,7 @@ interface SerializedPreferences {
   tunerSettings?: Record<string, unknown>;
   pitchPipeSettings?: Record<string, unknown>;
   audioTrackerSettings?: Record<string, unknown>;
+  selectedParts?: Record<string, string>;
 }
 
 interface SerializedRosterEntry {
@@ -143,15 +149,87 @@ interface StandViewerProps {
   data: StandLoaderData;
 }
 
-/**
- * Build StandPiece[] from serialized music assignments.
- * Uses piece.id (MusicPiece PK) as the identity – NOT EventMusic.id.
- * PDF URLs go through the authenticated file proxy with eventId scope.
- */
-function buildStandPieces(music: SerializedMusicAssignment[], eventId: string): StandPiece[] {
+interface StandErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface StandErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string | null;
+}
+
+class StandErrorBoundary extends Component<
+  StandErrorBoundaryProps,
+  StandErrorBoundaryState
+> {
+  state: StandErrorBoundaryState = {
+    hasError: false,
+    errorMessage: null,
+  };
+
+  static getDerivedStateFromError(error: Error): StandErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error.message,
+    };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('[StandViewer ErrorBoundary]', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full min-h-[24rem] flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold">Music stand unavailable</h2>
+            <p className="text-sm text-muted-foreground">
+              {this.state.errorMessage ??
+                'The music stand hit an unexpected problem while loading.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Reload stand
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function normalizeStrokeData(strokeData: unknown): Record<string, unknown> {
+  if (typeof strokeData === 'string') {
+    try {
+      const parsed = JSON.parse(strokeData);
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return strokeData && typeof strokeData === 'object'
+    ? (strokeData as Record<string, unknown>)
+    : {};
+}
+
+function buildStandPieces(
+  music: SerializedMusicAssignment[],
+  eventId: string
+): StandPiece[] {
   return music.map((m) => {
     const pdf = m.piece.files.find((f) => f.mimeType === 'application/pdf');
-    const proxyBase = `/api/stand/files/${encodeURIComponent(pdf?.storageKey ?? '')}?eventId=${encodeURIComponent(eventId)}`;
+    const proxyBase = `/api/stand/files/${encodeURIComponent(
+      pdf?.storageKey ?? ''
+    )}?eventId=${encodeURIComponent(eventId)}`;
     return {
       id: m.piece.id,
       title: m.piece.title ?? 'Untitled',
@@ -162,7 +240,7 @@ function buildStandPieces(music: SerializedMusicAssignment[], eventId: string): 
   });
 }
 
-export function StandViewer({ data }: StandViewerProps) {
+function StandViewerContent({ data }: StandViewerProps) {
   const {
     setPieces,
     setEventInfo,
@@ -182,8 +260,11 @@ export function StandViewer({ data }: StandViewerProps) {
     updateAudioTrackerSettings,
     setUserContext,
     updatePiecePdfUrl,
+    setCurrentPieceIndex,
     pieces,
     currentPieceIndex,
+    _currentPage: currentPage,
+    nightMode,
   } = useStandStore();
 
   const {
@@ -203,138 +284,290 @@ export function StandViewer({ data }: StandViewerProps) {
   } = data;
 
   const isLibrarian = roles.includes('LIBRARIAN');
+  const lastBroadcastRef = useRef<string>('');
 
-  // Stand runtime config (fetched from /api/stand/config after hydration)
   const [standConfig, setStandConfig] = useState<StandConfig | null>(null);
-  // Which side panel is currently open
   type PanelName = 'bookmarks' | 'setlists' | 'practice' | 'audio';
   const [activePanel, setActivePanel] = useState<PanelName | null>(null);
-  // Per-piece active part ID (keyed by pieceId)
-  const [activePiecePartId, setActivePiecePartId] = useState<Record<string, string>>({});
+  const [activePiecePartId, setActivePiecePartId] = useState<Record<string, string>>(
+    {}
+  );
 
-  // Initialize audio tracker hook
   useAudioTracker();
 
-  // ── Fetch runtime config (stand feature flags) ─────────────
   useEffect(() => {
     fetch('/api/stand/config')
       .then((r) => (r.ok ? r.json() : null))
       .then((cfg: StandConfig | null) => {
         if (cfg) setStandConfig(cfg);
       })
-      .catch(() => {/* config fetch is best-effort */});
+      .catch(() => {
+        /* config fetch is best-effort */
+      });
   }, []);
 
-  // ── Part-selection handler ──────────────────────────────────
   const handlePartSelect = useCallback(
     (pieceId: string, option: { id: string; url: string; pageCount: number }) => {
       setActivePiecePartId((prev) => ({ ...prev, [pieceId]: option.id }));
       updatePiecePdfUrl(pieceId, option.url);
-      // Persist selection to preferences (fire-and-forget)
       fetch('/api/stand/preferences', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedParts: { [pieceId]: option.id } }),
+        body: JSON.stringify({
+          otherSettings: {
+            selectedParts: {
+              [pieceId]: option.id,
+            },
+          },
+        }),
       }).catch(() => {});
     },
     [updatePiecePdfUrl]
   );
 
-  // ── Panel toggle callbacks ──────────────────────────────────
   const togglePanel = useCallback(
     (name: 'bookmarks' | 'setlists' | 'practice' | 'audio') =>
       setActivePanel((prev) => (prev === name ? null : name)),
     []
   );
 
-  // ── Hydrate store with server data (runs once) ──────────────
-  useEffect(() => {
-    // User context (roles, sections)
-    setUserContext({ userId, roles, isDirector, isSectionLeader, userSectionIds });
+  const applyRemoteState = useCallback(
+    (incoming: {
+      currentPage?: number;
+      currentPieceIndex?: number;
+      nightMode?: boolean;
+    }) => {
+      const store = useStandStore.getState();
 
-    // Pieces
+      if (
+        typeof incoming.currentPieceIndex === 'number' &&
+        incoming.currentPieceIndex !== store.currentPieceIndex
+      ) {
+        store.setCurrentPieceIndex(incoming.currentPieceIndex);
+      }
+
+      const refreshedStore = useStandStore.getState();
+      if (
+        typeof incoming.currentPage === 'number' &&
+        incoming.currentPage !== refreshedStore._currentPage
+      ) {
+        refreshedStore.setCurrentPage(incoming.currentPage);
+      }
+
+      const latestStore = useStandStore.getState();
+      if (
+        typeof incoming.nightMode === 'boolean' &&
+        incoming.nightMode !== latestStore.nightMode
+      ) {
+        latestStore.toggleNightMode();
+      }
+    },
+    []
+  );
+
+  const mergeRemoteAnnotation = useCallback(
+    (payload: Record<string, unknown>) => {
+      const id = typeof payload.id === 'string' ? payload.id : null;
+      const pieceId =
+        typeof payload.pieceId === 'string'
+          ? payload.pieceId
+          : typeof payload.musicId === 'string'
+            ? payload.musicId
+            : null;
+      const pageValue =
+        typeof payload.page === 'number'
+          ? payload.page
+          : typeof payload.pageNumber === 'number'
+            ? payload.pageNumber
+            : null;
+      const layer =
+        payload.layer === 'PERSONAL' ||
+        payload.layer === 'SECTION' ||
+        payload.layer === 'DIRECTOR'
+          ? payload.layer
+          : null;
+      const remoteUserId = typeof payload.userId === 'string' ? payload.userId : undefined;
+
+      if (!id || !pieceId || !pageValue || !layer) {
+        return;
+      }
+
+      if (layer === 'PERSONAL' && remoteUserId && remoteUserId !== userId) {
+        return;
+      }
+
+      const annotation: Annotation = {
+        id,
+        pieceId,
+        pageNumber: pageValue,
+        layer,
+        strokeData: normalizeStrokeData(payload.strokeData),
+        sectionId:
+          typeof payload.sectionId === 'string' || payload.sectionId === null
+            ? payload.sectionId
+            : null,
+        userId: remoteUserId,
+        createdAt:
+          typeof payload.createdAt === 'string'
+            ? payload.createdAt
+            : new Date().toISOString(),
+        updatedAt:
+          typeof payload.updatedAt === 'string' ? payload.updatedAt : undefined,
+      };
+
+      useStandStore.setState((state) => {
+        const updated = {
+          personal: { ...state.annotations.personal },
+          section: { ...state.annotations.section },
+          director: { ...state.annotations.director },
+        };
+
+        (['personal', 'section', 'director'] as const).forEach((layerKey) => {
+          Object.keys(updated[layerKey]).forEach((key) => {
+            const filtered = updated[layerKey][key].filter((entry) => entry.id !== id);
+            if (filtered.length === 0) {
+              delete updated[layerKey][key];
+            } else {
+              updated[layerKey][key] = filtered;
+            }
+          });
+        });
+
+        const targetLayer = layer.toLowerCase() as 'personal' | 'section' | 'director';
+        const annotationKey = `${pieceId}-${pageValue}`;
+        updated[targetLayer][annotationKey] = [
+          ...(updated[targetLayer][annotationKey] ?? []),
+          annotation,
+        ];
+
+        return { annotations: updated };
+      });
+    },
+    [userId]
+  );
+
+  useEffect(() => {
+    setUserContext({
+      userId,
+      roles,
+      isDirector,
+      isSectionLeader,
+      userSectionIds,
+    });
+
     if (music.length > 0) {
       setPieces(buildStandPieces(music, eventId));
       setEventInfo(eventId, eventTitle);
     }
 
-    // Annotations – stored keyed by pieceId:page:layer in store
-    if (annotations.length > 0) {
-      const mappedAnnotations = annotations.map((a) => ({
-        id: a.id,
-        pieceId: a.pieceId,
-        pageNumber: a.page,
-        layer: a.layer,
-        strokeData: (a.strokeData || {}) as Record<string, unknown>,
-        userId: a.userId,
-        sectionId: a.sectionId,
-        createdAt: a.createdAt,
-        updatedAt: a.updatedAt,
-      }));
-      setAnnotations(mappedAnnotations);
-    }
+    const mappedAnnotations = annotations.map((a) => ({
+      id: a.id,
+      pieceId: a.pieceId,
+      pageNumber: a.page,
+      layer: a.layer,
+      strokeData: normalizeStrokeData(a.strokeData),
+      userId: a.userId,
+      sectionId: a.sectionId,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+    }));
+    setAnnotations(mappedAnnotations);
 
-    // Navigation links – bulk set
-    if (navigationLinks.length > 0) {
-      const mappedLinks = navigationLinks.map((nl) => ({
-        id: nl.id,
-        fromPieceId: nl.musicId,
-        fromPage: nl.fromPage,
-        fromX: nl.fromX,
-        fromY: nl.fromY,
-        toPieceId: nl.toMusicId || nl.musicId,
-        toPage: nl.toPage,
-        toX: nl.toX,
-        toY: nl.toY,
-        label: nl.label,
-        createdAt: nl.createdAt,
-        toMusicId: nl.toMusicId,
-      }));
-      setNavigationLinks(mappedLinks);
-    }
+    const mappedLinks = navigationLinks.map((nl) => ({
+      id: nl.id,
+      fromPieceId: nl.musicId,
+      fromPage: nl.fromPage,
+      fromX: nl.fromX,
+      fromY: nl.fromY,
+      toPieceId: nl.toMusicId || nl.musicId,
+      toPage: nl.toPage,
+      toX: nl.toX,
+      toY: nl.toY,
+      label: nl.label,
+      createdAt: nl.createdAt,
+      toMusicId: nl.toMusicId,
+    }));
+    setNavigationLinks(mappedLinks);
+    setAudioLinks(audioLinks);
 
-    // Audio links – per-piece map built inside store
-    if (audioLinks.length > 0) {
-      setAudioLinks(audioLinks);
-    }
+    setRoster(
+      roster.map((r) => ({
+        userId: r.userId,
+        name: r.name || r.userId.slice(0, 8),
+        section: r.section ?? undefined,
+        joinedAt: r.lastSeenAt,
+      }))
+    );
 
-    // Roster (serialized strings, no Date conversion needed)
-    if (roster.length > 0) {
-      setRoster(
-        roster.map((r) => ({
-          userId: r.userId,
-          name: r.name || r.userId.slice(0, 8),
-          section: r.section ?? undefined,
-          joinedAt: r.lastSeenAt,
-        }))
-      );
-    }
-
-    // Preferences
     if (preferences) {
-      if (preferences.nightMode) toggleNightMode();
-      if (preferences.metronomeSettings)
+      if (preferences.nightMode !== nightMode) {
+        toggleNightMode();
+      }
+      if (preferences.metronomeSettings) {
         updateMetronomeSettings(preferences.metronomeSettings as any);
-      if (preferences.tunerSettings)
+      }
+      if (preferences.tunerSettings) {
         updateTunerSettings(preferences.tunerSettings as any);
-      if (preferences.pitchPipeSettings)
+      }
+      if (preferences.pitchPipeSettings) {
         updatePitchPipeSettings(preferences.pitchPipeSettings as any);
-      if (preferences.midiMappings)
+      }
+      if (preferences.midiMappings) {
         useStandStore.getState().setMidiMappings(preferences.midiMappings as any);
-      if (preferences.audioTrackerSettings)
+      }
+      if (preferences.audioTrackerSettings) {
         updateAudioTrackerSettings(preferences.audioTrackerSettings as any);
+      }
+      if (preferences.selectedParts) {
+        const selectedParts = preferences.selectedParts;
+        setActivePiecePartId(selectedParts);
+
+        for (const musicEntry of music) {
+          const selectedPartId = selectedParts[musicEntry.piece.id];
+          if (!selectedPartId) continue;
+
+          const selectedPart = musicEntry.piece.parts.find(
+            (part) => part.id === selectedPartId && part.storageKey
+          );
+          if (selectedPart?.storageKey) {
+            updatePiecePdfUrl(
+              musicEntry.piece.id,
+              `/api/stand/files/${encodeURIComponent(
+                selectedPart.storageKey
+              )}?eventId=${encodeURIComponent(eventId)}`
+            );
+            continue;
+          }
+
+          const fullScoreFile = musicEntry.piece.files.find(
+            (file) => file.id === selectedPartId && file.storageKey
+          );
+          if (fullScoreFile?.storageKey) {
+            updatePiecePdfUrl(
+              musicEntry.piece.id,
+              `/api/stand/files/${encodeURIComponent(
+                fullScoreFile.storageKey
+              )}?eventId=${encodeURIComponent(eventId)}`
+            );
+          }
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Real-time sync ──────────────────────────────────────────
+  const currentPiece = pieces[currentPieceIndex] ?? null;
+  const currentMusicEntry = music[currentPieceIndex] ?? null;
+
   useStandSync({
     eventId,
     userId,
+    musicId: currentPiece?.id,
     realtimeEnabled:
       standConfig?.websocketEnabled === true &&
       standConfig?.realtimeMode === 'websocket',
     pollingInterval: standConfig?.pollingIntervalMs ?? 5000,
+    onStateChange: (state) => applyRemoteState(state),
     onRosterChange: (members) => setRoster(members),
     onPresenceChange: (presence) => {
       if (presence.status === 'joined') {
@@ -348,22 +581,76 @@ export function StandViewer({ data }: StandViewerProps) {
         removeRosterEntry(presence.userId);
       }
     },
+    onCommand: (command) => {
+      if (command.action === 'setPage') {
+        applyRemoteState({ currentPage: command.page });
+        return;
+      }
+      if (command.action === 'setPiece') {
+        applyRemoteState({ currentPieceIndex: command.pieceIndex });
+        return;
+      }
+      if (command.action === 'toggleNightMode') {
+        applyRemoteState({ nightMode: command.value });
+      }
+    },
+    onModeChange: (mode) => {
+      if (mode.name === 'nightMode' && typeof mode.value === 'boolean') {
+        applyRemoteState({ nightMode: mode.value });
+      }
+    },
+    onAnnotation: (annotation) => mergeRemoteAnnotation(annotation.data),
   });
 
-  // Current piece for panel context
-  const currentPiece = pieces[currentPieceIndex] ?? null;
-  const currentMusicEntry = music[currentPieceIndex] ?? null;
+  useEffect(() => {
+    if (!standConfig?.enabled || !currentPiece) {
+      return;
+    }
 
-  // Build PartSelector options for the current piece
+    const payload = JSON.stringify({
+      eventId,
+      musicId: currentPiece.id,
+      currentPieceIndex,
+      currentPage,
+      nightMode,
+    });
+
+    if (lastBroadcastRef.current === payload) {
+      return;
+    }
+
+    lastBroadcastRef.current = payload;
+
+    fetch('/api/stand/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    }).catch(() => {
+      /* sync broadcast is best-effort */
+    });
+  }, [currentPage, currentPiece, currentPieceIndex, eventId, nightMode, standConfig?.enabled]);
+
   const partOptions = (() => {
     if (!currentMusicEntry) return { fullScore: null, parts: [], activeId: null };
     const { piece } = currentMusicEntry;
     const proxyBase = (key: string) =>
-      `/api/stand/audio-files/${encodeURIComponent(key)}?eventId=${encodeURIComponent(eventId)}`;
+      `/api/stand/files/${encodeURIComponent(key)}?eventId=${encodeURIComponent(
+        eventId
+      )}`;
 
-    const fullScoreFile = piece.files.find((f) => f.mimeType === 'application/pdf' && !f.partLabel);
+    const fullScoreFile = piece.files.find(
+      (f) => f.mimeType === 'application/pdf' && !f.partLabel
+    );
     const fullScore = fullScoreFile
-      ? { id: fullScoreFile.id, label: 'Full Score', url: proxyBase(fullScoreFile.storageKey), pageCount: fullScoreFile.pageCount ?? 1 }
+      ? {
+          id: fullScoreFile.id,
+          label:
+            fullScoreFile.partLabel ??
+            fullScoreFile.instrumentName ??
+            'Full Score',
+          url: proxyBase(fullScoreFile.storageKey),
+          pageCount: fullScoreFile.pageCount ?? 1,
+        }
       : null;
 
     const parts = piece.parts
@@ -375,11 +662,11 @@ export function StandViewer({ data }: StandViewerProps) {
         pageCount: p.pageCount ?? 1,
       }));
 
-    const activeId = activePiecePartId[piece.id] ?? fullScore?.id ?? parts[0]?.id ?? null;
+    const activeId =
+      activePiecePartId[piece.id] ?? fullScore?.id ?? parts[0]?.id ?? null;
     return { fullScore, parts, activeId };
   })();
 
-  // Empty state
   if (!music || music.length === 0) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
@@ -394,7 +681,6 @@ export function StandViewer({ data }: StandViewerProps) {
         isFullscreen ? 'fixed inset-0 z-50 bg-background h-screen' : ''
       }`}
     >
-      {/* Controls Bar */}
       <div
         className={`p-4 border-b flex items-center justify-between bg-card ${
           gigMode || (!showControls && isFullscreen) ? 'hidden' : ''
@@ -411,8 +697,16 @@ export function StandViewer({ data }: StandViewerProps) {
           <Toolbar
             onToggleBookmarks={() => togglePanel('bookmarks')}
             onToggleSetlists={() => togglePanel('setlists')}
-            onTogglePractice={standConfig?.practiceTrackingEnabled ? () => togglePanel('practice') : undefined}
-            onToggleAudio={standConfig?.audioSyncEnabled ? () => togglePanel('audio') : undefined}
+            onTogglePractice={
+              standConfig?.practiceTrackingEnabled
+                ? () => togglePanel('practice')
+                : undefined
+            }
+            onToggleAudio={
+              standConfig?.audioSyncEnabled
+                ? () => togglePanel('audio')
+                : undefined
+            }
             activePanel={activePanel ?? undefined}
           />
         </div>
@@ -421,9 +715,7 @@ export function StandViewer({ data }: StandViewerProps) {
       <KeyboardHandler />
       <MidiHandler />
 
-      {/* Viewer area */}
       <div className="flex-1 bg-muted/20 relative overflow-hidden flex">
-        {/* Setlist sidebar */}
         <SetlistManager />
 
         <div className="flex-1 relative overflow-hidden">
@@ -438,15 +730,14 @@ export function StandViewer({ data }: StandViewerProps) {
           <AudioTrackerSettings />
         </div>
 
-        {/* Side panel — slides in from the right */}
         {activePanel && (
           <div className="w-80 border-l bg-card flex-shrink-0 overflow-y-auto">
             {activePanel === 'bookmarks' && (
               <BookmarksPanel
-                currentPieceId={currentPiece?.id ?? null}
+                currentPieceId={currentPiece?.id}
                 onSelect={(pieceId) => {
                   const idx = pieces.findIndex((p) => p.id === pieceId);
-                  if (idx >= 0) useStandStore.getState().setCurrentPieceIndex(idx);
+                  if (idx >= 0) setCurrentPieceIndex(idx);
                   setActivePanel(null);
                 }}
               />
@@ -470,5 +761,13 @@ export function StandViewer({ data }: StandViewerProps) {
         )}
       </div>
     </div>
+  );
+}
+
+export function StandViewer({ data }: StandViewerProps) {
+  return (
+    <StandErrorBoundary>
+      <StandViewerContent data={data} />
+    </StandErrorBoundary>
   );
 }

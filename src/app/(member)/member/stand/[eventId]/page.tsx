@@ -16,11 +16,9 @@ interface PageProps {
   params: Promise<{ eventId: string }>;
 }
 
-/** Privileged role types that can access any event's stand */
 const PRIVILEGED_ROLE_TYPES = ['DIRECTOR', 'SUPER_ADMIN', 'ADMIN', 'STAFF'];
 
 export default async function StandPage({ params }: PageProps) {
-  // Kill-switch: if the stand feature is disabled, show 404
   if (!(await isStandEnabled())) {
     notFound();
   }
@@ -36,13 +34,11 @@ export default async function StandPage({ params }: PageProps) {
   const { eventId } = await params;
   const userId = session.user.id;
 
-  // ── Authorization ─────────────────────────────────────────────
   const hasAccess = await canAccessEvent(userId, eventId);
   if (!hasAccess) {
     notFound();
   }
 
-  // ── Parallel data fetches ─────────────────────────────────────
   const [event, roles, member] = await Promise.all([
     prisma.event.findUnique({
       where: { id: eventId },
@@ -105,30 +101,22 @@ export default async function StandPage({ params }: PageProps) {
     notFound();
   }
 
-  // Derive role flags & section ids
   const isDirector = roles.some(
     (r) => PRIVILEGED_ROLE_TYPES.includes(r) || r === 'DIRECTOR'
   );
   const isSectionLeader = roles.includes('SECTION_LEADER');
   const userSectionIds = member?.sections.map((ms) => ms.sectionId) ?? [];
 
-  // ── Piece IDs ─────────────────────────────────────────────────
   const pieceIds = event.music.map((m) => m.piece.id);
 
-  // ── Annotations – privacy-filtered ────────────────────────────
   let annotations: any[] = [];
   if (pieceIds.length > 0) {
     if (isDirector) {
-      // Directors see everything
       annotations = await prisma.annotation.findMany({
         where: { musicId: { in: pieceIds } },
         orderBy: { createdAt: 'asc' },
       });
     } else {
-      // Regular members:
-      //   PERSONAL → own only
-      //   SECTION  → matching sectionId only
-      //   DIRECTOR → all (they're shared downward)
       annotations = await prisma.annotation.findMany({
         where: {
           musicId: { in: pieceIds },
@@ -148,7 +136,6 @@ export default async function StandPage({ params }: PageProps) {
     }
   }
 
-  // ── Navigation links, audio links, preferences, roster ───────
   const [navigationLinks, audioLinks, preferences, rosterSessions] =
     await Promise.all([
       pieceIds.length > 0
@@ -168,7 +155,6 @@ export default async function StandPage({ params }: PageProps) {
       }),
     ]);
 
-  // Resolve display names for roster sessions
   const rosterUserIds = rosterSessions.map((r) => r.userId);
   const rosterUsers =
     rosterUserIds.length > 0
@@ -179,8 +165,10 @@ export default async function StandPage({ params }: PageProps) {
       : [];
   const rosterUserMap = new Map(rosterUsers.map((u) => [u.id, u.name ?? '']));
   const roster = rosterSessions;
+  const parsedOtherSettings = preferences?.otherSettings
+    ? ((JSON.parse(preferences.otherSettings) as Record<string, unknown>) ?? {})
+    : {};
 
-  // ── Serialise – strip Date objects ────────────────────────────
   const loaderData: StandLoaderData = {
     eventTitle: event.title,
     eventId,
@@ -263,23 +251,18 @@ export default async function StandPage({ params }: PageProps) {
             ? (JSON.parse(preferences.midiMappings) as Record<string, unknown>)
             : {},
           tunerSettings:
-            preferences.otherSettings &&
-            (JSON.parse(preferences.otherSettings) as any)?.tunerSettings
-              ? ((JSON.parse(preferences.otherSettings) as any)
-                  .tunerSettings as Record<string, unknown>)
-              : {},
+            (parsedOtherSettings.tunerSettings as Record<string, unknown> | undefined) ??
+            {},
           pitchPipeSettings:
-            preferences.otherSettings &&
-            (JSON.parse(preferences.otherSettings) as any)?.pitchPipeSettings
-              ? ((JSON.parse(preferences.otherSettings) as any)
-                  .pitchPipeSettings as Record<string, unknown>)
-              : {},
+            (parsedOtherSettings.pitchPipeSettings as Record<string, unknown> | undefined) ??
+            {},
           audioTrackerSettings:
-            preferences.otherSettings &&
-            (JSON.parse(preferences.otherSettings) as any)?.audioTrackerSettings
-              ? ((JSON.parse(preferences.otherSettings) as any)
-                  .audioTrackerSettings as Record<string, unknown>)
-              : {},
+            (parsedOtherSettings.audioTrackerSettings as Record<
+              string,
+              unknown
+            > | undefined) ?? {},
+          selectedParts:
+            (parsedOtherSettings.selectedParts as Record<string, string> | undefined) ?? {},
         }
       : null,
     roster: roster.map((r) => ({
