@@ -65,17 +65,23 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
   }, []);
 
   useEffect(() => {
-    fetchBookmarks();
+    void fetchBookmarks();
   }, [fetchBookmarks]);
 
-  const handleRemove = async (bookmarkId: string) => {
-    setRemovingId(bookmarkId);
+  const handleRemove = async (bookmark: Bookmark) => {
+    setRemovingId(bookmark.id);
+    setError(null);
     try {
-      const res = await fetch(`/api/stand/bookmarks/${bookmarkId}`, { method: 'DELETE' });
+      const res = await fetch(
+        `/api/stand/bookmarks?pieceId=${encodeURIComponent(bookmark.pieceId)}`,
+        { method: 'DELETE' }
+      );
       if (!res.ok) throw new Error('Failed to remove bookmark');
-      setBookmarks((prev) => prev.filter((b) => b.id !== bookmarkId));
+      setBookmarks((prev) => prev.filter((b) => b.id !== bookmark.id));
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to remove bookmark';
       console.error('Remove bookmark failed:', err);
+      setError(message);
     } finally {
       setRemovingId(null);
     }
@@ -84,6 +90,7 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
   const handleAddCurrent = async () => {
     if (!currentPieceId || currentIsBookmarked) return;
     setAddingBookmark(true);
+    setError(null);
     try {
       const res = await fetch('/api/stand/bookmarks', {
         method: 'POST',
@@ -93,7 +100,9 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
       if (!res.ok) throw new Error('Failed to add bookmark');
       await fetchBookmarks();
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add bookmark';
       console.error('Add bookmark failed:', err);
+      setError(message);
     } finally {
       setAddingBookmark(false);
     }
@@ -112,7 +121,7 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
         <Button
           variant="ghost"
           size="icon"
-          onClick={fetchBookmarks}
+          onClick={() => void fetchBookmarks()}
           disabled={isLoading}
           aria-label="Refresh bookmarks"
           title="Refresh bookmarks"
@@ -127,7 +136,7 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
         <Button
           variant={currentIsBookmarked ? 'outline' : 'default'}
           size="sm"
-          onClick={handleAddCurrent}
+          onClick={() => void handleAddCurrent()}
           disabled={addingBookmark || currentIsBookmarked}
           className="w-full"
           aria-label={currentIsBookmarked ? 'Already bookmarked' : 'Bookmark current piece'}
@@ -192,7 +201,7 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  onClick={() => handleRemove(bookmark.id)}
+                  onClick={() => void handleRemove(bookmark)}
                   disabled={removingId === bookmark.id}
                   aria-label={`Remove bookmark for ${bookmark.title}`}
                   title="Remove bookmark"
