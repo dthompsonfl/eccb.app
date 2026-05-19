@@ -10,14 +10,22 @@ import { prisma } from '@/lib/db';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { z } from 'zod';
 import { requireStandAccess, canAccessPiece } from '@/lib/stand/access';
-import { jsonOk, json400, json403, json404, json500, parseBody, cuidSchema } from '@/lib/stand/http';
+import {
+  jsonOk,
+  json400,
+  json403,
+  json404,
+  json500,
+  parseBody,
+  cuidSchema,
+} from '@/lib/stand/http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const audioCreateSchema = z.object({
   pieceId: cuidSchema,
-  fileKey: z.string().min(1).max(500),
+  fileKey: z.string().max(500).optional().nullable(),
   url: z.string().url().max(2000).nullable().optional(),
   description: z.string().max(500).optional(),
 });
@@ -34,7 +42,6 @@ export async function GET(request: NextRequest) {
     const pieceId = searchParams.get('pieceId');
     if (!pieceId) return json400('pieceId query param required');
 
-    // Verify piece access
     const hasAccess = await canAccessPiece(ctx.userId, pieceId);
     if (!hasAccess) return json404('Piece not found');
 
@@ -58,23 +65,31 @@ export async function POST(request: NextRequest) {
     const ctx = await requireStandAccess();
     if (ctx instanceof Response) return ctx;
 
-    // Director/librarian only
-    if (!ctx.isLibrarian) return json403('Only directors or librarians can add audio links');
+    if (!ctx.isLibrarian) {
+      return json403('Only directors or librarians can add audio links');
+    }
 
     const parsed = await parseBody(request, audioCreateSchema);
     if (parsed instanceof Response) return parsed;
 
     const { pieceId, fileKey, url, description } = parsed;
+    const normalizedFileKey = fileKey?.trim() ?? '';
+    const normalizedUrl = url?.trim() || null;
 
-    // Verify piece exists
-    const piece = await prisma.musicPiece.findUnique({ where: { id: pieceId }, select: { id: true } });
-    if (!piece) return json400('Piece not found');
+    const hasAccess = await canAccessPiece(ctx.userId, pieceId);
+    if (!hasAccess) return json404('Piece not found');
 
-    // Either fileKey or url must be non-empty (not both empty)
-    if (!fileKey && !url) return json400('Either fileKey or url must be provided');
+    if (!normalizedFileKey && !normalizedUrl) {
+      return json400('Either fileKey or url must be provided');
+    }
 
     const audioLink = await prisma.audioLink.create({
-      data: { pieceId, fileKey, url: url ?? null, description: description ?? null },
+      data: {
+        pieceId,
+        fileKey: normalizedFileKey,
+        url: normalizedUrl,
+        description: description?.trim() || null,
+      },
     });
 
     return jsonOk({ audioLink }, 201);
