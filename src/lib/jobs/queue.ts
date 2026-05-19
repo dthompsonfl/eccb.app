@@ -83,6 +83,7 @@ interface QueueInstances {
   cleanup: Queue | null;
   deadLetter: Queue | null;
   smartUpload: Queue | null;
+  ocr: Queue | null;
 }
 
 const queues: QueueInstances = {
@@ -92,6 +93,7 @@ const queues: QueueInstances = {
   cleanup: null,
   deadLetter: null,
   smartUpload: null,
+  ocr: null,
 };
 
 const queueEvents: Map<string, QueueEvents> = new Map();
@@ -133,6 +135,10 @@ export function initializeQueues(): void {
   queues.smartUpload = new Queue(QUEUE_NAMES.SMART_UPLOAD, { connection: bullConnection });
   queueEvents.set(QUEUE_NAMES.SMART_UPLOAD, new QueueEvents(QUEUE_NAMES.SMART_UPLOAD, { connection: bullConnection }));
 
+  // OCR queue
+  queues.ocr = new Queue(QUEUE_NAMES.OCR, { connection: bullConnection });
+  queueEvents.set(QUEUE_NAMES.OCR, new QueueEvents(QUEUE_NAMES.OCR, { connection: bullConnection }));
+
   logger.info('All job queues initialized');
 }
 
@@ -153,6 +159,8 @@ export function getQueue(name: keyof typeof QUEUE_NAMES): Queue | null {
       return queues.deadLetter;
     case 'SMART_UPLOAD':
       return queues.smartUpload;
+    case 'OCR':
+      return queues.ocr;
     default:
       return null;
   }
@@ -184,7 +192,8 @@ export async function addJob<T extends JobType>(
     queueName === QUEUE_NAMES.NOTIFICATION ? 'NOTIFICATION' :
     queueName === QUEUE_NAMES.SCHEDULED ? 'SCHEDULED' :
     queueName === QUEUE_NAMES.CLEANUP ? 'CLEANUP' :
-    queueName === QUEUE_NAMES.SMART_UPLOAD ? 'SMART_UPLOAD' : 'DEAD_LETTER'
+    queueName === QUEUE_NAMES.SMART_UPLOAD ? 'SMART_UPLOAD' :
+    queueName === QUEUE_NAMES.OCR ? 'OCR' : 'DEAD_LETTER'
   );
 
   if (!queue) {
@@ -476,6 +485,8 @@ export async function closeQueues(): Promise<void> {
     await redisConnection.quit();
     redisConnection = null;
   }
+
+  _queuesInitialized = false;
 
   logger.info('All queues closed');
 }
