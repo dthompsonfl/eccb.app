@@ -72,8 +72,10 @@ function clamp(value: number, min: number, max: number): number {
  * @returns A promise that resolves to the provider's LLMAdapter instance.
  * @throws If the provider is unknown or the adapter module cannot be found.
  */
-async function getAdapter(provider: LLMRuntimeConfig['provider']): Promise<LLMAdapter> {
+export async function getAdapter(provider: LLMRuntimeConfig['provider']): Promise<LLMAdapter> {
   switch (provider) {
+    case 'glm-ocr':
+      return (await import('./glm-ocr')).adapter;
     case 'openai':
       return (await import('./openai')).adapter;
     case 'anthropic':
@@ -162,7 +164,11 @@ export async function callVisionModel(
   assertCapabilities(
     config.llm_provider,
     config.llm_vision_model ?? '',
-    images.length > 0 ? 'vision' : 'text',
+    request.documents && request.documents.length > 0
+      ? 'pdf'
+      : images.length > 0
+        ? 'vision'
+        : 'text',
     {
       imageCount: images.length,
       requireJson: options?.responseFormat?.type === 'json',

@@ -1,4 +1,5 @@
 export type LLMProvider =
+  | 'glm-ocr'
   | 'openai'
   | 'anthropic'
   | 'openrouter'
@@ -19,6 +20,7 @@ export interface LLMConfig {
   llm_ollama_cloud_api_key?: string;
   llm_mistral_api_key?: string;
   llm_groq_api_key?: string;
+  llm_glm_ocr_api_key?: string;
   llm_custom_api_key?: string;
   llm_vision_model?: string;
   llm_verification_model?: string;

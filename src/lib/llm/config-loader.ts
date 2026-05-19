@@ -25,6 +25,7 @@ export interface LLMRuntimeConfig {
   adjudicatorProvider?: LLMProviderValue;
   // Legacy/default provider alias (backward compatibility)
   defaultProvider: LLMProviderValue;
+  explicitEndpointUrl?: string;
   endpointUrl: string;
   visionModel: string;
   verificationModel: string;
@@ -39,6 +40,7 @@ export interface LLMRuntimeConfig {
   ollamaCloudApiKey: string;
   mistralApiKey: string;
   groqApiKey: string;
+  glmOcrApiKey: string;
   customApiKey: string;
   confidenceThreshold: number;
   twoPassEnabled: boolean;
@@ -260,7 +262,8 @@ export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
 
   // ── Endpoint resolution (DB-only) ─────────────────────────────────────────
   // Priority: explicit DB value → provider default endpoint
-  let endpointUrl = db['llm_endpoint_url'] || '';
+  const explicitEndpointUrl = db['llm_endpoint_url']?.trim() || '';
+  let endpointUrl = explicitEndpointUrl;
 
   if (!endpointUrl) {
     // Fall back to provider default endpoints (no runtime env fallback)
@@ -302,7 +305,7 @@ export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
 
   // ── API keys — encrypted APIKey table is the sole source of truth ────────
   const PROVIDER_SLUGS: readonly LLMProviderValue[] = [
-    'openai', 'anthropic', 'openrouter', 'gemini',
+    'openai', 'anthropic', 'openrouter', 'gemini', 'glm-ocr',
     'ollama-cloud', 'mistral', 'groq', 'custom',
   ] as const;
   const apiKeys: Record<string, string> = {};
@@ -321,6 +324,7 @@ export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
     adjudicatorProvider,
     defaultProvider,
     // ── Endpoint ───────────────────────────────────────────────────────────
+    explicitEndpointUrl: explicitEndpointUrl || undefined,
     endpointUrl,
     // ── Models ─────────────────────────────────────────────────────────────
     visionModel,
@@ -330,6 +334,7 @@ export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
       db['llm_adjudicator_model'] ||
       (verificationProvider === 'openai' ? 'gpt-4o' :
        verificationProvider === 'anthropic' ? 'claude-3-5-sonnet-20241022' :
+       verificationProvider === 'glm-ocr' ? 'zai-org/GLM-OCR' :
        verificationModel),
     // ── Model params ───────────────────────────────────────────────────────
     visionModelParams,
@@ -345,6 +350,7 @@ export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
     ollamaCloudApiKey: apiKeys['ollama-cloud'],
     mistralApiKey: apiKeys.mistral,
     groqApiKey: apiKeys.groq,
+    glmOcrApiKey: apiKeys['glm-ocr'],
     customApiKey: apiKeys.custom,
     // ── Threshold / behavior settings ─────────────────────────────────────
     confidenceThreshold: Number(
@@ -518,6 +524,7 @@ export function runtimeToAdapterConfig(cfg: LLMRuntimeConfig) {
     llm_ollama_cloud_api_key: cfg.ollamaCloudApiKey,
     llm_mistral_api_key: cfg.mistralApiKey,
     llm_groq_api_key: cfg.groqApiKey,
+    llm_glm_ocr_api_key: cfg.glmOcrApiKey,
     llm_custom_api_key: cfg.customApiKey,
   } as const;
 }
@@ -595,8 +602,11 @@ export async function buildAdapterConfigForStep(
       modelParams = cfg.verificationModelParams;
   }
 
-  // Resolve endpoint (use default endpoint for the provider)
-  const endpointUrl = getDefaultEndpointForProvider(provider);
+  // Preserve an explicitly configured endpoint for local/proxy deployments.
+  // Otherwise, use the selected provider default.
+  const endpointUrl = cfg.explicitEndpointUrl?.trim()
+    ? cfg.explicitEndpointUrl.trim()
+    : getDefaultEndpointForProvider(provider);
 
   // Resolve API key for the provider (primary from config)
   let apiKey = getApiKeyForProvider(cfg, provider);
@@ -687,6 +697,8 @@ function getApiKeyForProvider(
       return cfg.mistralApiKey;
     case 'groq':
       return cfg.groqApiKey;
+    case 'glm-ocr':
+      return cfg.glmOcrApiKey;
     case 'custom':
       return cfg.customApiKey;
     case 'ollama':

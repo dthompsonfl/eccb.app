@@ -14,6 +14,8 @@ export interface ModelCapabilities {
   pdfNative: boolean;
   /** Model supports JSON mode / structured output */
   jsonMode: boolean;
+  /** Model accepts image data URLs through the adapter path */
+  supportsDataUrls: boolean;
   /** Maximum number of images per request */
   maxImages: number;
   /** Maximum tokens per request */
@@ -35,6 +37,9 @@ const TEXT_ONLY_MODELS = new Set([
 
 /** Models known to support vision */
 const VISION_CAPABLE_MODELS = new Set([
+  'zai-org/glm-ocr',
+  'glm-ocr',
+  'glm_ocr',
   'gpt-4o',
   'gpt-4o-mini',
   'gpt-4-turbo',
@@ -58,6 +63,7 @@ const VISION_CAPABLE_MODELS = new Set([
 
 /** Provider-specific default capabilities */
 const PROVIDER_DEFAULTS: Record<string, Partial<ModelCapabilities>> = {
+  'glm-ocr': { vision: true, pdfNative: false, jsonMode: false, supportsDataUrls: true, maxImages: 1, maxTokens: 4096, systemMessages: true },
   openai: { vision: true, pdfNative: false, jsonMode: true, maxImages: 32, maxTokens: 4096, systemMessages: true },
   anthropic: { vision: true, pdfNative: false, jsonMode: true, maxImages: 20, maxTokens: 4096, systemMessages: true },
   gemini: { vision: true, pdfNative: true, jsonMode: true, maxImages: 16, maxTokens: 8192, systemMessages: true },
@@ -65,7 +71,7 @@ const PROVIDER_DEFAULTS: Record<string, Partial<ModelCapabilities>> = {
   ollama: { vision: true, pdfNative: false, jsonMode: false, maxImages: 8, maxTokens: 4096, systemMessages: true },
   groq: { vision: true, pdfNative: false, jsonMode: true, maxImages: 1, maxTokens: 4096, systemMessages: true },
   mistral: { vision: true, pdfNative: false, jsonMode: true, maxImages: 8, maxTokens: 4096, systemMessages: true },
-  custom: { vision: false, pdfNative: false, jsonMode: false, maxImages: 4, maxTokens: 4096, systemMessages: true },
+  custom: { vision: false, pdfNative: false, jsonMode: false, supportsDataUrls: true, maxImages: 4, maxTokens: 4096, systemMessages: true },
 };
 
 /**
@@ -83,6 +89,7 @@ export function getModelCapabilities(
       vision: false,
       pdfNative: false,
       jsonMode: defaults.jsonMode ?? false,
+      supportsDataUrls: defaults.supportsDataUrls ?? false,
       maxImages: 0,
       maxTokens: defaults.maxTokens ?? 4096,
       systemMessages: defaults.systemMessages ?? true,
@@ -95,6 +102,7 @@ export function getModelCapabilities(
       vision: true,
       pdfNative: defaults.pdfNative ?? false,
       jsonMode: defaults.jsonMode ?? true,
+      supportsDataUrls: defaults.supportsDataUrls ?? true,
       maxImages: defaults.maxImages ?? 8,
       maxTokens: defaults.maxTokens ?? 4096,
       systemMessages: defaults.systemMessages ?? true,
@@ -102,13 +110,14 @@ export function getModelCapabilities(
   }
   
   // Infer from model name patterns
-  const isVision = /vision|vl|llava|bakllava|moondream|cogvlm|gpt-4o|claude-3|gemini/i.test(model);
+  const isVision = /vision|vl|llava|bakllava|moondream|cogvlm|gpt-4o|claude-3|gemini|glm[-_]?ocr|zai-org\/glm-ocr/i.test(model);
   const isTextOnly = /gemma-(2b|7b|27b)-it|mistral-7b-instruct|llama-3\.1-(8b|70b)/i.test(model);
   
   return {
     vision: isVision && !isTextOnly,
     pdfNative: defaults.pdfNative ?? false,
     jsonMode: defaults.jsonMode ?? true,
+    supportsDataUrls: defaults.supportsDataUrls ?? true,
     maxImages: isVision ? (defaults.maxImages ?? 8) : 0,
     maxTokens: defaults.maxTokens ?? 4096,
     systemMessages: defaults.systemMessages ?? true,

@@ -75,9 +75,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Only validate endpoint for providers that actually use it
-    const providersUsingEndpoint = ['ollama', 'ollama-cloud', 'custom'];
+    const providersUsingEndpoint = ['glm-ocr', 'ollama', 'ollama-cloud', 'custom'];
     if (endpoint?.trim() && providersUsingEndpoint.includes(provider)) {
-      const endpointPolicy = provider === 'ollama' || provider === 'ollama-cloud'
+      const endpointPolicy = provider === 'glm-ocr' || provider === 'ollama' || provider === 'ollama-cloud'
         ? 'allow-local'
         : 'strict-public';
       const endpointValidation = validateOutboundEndpoint(endpoint.trim(), endpointPolicy);
@@ -100,6 +100,14 @@ export async function POST(request: NextRequest) {
     };
 
     switch (provider) {
+      case 'glm-ocr': {
+        const raw = (endpoint?.trim() || getDefaultEndpointForProvider('glm-ocr')).replace(/\/$/, '');
+        const base = /\/v\d+$/.test(raw) ? raw.replace(/\/v\d+$/, '') : raw;
+        testUrl = `${base}/readyz`;
+        if (apiKey) testHeaders['Authorization'] = `Bearer ${apiKey}`;
+        break;
+      }
+
       case 'ollama': {
         const base = (endpoint || 'http://localhost:11434').replace(/\/$/, '');
         // Try /api/tags first (native Ollama), then /v1/models (OpenAI-compat layer)
