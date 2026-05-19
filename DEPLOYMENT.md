@@ -17,15 +17,15 @@ git clone https://github.com/your-org/eccb.app.git
 cd eccb.app
 
 # 2. Install dependencies
-npm ci
+pnpm install --no-frozen-lockfile
 
 # 3. Configure environment
 cp .env.example .env
 nano .env  # Edit with production values
 
 # 4. Build and start
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```
 
 For detailed setup, follow the sections below.
@@ -101,7 +101,7 @@ cd /var/www/eccb
 git clone https://github.com/your-org/eccb.app.git .
 
 # Install dependencies
-npm ci
+pnpm install --no-frozen-lockfile
 
 # Create storage directory
 mkdir -p storage
@@ -114,12 +114,12 @@ For a guided setup experience, run the interactive configuration script:
 
 ```bash
 # Interactive setup (recommended)
-npm run setup
+pnpm run setup
 ```
 
 The interactive wizard prompts for every environment variable (database, auth, storage, email, etc.), auto-generates secrets when left blank, conditionally asks for S3/SMTP/VAPID/ClamAV details, and creates a timestamped `.env` backup before writing. It validates important values (secret lengths, required production fields) and is safe to re-run.
 
-Note: `npm run build` executes `scripts/setup-admin.sh` via the `prebuild` lifecycle — that script validates required variables and writes a masked summary to `./build/env-variables-check.txt`. In non-CI production builds the validation is strict and will abort the build if required variables (for example `SUPER_ADMIN_PASSWORD`) are missing.
+Note: `pnpm run build` executes `scripts/setup-admin.sh` during the `prebuild` lifecycle — that script validates required variables and writes a masked summary to `./build/env-variables-check.txt`. In non-CI production builds the validation is strict and will abort the build if required variables (for example `SUPER_ADMIN_PASSWORD`) are missing.
 
 Alternatively, for manual configuration:
 
@@ -153,7 +153,7 @@ NEXT_PUBLIC_APP_URL="https://your-domain.com"
 SUPER_ADMIN_EMAIL="admin@your-domain.com"
 SUPER_ADMIN_PASSWORD="your-secure-admin-password"
 
-> Note: `npm run db:seed` requires `SUPER_ADMIN_PASSWORD` to be set and will fail if it is missing. This ensures root credentials are explicitly chosen during deployment.
+> Note: `pnpm run db:seed` requires `SUPER_ADMIN_PASSWORD` to be set and will fail if it is missing. This ensures root credentials are explicitly chosen during deployment.
 
 # Storage
 STORAGE_DRIVER="LOCAL"
@@ -175,20 +175,20 @@ NODE_ENV="production"
 
 ```bash
 # Run migrations
-npx prisma migrate deploy
+pnpm exec prisma migrate deploy
 
 # Generate Prisma client
-npx prisma generate
+pnpm exec prisma generate
 
 # Seed database (first deployment only)
-npm run db:seed
+pnpm run db:seed
 ```
 
 ### 7. Build Application
 
 ```bash
 # Production build
-npm run build
+pnpm run build
 ```
 
 ### 8. Systemd Service
@@ -520,13 +520,13 @@ cd /var/www/eccb
 git pull origin main
 
 # Install/update dependencies
-npm ci
+pnpm install --no-frozen-lockfile
 
 # Run database migrations
-npx prisma migrate deploy
+pnpm exec prisma migrate deploy
 
 # Rebuild application
-npm run build
+pnpm run build
 
 # Restart service
 sudo systemctl restart eccb
@@ -548,13 +548,13 @@ For zero-downtime deployments, consider using a deployment script that:
 
 ```bash
 # Check migration status
-npx prisma migrate status
+pnpm exec prisma migrate status
 
 # Apply pending migrations
-npx prisma migrate deploy
+pnpm exec prisma migrate deploy
 
 # Create a new migration (development)
-npx prisma migrate dev --name description_of_change
+pnpm exec prisma migrate dev --name description_of_change
 ```
 
 ## Security Checklist
