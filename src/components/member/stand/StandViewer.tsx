@@ -202,6 +202,23 @@ class StandErrorBoundary extends Component<
   }
 }
 
+function normalizeStrokeData(strokeData: unknown): Record<string, unknown> {
+  if (typeof strokeData === 'string') {
+    try {
+      const parsed = JSON.parse(strokeData);
+      return parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  return strokeData && typeof strokeData === 'object'
+    ? (strokeData as Record<string, unknown>)
+    : {};
+}
+
 /**
  * Build StandPiece[] from serialized music assignments.
  * Uses piece.id (MusicPiece PK) as the identity – NOT EventMusic.id.
@@ -333,7 +350,7 @@ function StandViewerContent({ data }: StandViewerProps) {
         pieceId: a.pieceId,
         pageNumber: a.page,
         layer: a.layer,
-        strokeData: (a.strokeData || {}) as Record<string, unknown>,
+        strokeData: normalizeStrokeData(a.strokeData),
         userId: a.userId,
         sectionId: a.sectionId,
         createdAt: a.createdAt,
