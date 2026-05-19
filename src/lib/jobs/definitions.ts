@@ -21,7 +21,8 @@ export type JobType =
   | 'reminder.event'
   | 'smartupload.process'
   | 'smartupload.secondPass'
-  | 'smartupload.autoCommit';
+  | 'smartupload.autoCommit'
+  | 'ocr.process';
 
 export interface JobTypeNameMap {
   'email.send': EmailSendJobData;
@@ -34,6 +35,7 @@ export interface JobTypeNameMap {
   'smartupload.process': SmartUploadProcessJobData;
   'smartupload.secondPass': SmartUploadSecondPassJobData;
   'smartupload.autoCommit': SmartUploadAutoCommitJobData;
+  'ocr.process': OcrProcessJobData;
 }
 
 // ============================================================================
@@ -148,6 +150,21 @@ export interface SmartUploadSecondPassJobData {
 export interface SmartUploadAutoCommitJobData {
   /** Smart upload session ID */
   sessionId: string;
+}
+
+export interface OcrProcessJobData {
+  /** SmartUploadSession.uploadSessionId */
+  sessionId: string;
+  /** Optional storage key override */
+  storageKey?: string;
+  /** Optional display filename override */
+  filename?: string;
+  /** Optional OCR option overrides; parsed by the OCR worker */
+  options?: Record<string, unknown>;
+  /** Whether OCR may overwrite existing extracted metadata */
+  overwriteExistingMetadata?: boolean;
+  /** Whether OCR should update parse status */
+  updateParseStatus?: boolean;
 }
 
 // ============================================================================
@@ -286,6 +303,17 @@ export const JOB_CONFIGS: Record<JobType, JobConfig> = {
     removeOnFail: 50,
     concurrency: 1,
   },
+  'ocr.process': {
+    priority: 4,
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 5000,
+    },
+    removeOnComplete: 100,
+    removeOnFail: 50,
+    concurrency: 1,
+  },
 };
 
 // ============================================================================
@@ -342,6 +370,8 @@ export function getQueueNameForJob(jobType: JobType): QueueName {
     case 'smartupload.secondPass':
     case 'smartupload.autoCommit':
       return QUEUE_NAMES.SMART_UPLOAD;
+    case 'ocr.process':
+      return QUEUE_NAMES.OCR;
     default:
       return QUEUE_NAMES.EMAIL;
   }
