@@ -81,6 +81,7 @@ export type StandMessage =
 export interface UseStandSyncOptions {
   eventId: string;
   userId: string;
+  musicId?: string;
   onStateChange?: (state: StandState) => void;
   onRosterChange?: (roster: StandRosterMember[]) => void;
   onPresenceChange?: (presence: PresenceMessage) => void;
@@ -106,6 +107,16 @@ export interface UseStandSyncReturn {
   reconnect: () => void;
   disconnect: () => void;
   isPollingFallback: boolean;
+}
+
+interface PollingSyncResponse {
+  eventId?: string;
+  currentPage?: number;
+  currentPieceIndex?: number;
+  nightMode?: boolean;
+  lastSyncAt?: string;
+  activeUserList?: Array<{ userId: string; name: string; section?: string }>;
+  recentAnnotations?: Record<string, unknown>[];
 }
 
 // =============================================================================
@@ -139,6 +150,18 @@ function canUseSocketIO(): boolean {
   return typeof window !== 'undefined';
 }
 
+function normalizeRosterMembers(
+  activeUserList: PollingSyncResponse['activeUserList']
+): StandRosterMember[] {
+  if (!Array.isArray(activeUserList)) return [];
+  return activeUserList.map((u) => ({
+    userId: u.userId,
+    name: u.name,
+    section: u.section,
+    joinedAt: new Date().toISOString(),
+  }));
+}
+
 // =============================================================================
 // HOOK
 // =============================================================================
@@ -154,6 +177,7 @@ function canUseSocketIO(): boolean {
 export function useStandSync({
   eventId,
   userId,
+  musicId,
   onStateChange,
   onRosterChange,
   onPresenceChange,
@@ -171,6 +195,7 @@ export function useStandSync({
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const seenAnnotationVersionsRef = useRef<Map<string, string>>(new Map());
 
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<Error | null>(null);
@@ -182,17 +207,39 @@ export function useStandSync({
   const connectRef = useRef<() => void>(() => {});
   const scheduleReconnectRef = useRef<() => void>(() => {});
 
+  const sendPresence = useCallback(
+    async (status: 'joined' | 'left') => {
+      try {
+        await fetch('/api/stand/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            eventId,
+            presence: { type: 'presence', status },
+          }),
+        });
+      } catch (err) {
+        logger.error('[useStandSync] Failed to send presence:', err as Error);
+      }
+    },
+    [eventId]
+  );
+
   // =============================================================================
   // POLLING FALLBACK
   // =============================================================================
 
   const fetchState = useCallback(async () => {
     try {
-      const response = await fetch(`/api/stand/sync?eventId=${eventId}`);
-      if (response.ok) {
-        const data = await response.json();
+      const params = new URLSearchParams({ eventId });
+      if (musicId) {
+        params.set('musicId', musicId);
+      }
 
-        // Build StandState from the flat response
+      const response = await fetch(`/api/stand/sync?${params.toString()}`);
+      if (response.ok) {
+        const data = (await response.json()) as PollingSyncResponse;
+
         const state: StandState = {
           eventId: data.eventId ?? eventId,
           currentPage: data.currentPage,
@@ -203,19 +250,34 @@ export function useStandSync({
         setCurrentState(state);
         onStateChange?.(state);
 
-        // Build roster from activeUserList
-        if (data.activeUserList) {
-          const rosterMembers: StandRosterMember[] = data.activeUserList.map(
-            (u: { userId: string; name: string; section?: string }) => ({
-              userId: u.userId,
-              name: u.name,
-              section: u.section,
-              joinedAt: new Date().toISOString(),
-            })
-          );
-          setRoster(rosterMembers);
-          onRosterChange?.(rosterMembers);
-          useStandStore.getState().setRoster(rosterMembers);
+        const rosterMembers = normalizeRosterMembers(data.activeUserList);
+        setRoster(rosterMembers);
+        onRosterChange?.(rosterMembers);
+        useStandStore.getState().setRoster(rosterMembers);
+
+        if (Array.isArray(data.recentAnnotations)) {
+          for (const annotation of data.recentAnnotations) {
+            const annotationId =
+              typeof annotation.id === 'string' ? annotation.id : null;
+            const updatedAt =
+              typeof annotation.updatedAt === 'string'
+                ? annotation.updatedAt
+                : typeof annotation.createdAt === 'string'
+                  ? annotation.createdAt
+                  : '';
+            if (!annotationId) continue;
+
+            const versionKey = `${annotationId}:${updatedAt}`;
+            if (seenAnnotationVersionsRef.current.get(annotationId) === versionKey) {
+              continue;
+            }
+
+            seenAnnotationVersionsRef.current.set(annotationId, versionKey);
+            onAnnotation?.({
+              type: 'annotation',
+              data: annotation,
+            });
+          }
         }
 
         setIsConnected(true);
@@ -224,7 +286,7 @@ export function useStandSync({
     } catch (error) {
       logger.error('[useStandSync] Polling error:', error as Error);
     }
-  }, [eventId, onStateChange, onRosterChange]);
+  }, [eventId, musicId, onAnnotation, onRosterChange, onStateChange]);
 
   const startPollingFallback = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -234,19 +296,15 @@ export function useStandSync({
     setIsPollingFallback(true);
     logger.debug('[useStandSync] Starting polling fallback - WebSocket unavailable');
 
-    // Send join presence so server tracks us
-    fetch('/api/stand/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ eventId, presence: { type: 'presence', status: 'joined' } }),
-    }).catch(() => {/* ignore */});
+    const poll = () => {
+      void sendPresence('joined').finally(() => {
+        void fetchState();
+      });
+    };
 
-    // Initial fetch
-    fetchState();
-
-    // Set up polling interval
-    pollingIntervalRef.current = setInterval(fetchState, pollingInterval);
-  }, [eventId, fetchState, pollingInterval]);
+    poll();
+    pollingIntervalRef.current = setInterval(poll, pollingInterval);
+  }, [fetchState, pollingInterval, sendPresence]);
 
   const stopPollingFallback = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -267,7 +325,6 @@ export function useStandSync({
     }
 
     reconnectAttemptsRef.current += 1;
-    // Exponential back-off: base * 2^(attempts-1), capped at MAX_BACKOFF_MS
     const delay = Math.min(
       reconnectInterval * Math.pow(2, reconnectAttemptsRef.current - 1),
       MAX_BACKOFF_MS,
@@ -287,7 +344,6 @@ export function useStandSync({
   }, [reconnectInterval, maxReconnectAttempts, startPollingFallback]);
 
   const connect = useCallback(() => {
-    // Check if WebSocket is available
     if (!isWebSocketAvailable() || !canUseSocketIO()) {
       logger.warn('[useStandSync] WebSocket not available, using polling fallback');
       startPollingFallback();
@@ -308,7 +364,7 @@ export function useStandSync({
           userId,
         },
         transports: ['websocket', 'polling'],
-        reconnection: false, // We handle reconnection manually
+        reconnection: false,
         timeout: 10000,
       });
 
@@ -319,7 +375,6 @@ export function useStandSync({
         reconnectAttemptsRef.current = 0;
         stopPollingFallback();
 
-        // Start heartbeat to keep presence alive on the server
         if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = setInterval(() => {
           socketRef.current?.emit('message', { type: 'heartbeat' });
@@ -330,17 +385,14 @@ export function useStandSync({
         logger.debug(`[useStandSync] Disconnected: ${reason}`);
         setIsConnected(false);
 
-        // Stop heartbeat on disconnect
         if (heartbeatIntervalRef.current) {
           clearInterval(heartbeatIntervalRef.current);
           heartbeatIntervalRef.current = null;
         }
 
-        // Attempt reconnection if not manually disconnected
         if (reason !== 'io client disconnect' && reconnectAttemptsRef.current < maxReconnectAttempts) {
           scheduleReconnectRef.current();
         } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-          // Fall back to polling after max reconnect attempts
           startPollingFallback();
         }
       });
@@ -349,11 +401,10 @@ export function useStandSync({
         logger.error('[useStandSync] Connection error:', error);
         setConnectionError(new Error(error.message));
         setIsConnected(false);
-        
+
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           scheduleReconnectRef.current();
         } else {
-          // Fall back to polling
           startPollingFallback();
         }
       });
@@ -363,25 +414,20 @@ export function useStandSync({
         onError?.(new Error(error.message));
       });
 
-      // Handle state messages
       socket.on('state', (state: StateMessage) => {
         setCurrentState(state);
         onStateChange?.(state);
       });
 
-      // Handle roster messages
       socket.on('roster', (data: RosterMessage) => {
         setRoster(data.members);
         onRosterChange?.(data.members);
-        // mirror to global store
         useStandStore.getState().setRoster(data.members);
       });
 
-      // Handle generic messages
       socket.on('message', (message: StandMessage) => {
         switch (message.type) {
           case 'presence':
-            // Update roster based on presence
             if (message.status === 'joined') {
               setRoster((prev) => {
                 if (prev.some((m) => m.userId === message.userId)) {
@@ -396,7 +442,6 @@ export function useStandSync({
                     joinedAt: new Date().toISOString(),
                   },
                 ];
-                // update global store as well
                 useStandStore.getState().addRosterEntry({
                   userId: message.userId,
                   name: message.name,
@@ -434,20 +479,19 @@ export function useStandSync({
     }
   }, [eventId, userId, onStateChange, onRosterChange, onPresenceChange, onCommand, onModeChange, onAnnotation, onError, maxReconnectAttempts, startPollingFallback, stopPollingFallback]);
 
-  // Update refs to avoid circular dependencies
   connectRef.current = connect;
   scheduleReconnectRef.current = scheduleReconnect;
 
-  // Send command message
   const sendCommand = useCallback(
     (command: Omit<CommandMessage, 'type'>) => {
       if (isPollingFallback) {
-        // Use the main sync endpoint with command payload
         fetch('/api/stand/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ eventId, command: { type: 'command', ...command } }),
-        }).catch((err) => { logger.error('[useStandSync] Failed to send command:', err as Error); });
+        }).catch((err) => {
+          logger.error('[useStandSync] Failed to send command:', err as Error);
+        });
         return;
       }
 
@@ -464,19 +508,21 @@ export function useStandSync({
     [eventId, isPollingFallback]
   );
 
-  // Send mode message
   const sendMode = useCallback(
     (name: string, value: unknown) => {
       if (isPollingFallback) {
-        // Use the main sync endpoint for mode changes
+        const payload =
+          name === 'nightMode' && typeof value === 'boolean'
+            ? { eventId, nightMode: value }
+            : { eventId, mode: { type: 'mode', name, value } };
+
         fetch('/api/stand/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            eventId,
-            command: { type: 'command', action: 'toggleNightMode', value: name === 'nightMode' ? value : undefined },
-          }),
-        }).catch((err) => { logger.error('[useStandSync] Failed to send mode:', err as Error); });
+          body: JSON.stringify(payload),
+        }).catch((err) => {
+          logger.error('[useStandSync] Failed to send mode:', err as Error);
+        });
         return;
       }
 
@@ -494,11 +540,9 @@ export function useStandSync({
     [eventId, isPollingFallback]
   );
 
-  // Send annotation message
   const sendAnnotation = useCallback(
     (data: Record<string, unknown>) => {
       if (isPollingFallback) {
-        // Annotations are handled by the annotation API directly
         return;
       }
 
@@ -515,7 +559,6 @@ export function useStandSync({
     [isPollingFallback]
   );
 
-  // Manual reconnect
   const reconnect = useCallback(() => {
     reconnectAttemptsRef.current = 0;
     stopPollingFallback();
@@ -525,16 +568,14 @@ export function useStandSync({
     connect();
   }, [connect, stopPollingFallback]);
 
-  // Manual disconnect
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
     }
     stopPollingFallback();
-    reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent auto-reconnect
+    reconnectAttemptsRef.current = maxReconnectAttempts;
 
     if (socketRef.current) {
-      // Send leave presence
       socketRef.current.emit('message', {
         type: 'presence',
         userId,
@@ -543,14 +584,15 @@ export function useStandSync({
       });
       socketRef.current.disconnect();
       socketRef.current = null;
+    } else {
+      void sendPresence('left');
     }
 
     setIsConnected(false);
     setRoster([]);
     setCurrentState(null);
-  }, [userId, maxReconnectAttempts, stopPollingFallback]);
+  }, [userId, maxReconnectAttempts, sendPresence, stopPollingFallback]);
 
-  // Connect on mount — default to polling; only attempt WebSocket if realtimeEnabled
   useEffect(() => {
     if (realtimeEnabled) {
       connect();
@@ -559,7 +601,6 @@ export function useStandSync({
     }
 
     return () => {
-      // Cleanup on unmount
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -571,7 +612,6 @@ export function useStandSync({
       stopPollingFallback();
 
       if (socketRef.current) {
-        // Send leave presence before disconnecting
         socketRef.current.emit('message', {
           type: 'presence',
           userId,
@@ -580,11 +620,13 @@ export function useStandSync({
         });
         socketRef.current.disconnect();
         socketRef.current = null;
+      } else {
+        void sendPresence('left');
       }
 
       setIsConnected(false);
     };
-  }, [eventId, userId, realtimeEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connect, realtimeEnabled, sendPresence, startPollingFallback, stopPollingFallback, userId]);
 
   return {
     isConnected,
