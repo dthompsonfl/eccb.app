@@ -136,16 +136,10 @@ const CLIENT_HEARTBEAT_INTERVAL_MS = 30_000;
 // HELPERS
 // =============================================================================
 
-/**
- * Check if WebSocket is available
- */
 function isWebSocketAvailable(): boolean {
   return typeof WebSocket !== 'undefined' || typeof window !== 'undefined';
 }
 
-/**
- * Check if Socket.IO is likely to work
- */
 function canUseSocketIO(): boolean {
   return typeof window !== 'undefined';
 }
@@ -166,14 +160,6 @@ function normalizeRosterMembers(
 // HOOK
 // =============================================================================
 
-/**
- * Hook for real-time stand synchronization via WebSocket
- * Falls back to polling when WebSocket is unavailable
- *
- * @param eventId - The event ID to sync with
- * @param userId - The current user's ID
- * @param callbacks - Optional callbacks for different message types
- */
 export function useStandSync({
   eventId,
   userId,
@@ -203,9 +189,10 @@ export function useStandSync({
   const [currentState, setCurrentState] = useState<StandState | null>(null);
   const [isPollingFallback, setIsPollingFallback] = useState(false);
 
-  // Refs to break circular dependencies
   const connectRef = useRef<() => void>(() => {});
   const scheduleReconnectRef = useRef<() => void>(() => {});
+  const fetchStateRef = useRef<() => Promise<void>>(async () => {});
+  const sendPresenceRef = useRef<(status: 'joined' | 'left') => Promise<void>>(async () => {});
 
   const sendPresence = useCallback(
     async (status: 'joined' | 'left') => {
@@ -224,10 +211,6 @@ export function useStandSync({
     },
     [eventId]
   );
-
-  // =============================================================================
-  // POLLING FALLBACK
-  // =============================================================================
 
   const fetchState = useCallback(async () => {
     try {
@@ -288,6 +271,9 @@ export function useStandSync({
     }
   }, [eventId, musicId, onAnnotation, onRosterChange, onStateChange]);
 
+  fetchStateRef.current = fetchState;
+  sendPresenceRef.current = sendPresence;
+
   const startPollingFallback = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -297,14 +283,14 @@ export function useStandSync({
     logger.debug('[useStandSync] Starting polling fallback - WebSocket unavailable');
 
     const poll = () => {
-      void sendPresence('joined').finally(() => {
-        void fetchState();
+      void sendPresenceRef.current('joined').finally(() => {
+        void fetchStateRef.current();
       });
     };
 
     poll();
     pollingIntervalRef.current = setInterval(poll, pollingInterval);
-  }, [fetchState, pollingInterval, sendPresence]);
+  }, [pollingInterval]);
 
   const stopPollingFallback = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -314,11 +300,6 @@ export function useStandSync({
     setIsPollingFallback(false);
   }, []);
 
-  // =============================================================================
-  // WEBSOCKET CONNECTION
-  // =============================================================================
-
-  // Schedule reconnection attempt with exponential back-off
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -585,13 +566,13 @@ export function useStandSync({
       socketRef.current.disconnect();
       socketRef.current = null;
     } else {
-      void sendPresence('left');
+      void sendPresenceRef.current('left');
     }
 
     setIsConnected(false);
     setRoster([]);
     setCurrentState(null);
-  }, [userId, maxReconnectAttempts, sendPresence, stopPollingFallback]);
+  }, [userId, maxReconnectAttempts, stopPollingFallback]);
 
   useEffect(() => {
     if (realtimeEnabled) {
@@ -621,12 +602,12 @@ export function useStandSync({
         socketRef.current.disconnect();
         socketRef.current = null;
       } else {
-        void sendPresence('left');
+        void sendPresenceRef.current('left');
       }
 
       setIsConnected(false);
     };
-  }, [connect, realtimeEnabled, sendPresence, startPollingFallback, stopPollingFallback, userId]);
+  }, [connect, realtimeEnabled, startPollingFallback, stopPollingFallback, userId]);
 
   return {
     isConnected,
