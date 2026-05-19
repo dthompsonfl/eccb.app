@@ -7,6 +7,7 @@ import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { QUEUE_NAMES } from '@/lib/jobs/definitions';
 import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
 import { downloadFile } from '@/lib/services/storage';
 import { extractOcrFallbackMetadata, type OcrFallbackOptions } from '@/lib/services/ocr-fallback';
 
@@ -335,7 +336,8 @@ export function startOcrWorker(): void {
   // Dedicated Redis connection for this worker.
   // We avoid importing internal helpers to keep this module isolated and production-ready.
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-  const redisConnection = new Redis(redisUrl, {
+  const redisConnection = new Redis({
+    ...buildRedisOptionsFromUrl(redisUrl),
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
   });

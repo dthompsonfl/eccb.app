@@ -24,6 +24,8 @@ let currentLogFile: string | null = null;
 let currentLogStream: fs.WriteStream | null = null;
 let currentLogDate: string | null = null;
 let currentLogSize = 0;
+let isFileLoggerInitialized = false;
+let cleanupIntervalStarted = false;
 
 /**
  * Get current date string for log filename
@@ -146,12 +148,34 @@ function cleanupOldLogs(): void {
 }
 
 /**
+ * Lazily initialize file logging resources in production.
+ * Avoids side effects at module-load/build-trace time.
+ */
+function initializeFileLogger(): void {
+  if (!isProduction || isFileLoggerInitialized) {
+    return;
+  }
+
+  ensureLogDirectory();
+  rotateLogFile();
+  cleanupOldLogs();
+
+  if (!cleanupIntervalStarted) {
+    setInterval(cleanupOldLogs, 60 * 60 * 1000);
+    cleanupIntervalStarted = true;
+  }
+
+  isFileLoggerInitialized = true;
+}
+
+/**
  * Write log entry to file
  */
 function writeToFile(entry: string): void {
   if (!isProduction) return;
   
   try {
+    initializeFileLogger();
     rotateLogFile();
     
     if (currentLogStream) {
@@ -209,18 +233,6 @@ export interface FileLogger {
  * Create file logger instance
  */
 function createFileLogger(): FileLogger {
-  // Initialize on creation
-  if (isProduction) {
-    ensureLogDirectory();
-    rotateLogFile();
-    
-    // Run cleanup on startup
-    cleanupOldLogs();
-    
-    // Run cleanup periodically (every hour)
-    setInterval(cleanupOldLogs, 60 * 60 * 1000);
-  }
-  
   return {
     info: (message: string, context?: LogContext) => {
       const entry = formatFileEntry('info', message, context);

@@ -23,6 +23,7 @@ import {
   closeStandSocketServer,
 } from '@/lib/websocket/stand-socket';
 import { getStandSettings } from '@/lib/stand/settings';
+import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
 
 /**
  * Worker Entry Point for ECCB Platform
@@ -320,7 +321,11 @@ async function main(): Promise<void> {
       
       const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
       const makeClient = (label: string) => {
-        const c = new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
+        const c = new Redis({
+          ...buildRedisOptionsFromUrl(REDIS_URL),
+          maxRetriesPerRequest: null,
+          lazyConnect: false,
+        });
         c.on('error', (e) => logger.error(`Socket Redis ${label} error`, { error: e.message }));
         return c;
       };

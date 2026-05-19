@@ -19,6 +19,7 @@ import {
 } from '@/lib/websocket/stand-socket';
 import { logger } from '@/lib/logger';
 import { getStandSettings } from '@/lib/stand/settings';
+import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 
@@ -30,7 +31,8 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 // for subscribing. They must not share a connection.
 
 function makeRedisClient(url: string, label: string): Redis {
-  const client = new Redis(url, {
+  const client = new Redis({
+    ...buildRedisOptionsFromUrl(url),
     maxRetriesPerRequest: null,
     retryStrategy: (times) => Math.min(times * 500, 10_000),
     lazyConnect: false,

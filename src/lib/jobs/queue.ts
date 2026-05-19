@@ -22,13 +22,15 @@ import {
   type SmartUploadSecondPassJobData,
 } from './definitions';
 import { logger } from '@/lib/logger';
+import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
 
 // ============================================================================
 // Redis Connection
 // ============================================================================
 
 const createRedisConnection = (): Redis => {
-  const connection = new Redis(env.REDIS_URL, {
+  const connection = new Redis({
+    ...buildRedisOptionsFromUrl(env.REDIS_URL),
     maxRetriesPerRequest: null, // Required for BullMQ
     enableReadyCheck: false,
     retryStrategy: (times: number) => {
