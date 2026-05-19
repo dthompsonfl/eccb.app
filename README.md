@@ -19,6 +19,7 @@ This platform provides:
 - 🔐 **Role-Based Access Control**: Fine-grained permissions with dot notation
 - 📄 **CMS**: Dynamic page creation and content management
 - 📊 **Reports**: Attendance and engagement analytics
+- 🔎 **Smart Upload OCR**: Optional local `glm-ocr` GPU service for OCR-first music ingestion
 
 ## Tech Stack
 
@@ -31,6 +32,7 @@ This platform provides:
 | Cache/Queue | Redis 6.0+ (BullMQ) |
 | Auth | Better Auth |
 | Storage | Local filesystem or S3-compatible |
+| Optional OCR Service | GLM-OCR via local FastAPI GPU container |
 | Testing | Vitest |
 | Animation | GSAP ScrollTrigger |
 
@@ -180,6 +182,14 @@ npm start
 
 For complete deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
+## GLM-OCR Service
+
+The repository includes an optional local `glm-ocr` service under `services/glm-ocr` for Smart Upload OCR-first workflows.
+
+- Start it with `docker compose up -d glm-ocr`
+- Default internal endpoint: `http://glm-ocr:8090/v1`
+- Operational guide: [docs/smart-upload-glm-ocr.md](./docs/smart-upload-glm-ocr.md)
+
 ## Security Features
 
 - **CSRF Protection**: All state-changing operations protected
@@ -248,9 +258,3 @@ Copyright © 2026 Emerald Coast Community Band. All rights reserved.
 ## Support
 
 For technical issues, contact the development team or create an issue in the repository.
-
----
-
-**Version**: 0.1.0  
-**Status**: Production Ready  
-**Last Updated**: February 2026
