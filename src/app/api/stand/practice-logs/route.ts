@@ -13,7 +13,14 @@ import { applyRateLimit } from '@/lib/rate-limit';
 import { z } from 'zod';
 import { requireStandAccess, canAccessPiece } from '@/lib/stand/access';
 import { getStandSettings } from '@/lib/stand/settings';
-import { jsonOk, json404, json500, parseBody, cuidSchema } from '@/lib/stand/http';
+import {
+  jsonOk,
+  json400,
+  json404,
+  json500,
+  parseBody,
+  cuidSchema,
+} from '@/lib/stand/http';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,7 +28,8 @@ export const dynamic = 'force-dynamic';
 const practiceLogCreateSchema = z.object({
   pieceId: cuidSchema,
   assignmentId: cuidSchema.optional(),
-  durationSeconds: z.number().int().positive().max(86_400),
+  durationSeconds: z.number().int().positive().max(86_400).optional(),
+  durationMinutes: z.number().int().positive().max(1_440).optional(),
   notes: z.string().max(2000).optional(),
   practicedAt: z.string().datetime().optional(),
 });
@@ -31,13 +39,13 @@ export async function GET(request: NextRequest) {
     const rateLimited = await applyRateLimit(request, 'stand-annotation');
     if (rateLimited) return rateLimited;
 
-      // feature toggle check first so that unauthenticated callers still return
-      // 404 when disabled
-      const settings = await getStandSettings();
-      if (!settings.practiceTrackingEnabled) return json404('Practice tracking is disabled');
+    const settings = await getStandSettings();
+    if (!settings.practiceTrackingEnabled) {
+      return json404('Practice tracking is disabled');
+    }
 
-      const ctx = await requireStandAccess();
-      if (ctx instanceof Response) return ctx;
+    const ctx = await requireStandAccess();
+    if (ctx instanceof Response) return ctx;
 
     const { searchParams } = new URL(request.url);
     const pieceId = searchParams.get('pieceId');
@@ -45,7 +53,11 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '50', 10), 200);
     const offset = parseInt(searchParams.get('offset') ?? '0', 10);
 
-    // Non-directors can only see their own logs
+    if (pieceId) {
+      const hasPieceAccess = await canAccessPiece(ctx.userId, pieceId);
+      if (!hasPieceAccess) return json404('Piece not found or not accessible');
+    }
+
     const targetUserId = ctx.isDirector && requestedUserId ? requestedUserId : ctx.userId;
 
     const where: Record<string, unknown> = { userId: targetUserId };
@@ -55,7 +67,13 @@ export async function GET(request: NextRequest) {
       prisma.practiceLog.findMany({
         where,
         include: {
-          piece: { select: { id: true, title: true, composer: { select: { fullName: true } } } },
+          piece: {
+            select: {
+              id: true,
+              title: true,
+              composer: { select: { fullName: true } },
+            },
+          },
         },
         orderBy: { practicedAt: 'desc' },
         take: limit,
@@ -76,9 +94,10 @@ export async function POST(request: NextRequest) {
     const rateLimited = await applyRateLimit(request, 'stand-annotation');
     if (rateLimited) return rateLimited;
 
-    // feature toggle check first
     const settings = await getStandSettings();
-    if (!settings.practiceTrackingEnabled) return json404('Practice tracking is disabled');
+    if (!settings.practiceTrackingEnabled) {
+      return json404('Practice tracking is disabled');
+    }
 
     const ctx = await requireStandAccess();
     if (ctx instanceof Response) return ctx;
@@ -86,23 +105,36 @@ export async function POST(request: NextRequest) {
     const parsed = await parseBody(request, practiceLogCreateSchema);
     if (parsed instanceof Response) return parsed;
 
-    const { pieceId, assignmentId, durationSeconds, notes, practicedAt } = parsed;
+    const { pieceId, assignmentId, durationSeconds, durationMinutes, notes, practicedAt } = parsed;
 
-    // Verify piece access
     const hasAccess = await canAccessPiece(ctx.userId, pieceId);
     if (!hasAccess) return json404('Piece not found or not accessible');
+
+    const normalizedDurationSeconds =
+      durationSeconds ??
+      (durationMinutes !== undefined ? durationMinutes * 60 : undefined);
+
+    if (!normalizedDurationSeconds) {
+      return json400('durationSeconds or durationMinutes is required');
+    }
 
     const log = await prisma.practiceLog.create({
       data: {
         userId: ctx.userId,
         pieceId,
         assignmentId: assignmentId ?? null,
-        durationSeconds,
+        durationSeconds: normalizedDurationSeconds,
         notes: notes ?? null,
         practicedAt: practicedAt ? new Date(practicedAt) : new Date(),
       },
       include: {
-        piece: { select: { id: true, title: true, composer: { select: { fullName: true } } } },
+        piece: {
+          select: {
+            id: true,
+            title: true,
+            composer: { select: { fullName: true } },
+          },
+        },
       },
     });
 
