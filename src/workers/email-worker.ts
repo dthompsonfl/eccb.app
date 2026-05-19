@@ -151,44 +151,37 @@ async function processEmailBulk(job: Job<EmailBulkJobData>): Promise<void> {
 // ============================================================================
 
 let emailWorker: ReturnType<typeof createWorker> | null = null;
-let bulkEmailWorker: ReturnType<typeof createWorker> | null = null;
 
 /**
  * Start the email worker
  */
 export function startEmailWorker(): void {
+  if (emailWorker) {
+    return;
+  }
+
   const emailConfig = JOB_CONFIGS['email.send'];
   const bulkConfig = JOB_CONFIGS['email.bulk'];
 
-  // Worker for single emails
   emailWorker = createWorker({
     queueName: 'EMAIL',
-    concurrency: emailConfig.concurrency,
+    concurrency: Math.max(emailConfig.concurrency, bulkConfig.concurrency),
     processor: async (job: Job) => {
-      if (job.name === 'email.send') {
-        await processEmailSend(job as Job<EmailSendJobData>);
-      } else {
-        throw new Error(`Unknown job type: ${job.name}`);
+      switch (job.name) {
+        case 'email.send':
+          await processEmailSend(job as Job<EmailSendJobData>);
+          break;
+        case 'email.bulk':
+          await processEmailBulk(job as Job<EmailBulkJobData>);
+          break;
+        default:
+          throw new Error(`Unknown job type: ${job.name}`);
       }
     },
   });
 
-  // Worker for bulk emails (separate worker for isolation)
-  bulkEmailWorker = createWorker({
-    queueName: 'EMAIL',
-    concurrency: bulkConfig.concurrency,
-    processor: async (job: Job) => {
-      if (job.name === 'email.bulk') {
-        await processEmailBulk(job as Job<EmailBulkJobData>);
-      } else {
-        throw new Error(`Unknown job type: ${job.name}`);
-      }
-    },
-  });
-
-  logger.info('Email workers started', {
-    singleConcurrency: emailConfig.concurrency,
-    bulkConcurrency: bulkConfig.concurrency,
+  logger.info('Email worker started', {
+    concurrency: Math.max(emailConfig.concurrency, bulkConfig.concurrency),
   });
 }
 
@@ -200,18 +193,14 @@ export async function stopEmailWorker(): Promise<void> {
     await emailWorker.close();
     emailWorker = null;
   }
-  if (bulkEmailWorker) {
-    await bulkEmailWorker.close();
-    bulkEmailWorker = null;
-  }
-  logger.info('Email workers stopped');
+  logger.info('Email worker stopped');
 }
 
 /**
  * Check if email worker is running
  */
 export function isEmailWorkerRunning(): boolean {
-  return emailWorker !== null && bulkEmailWorker !== null;
+  return emailWorker !== null;
 }
 
 // ============================================================================
