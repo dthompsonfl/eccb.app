@@ -15,6 +15,19 @@ interface PendingLink {
   rect: DrawRect;
 }
 
+interface NavigationLinkResponse {
+  id: string;
+  fromPage: number;
+  fromX: number;
+  fromY: number;
+  toPage: number;
+  toMusicId: string | null;
+  toX: number;
+  toY: number;
+  label: string | null;
+  musicId: string;
+}
+
 /**
  * SmartNavEditor
  *
@@ -52,8 +65,10 @@ export function SmartNavEditor() {
   const [formDestPieceIdx, setFormDestPieceIdx] = useState(currentPieceIndex);
   const [saving, setSaving] = useState(false);
 
-  // Only directors/admins can edit navigation links
-  const canEdit = userContext?.isDirector ?? false;
+  // Directors and librarians can edit navigation links
+  const canEdit =
+    userContext?.isDirector === true ||
+    userContext?.roles.includes('LIBRARIAN') === true;
 
   const overlayRef = useRef<HTMLDivElement>(null);
   const startPosRef = useRef<{ x: number; y: number } | null>(null);
@@ -161,7 +176,12 @@ export function SmartNavEditor() {
         }),
       });
       if (!res.ok) throw new Error(`Save failed: ${res.status}`);
-      const { navigationLink: link } = await res.json() as { navigationLink: { id: string; fromPage: number; fromX: number; fromY: number; toPage: number; toMusicId: string | null; toX: number; toY: number; label: string | null; musicId: string } };
+      const payload = (await res.json()) as {
+        navigationLink?: NavigationLinkResponse;
+        link?: NavigationLinkResponse;
+      };
+      const link = payload.navigationLink ?? payload.link;
+      if (!link) throw new Error('Save failed: missing navigation link payload');
 
       const navLink: NavigationLink = {
         id: link.id,
@@ -191,11 +211,12 @@ export function SmartNavEditor() {
   const handleDelete = useCallback(
     async (id: string) => {
       try {
-        await fetch(`/api/stand/navigation-links/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/stand/navigation-links/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+        removeNavigationLink(id);
       } catch (err) {
         console.error('Failed to delete nav link:', err);
       }
-      removeNavigationLink(id);
     },
     [removeNavigationLink]
   );
@@ -262,6 +283,12 @@ export function SmartNavEditor() {
             className="absolute border-2 border-amber-400/70 bg-amber-400/10 hover:bg-amber-400/20 transition-colors rounded group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
             style={{ ...rectToStyle({ x1: link.fromX, y1: link.fromY, x2: link.toX, y2: link.toY }), pointerEvents: 'auto' }}
             onClick={() => handleHotspotClick(link)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleHotspotClick(link);
+              }
+            }}
             role="button"
             tabIndex={0}
             aria-label={`Navigation hotspot: ${link.label || `page ${link.toPage}`}`}
@@ -277,7 +304,7 @@ export function SmartNavEditor() {
             {editMode && (
               <button
                 className="absolute -top-2 -right-2 w-4 h-4 bg-destructive text-destructive-foreground text-xs rounded-full flex items-center justify-center leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
-                onClick={(e) => { e.stopPropagation(); handleDelete(link.id); }}
+                onClick={(e) => { e.stopPropagation(); void handleDelete(link.id); }}
                 style={{ pointerEvents: 'auto' }}
                 title="Delete hotspot"
                 aria-label="Delete hotspot"
@@ -365,7 +392,7 @@ export function SmartNavEditor() {
                 Cancel
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 disabled={saving}
                 className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                 aria-label="Save hotspot"
@@ -381,4 +408,3 @@ export function SmartNavEditor() {
 }
 
 SmartNavEditor.displayName = 'SmartNavEditor';
-
