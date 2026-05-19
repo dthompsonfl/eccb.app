@@ -8,7 +8,7 @@ import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 // Types
 // =============================================================================
 
-type Provider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'custom';
+type Provider = 'glm-ocr' | 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'custom';
 
 type ParamType = 'number' | 'integer' | 'boolean' | 'string' | 'enum';
 
@@ -371,7 +371,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const validProviders: Provider[] = ['ollama', 'openai', 'anthropic', 'gemini', 'openrouter', 'custom'];
+    const validProviders: Provider[] = ['glm-ocr', 'ollama', 'openai', 'anthropic', 'gemini', 'openrouter', 'custom'];
     if (!validProviders.includes(provider)) {
       return NextResponse.json(
         { error: `Invalid provider: ${provider}. Must be one of: ${validProviders.join(', ')}` },
@@ -383,6 +383,7 @@ export async function GET(request: NextRequest) {
     let params: ModelParam[];
 
     switch (provider) {
+      case 'glm-ocr':
       case 'openai':
       case 'openrouter':
       case 'custom': {

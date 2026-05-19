@@ -74,6 +74,9 @@ export class OpenAIAdapter implements LLMAdapter {
         // Ollama running locally — no auth needed
         apiKey = undefined;
         break;
+      case 'glm-ocr':
+        apiKey = config.llm_glm_ocr_api_key || undefined;
+        break;
       case 'custom':
         // Custom OpenAI-compat servers may or may not require a key
         apiKey = config.llm_custom_api_key || undefined;

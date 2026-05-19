@@ -5,6 +5,7 @@
 // ============================================================
 
 export const LLM_PROVIDER_VALUES = [
+  'glm-ocr',
   'ollama',
   'ollama-cloud',
   'openai',
@@ -42,6 +43,20 @@ export interface ProviderMeta {
 }
 
 export const LLM_PROVIDERS: ProviderMeta[] = [
+  {
+    value: 'glm-ocr',
+    label: 'GLM-OCR (Local GPU)',
+    description: 'Local NVIDIA GPU-backed GLM-OCR service for Smart Upload image OCR',
+    requiresApiKey: false,
+    defaultEndpoint: 'http://glm-ocr:8090/v1',
+    defaultVisionModel: 'zai-org/GLM-OCR',
+    defaultVerificationModel: 'zai-org/GLM-OCR',
+    apiKeyLabel: 'GLM-OCR Service Token',
+    apiKeyPlaceholder: 'Optional bearer token',
+    docsUrl: '/docs/smart-upload-glm-ocr',
+    supportsPdfInput: false,
+    maxImagesPerRequest: 1,
+  },
   {
     value: 'ollama',
     label: 'Ollama (Local / Self-hosted)',

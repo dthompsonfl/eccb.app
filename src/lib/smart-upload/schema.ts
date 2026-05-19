@@ -30,6 +30,7 @@ type LegacySecretKey = typeof LEGACY_SECRET_KEYS[number];
 export const SECRET_KEYS = LEGACY_SECRET_KEYS;
 
 const LEGACY_API_KEY_FIELD_BY_PROVIDER: Record<string, LegacySecretKey | ''> = {
+  'glm-ocr': '',
   ollama: '',
   'ollama-cloud': 'llm_ollama_cloud_api_key',
   openai: 'llm_openai_api_key',
@@ -46,7 +47,7 @@ const LEGACY_API_KEY_FIELD_BY_PROVIDER: Record<string, LegacySecretKey | ''> = {
 // =============================================================================
 
 // Create provider enum from the existing values array — must match LLM_PROVIDER_VALUES in providers.ts
-const providerTuple = ['ollama', 'ollama-cloud', 'openai', 'anthropic', 'gemini', 'openrouter', 'mistral', 'groq', 'custom'] as const;
+const providerTuple = ['glm-ocr', 'ollama', 'ollama-cloud', 'openai', 'anthropic', 'gemini', 'openrouter', 'mistral', 'groq', 'custom'] as const;
 export const ProviderValueSchema = z.enum(providerTuple);
 export type ProviderValue = z.infer<typeof ProviderValueSchema>;
 
@@ -497,7 +498,7 @@ export type SmartUploadSettings = z.infer<typeof SmartUploadSettingsSchema>;
  */
 export function providerRequiresApiKey(provider?: ProviderValue | string): boolean {
   if (!provider || provider === '') return false;
-  return provider !== 'ollama' && provider !== 'custom';
+  return provider !== 'glm-ocr' && provider !== 'ollama' && provider !== 'custom';
 }
 
 export function getApiKeyFieldForProvider(provider?: ProviderValue | string): LegacySecretKey | '' {
@@ -521,8 +522,8 @@ export function validateProviderApiKey(
  * Check if a provider requires an endpoint URL
  */
 export function providerRequiresEndpoint(provider?: ProviderValue | string): boolean {
-  // Custom and local Ollama endpoints need explicit URL
-  return provider === 'custom' || provider === 'ollama';
+  // Local and proxy-backed providers should expose an editable endpoint.
+  return provider === 'glm-ocr' || provider === 'custom' || provider === 'ollama';
 }
 
 /**
@@ -539,7 +540,7 @@ export function validateProviderEndpoint(
   if (!endpointUrl || endpointUrl.trim() === '') {
     return {
       valid: false,
-      error: 'Custom provider requires an endpoint URL.',
+      error: `${provider} requires an endpoint URL.`,
     };
   }
 

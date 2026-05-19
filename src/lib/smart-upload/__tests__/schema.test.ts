@@ -87,7 +87,7 @@ describe('SmartUploadSettingsSchema', () => {
 
   describe('provider validation', () => {
     it('should accept all valid provider values', () => {
-      const providers = ['ollama', 'ollama-cloud', 'openai', 'anthropic', 'gemini', 'openrouter', 'mistral', 'groq', 'custom'] as const;
+      const providers = ['glm-ocr', 'ollama', 'ollama-cloud', 'openai', 'anthropic', 'gemini', 'openrouter', 'mistral', 'groq', 'custom'] as const;
       for (const provider of providers) {
         const result = SmartUploadSettingsSchema.safeParse({
           ...validSettings,
@@ -407,10 +407,15 @@ describe('providerRequiresApiKey', () => {
     expect(providerRequiresApiKey('mistral')).toBe(true);
     expect(providerRequiresApiKey('groq')).toBe(true);
   });
+
+  it('should return false for local glm-ocr', () => {
+    expect(providerRequiresApiKey('glm-ocr')).toBe(false);
+  });
 });
 
 describe('providerRequiresEndpoint', () => {
-  it('should return true for custom and ollama providers', () => {
+  it('should return true for local and custom providers', () => {
+    expect(providerRequiresEndpoint('glm-ocr')).toBe(true);
     expect(providerRequiresEndpoint('custom')).toBe(true);
     expect(providerRequiresEndpoint('ollama')).toBe(true);
   });
@@ -441,16 +446,16 @@ describe('validateProviderApiKey', () => {
 });
 
 describe('validateProviderEndpoint', () => {
-  it('should return valid for non-custom providers regardless of endpoint', () => {
+  it('should return valid for cloud providers regardless of endpoint', () => {
     expect(validateProviderEndpoint('openai').valid).toBe(true);
     expect(validateProviderEndpoint('openai', '').valid).toBe(true);
     expect(validateProviderEndpoint('ollama', 'http://localhost').valid).toBe(true);
   });
 
-  it('should return invalid when endpoint is missing for custom provider', () => {
-    const result = validateProviderEndpoint('custom');
+  it('should return invalid when endpoint is missing for glm-ocr provider', () => {
+    const result = validateProviderEndpoint('glm-ocr');
     expect(result.valid).toBe(false);
-    expect(result.error).toBe('Custom provider requires an endpoint URL.');
+    expect(result.error).toBe('glm-ocr requires an endpoint URL.');
   });
 
   it('should return invalid when endpoint is empty for custom provider', () => {

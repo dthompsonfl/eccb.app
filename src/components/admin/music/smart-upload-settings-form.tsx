@@ -492,6 +492,14 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
   };
 
   const requiresEndpoint = providerRequiresEndpoint(provider);
+  const usingGlmOcr = [
+    provider,
+    defaultProvider,
+    visionProviderVal,
+    verificationProviderVal,
+    headerLabelProviderVal,
+    adjudicatorProviderVal,
+  ].includes('glm-ocr');
 
   return (
     <Form {...form}>
@@ -504,8 +512,8 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
               Provider Routing
             </CardTitle>
             <CardDescription>
-              Choose the AI provider for metadata extraction. Using a local Ollama instance is
-              recommended for privacy.
+              Choose the AI provider for metadata extraction. Local providers are preferred for
+              privacy and controlled Smart Upload rollouts.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -564,6 +572,16 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
               <div className="rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 flex gap-2">
                 <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
                 <span>{modelError}</span>
+              </div>
+            )}
+
+            {usingGlmOcr && (
+              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 flex gap-2">
+                <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                <span>
+                  GLM-OCR is image-based. Keep OCR-first enabled, keep full-PDF sending disabled,
+                  and keep auto-commit conservative until fixture benchmarks are complete.
+                </span>
               </div>
             )}
           </CardContent>

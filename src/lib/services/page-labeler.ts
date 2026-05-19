@@ -14,8 +14,9 @@
  */
 
 import { logger } from '@/lib/logger';
-import { loadLLMConfig } from '@/lib/llm/config-loader';
+import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
 import { SessionBudget } from '@/lib/smart-upload/budgets';
+import { parseJsonLenient } from '@/lib/smart-upload/json';
 import { buildHeaderLabelPrompt } from '@/lib/smart-upload/prompts';
 import { extractPdfPageHeaders, normalizePdfText } from '@/lib/services/pdf-text-extractor';
 import { detectPartBoundaries, type SegmentationResult } from '@/lib/services/part-boundary-detector';
@@ -146,6 +147,26 @@ function nowMs(): number {
 
 function elapsedMs(startMs: number): number {
   return Math.max(1, Math.round(nowMs() - startMs));
+}
+
+function parseSinglePageLabelResponse(content: string): string {
+  const arrayResult = parseJsonLenient<Array<Record<string, unknown>>>(content, 'array');
+  if (arrayResult.ok) {
+    const first = arrayResult.value[0];
+    const label = typeof first?.label === 'string' ? first.label.trim() : '';
+    if (label) return normalizePdfText(label);
+    return '';
+  }
+
+  const objectResult = parseJsonLenient<Record<string, unknown>>(content, 'object');
+  if (objectResult.ok) {
+    const label = typeof objectResult.value.label === 'string'
+      ? objectResult.value.label.trim()
+      : '';
+    if (label) return normalizePdfText(label);
+  }
+
+  return normalizePdfText(content);
 }
 
 function asError(error: unknown): Error {
@@ -521,8 +542,14 @@ export async function labelPages(options: PageLabelerOptions): Promise<PageLabel
     llmReason = 'budget exhausted';
   } else {
     try {
-      const llmConfig = await loadLLMConfig();
-      const adapterConfig = runtimeToAdapterConfig(llmConfig);
+      const llmConfig = await loadSmartUploadRuntimeConfig();
+      const headerLabelStepConfig = await buildAdapterConfigForStep(llmConfig, 'header-label');
+      const adapterConfig = {
+        ...runtimeToAdapterConfig(llmConfig),
+        llm_provider: headerLabelStepConfig.provider,
+        llm_endpoint_url: headerLabelStepConfig.endpointUrl,
+        llm_vision_model: headerLabelStepConfig.model,
+      };
 
       const maxPagesToProcess = Math.min(totalPages, maxLLmPages);
       const pagesToLabel: number[] = [];
@@ -574,8 +601,9 @@ export async function labelPages(options: PageLabelerOptions): Promise<PageLabel
           [{ mimeType: 'image/png', base64Data: imageBase64, label: `Page ${pageNum} header` }],
           prompt,
           {
-            system: llmConfig.headerLabelPrompt,
-            modelParams: llmConfig.headerLabelModelParams,
+            system: headerLabelStepConfig.systemPrompt || llmConfig.headerLabelPrompt,
+            responseFormat: { type: 'json' },
+            modelParams: headerLabelStepConfig.modelParams,
             maxTokens: 500,
           },
         );
@@ -586,8 +614,7 @@ export async function labelPages(options: PageLabelerOptions): Promise<PageLabel
           ?? 1000,
         );
 
-        const text = response.content || '';
-        const normalizedLabel = normalizePdfText(text);
+        const normalizedLabel = parseSinglePageLabelResponse(response.content || '');
 
         if (normalizedLabel && normalizedLabel.length > 0) {
           llmPageLabels[pageNum] = {
