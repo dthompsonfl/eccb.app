@@ -164,6 +164,27 @@ function safeErrorDetails(err: unknown) {
   return { errorMessage: e.message, errorName: e.name, errorStack: e.stack };
 }
 
+function attachWorkerEventHandlers(nextWorker: Worker<OcrProcessJobData>): void {
+  nextWorker.on('completed', (job) => {
+    logger.debug('OCR worker: job completed', { jobId: job.id, name: job.name });
+  });
+
+  nextWorker.on('failed', (job, err) => {
+    const details = safeErrorDetails(err);
+    logger.error('OCR worker: job failed', {
+      jobId: job?.id,
+      name: job?.name,
+      attemptsMade: job?.attemptsMade,
+      ...details,
+    });
+  });
+
+  nextWorker.on('error', (err) => {
+    const details = safeErrorDetails(err);
+    logger.error('OCR worker: worker error', details);
+  });
+}
+
 async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
@@ -330,7 +351,7 @@ async function processOcrJob(job: Job<OcrProcessJobData>): Promise<void> {
 /**
  * Start OCR worker (rate-limited).
  */
-export function startOcrWorker(): void {
+export async function startOcrWorker(): Promise<void> {
   if (worker) return;
 
   // Dedicated Redis connection for this worker.
@@ -344,9 +365,10 @@ export function startOcrWorker(): void {
   const bullConnection = redisConnection as unknown as ConnectionOptions;
   redis = redisConnection;
 
-  // Load config at startup to get DB-driven rate limit
-  // This uses smart_upload_ocr_rate_limit_rpm from DB settings
-  loadOcrConfig().then((cfg) => {
+  try {
+    // Load config at startup to get DB-driven rate limit
+    // This uses smart_upload_ocr_rate_limit_rpm from DB settings
+    const cfg = await loadOcrConfig();
     const limiterRpm = cfg.ocrRateLimitRpm;
 
     worker = new Worker<OcrProcessJobData>(OCR_QUEUE_NAME, processOcrJob, {
@@ -359,25 +381,7 @@ export function startOcrWorker(): void {
         duration: 60_000,
       },
     });
-
-    worker.on('completed', (job) => {
-      logger.debug('OCR worker: job completed', { jobId: job.id, name: job.name });
-    });
-
-    worker.on('failed', (job, err) => {
-      const details = safeErrorDetails(err);
-      logger.error('OCR worker: job failed', {
-        jobId: job?.id,
-        name: job?.name,
-        attemptsMade: job?.attemptsMade,
-        ...details,
-      });
-    });
-
-    worker.on('error', (err) => {
-      const details = safeErrorDetails(err);
-      logger.error('OCR worker: worker error', details);
-    });
+    attachWorkerEventHandlers(worker);
 
     logger.info('OCR worker started', {
       queue: OCR_QUEUE_NAME,
@@ -386,19 +390,27 @@ export function startOcrWorker(): void {
       ocrEngine: cfg.ocrEngine,
       ocrMode: cfg.ocrMode,
     });
-  }).catch((err) => {
+  } catch (err) {
     logger.error('OCR worker: failed to load config, using fallback rate limit', { err });
+
     // Fallback to conservative rate limit if config load fails
     worker = new Worker<OcrProcessJobData>(OCR_QUEUE_NAME, processOcrJob, {
       connection: bullConnection,
       concurrency: Math.max(1, OCR_WORKER_CONCURRENCY),
       lockDuration: OCR_WORKER_LOCK_DURATION_MS,
       limiter: {
-        max: 6, // Conservative fallback
+        max: 6,
         duration: 60_000,
       },
     });
-  });
+    attachWorkerEventHandlers(worker);
+
+    logger.info('OCR worker started with fallback limiter', {
+      queue: OCR_QUEUE_NAME,
+      concurrency: OCR_WORKER_CONCURRENCY,
+      limiterRpm: 6,
+    });
+  }
 }
 
 /**
