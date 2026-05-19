@@ -82,6 +82,7 @@ interface QueueInstances {
   deadLetter: Queue | null;
   smartUpload: Queue | null;
   ocr: Queue | null;
+  [key: string]: Queue | null;
 }
 
 const queues: QueueInstances = {
