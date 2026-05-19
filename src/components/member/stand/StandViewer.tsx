@@ -9,7 +9,7 @@ import {
   useCallback,
   useRef,
 } from 'react';
-import { useStandStore, StandPiece } from '@/store/standStore';
+import { useStandStore, type Annotation, StandPiece } from '@/store/standStore';
 import { useStandSync } from '@/hooks/use-stand-sync';
 import { useAudioTracker } from '@/hooks/useAudioTracker';
 import { NavigationControls } from './NavigationControls';
@@ -396,7 +396,7 @@ function StandViewerContent({ data }: StandViewerProps) {
         return;
       }
 
-      const annotation = {
+      const annotation: Annotation = {
         id,
         pieceId,
         pageNumber: pageValue,
