@@ -2,14 +2,8 @@
 
 /**
  * AudioLinkEditor — manages audio links for a piece.
- * Directors / librarians can add and remove audio links.
+ * Directors / librarians can add, update, and remove audio links.
  * Members can only view (play) them.
- *
- * Features:
- *   - List audio links (file key or URL)
- *   - Add a new audio link (director/librarian only)
- *   - Delete an audio link (director/librarian only)
- *   - Inline audio player via <audio> tag
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -28,6 +22,7 @@ import {
   LinkIcon,
   HardDriveIcon,
   XIcon,
+  PencilIcon,
 } from 'lucide-react';
 import {
   Dialog,
@@ -57,7 +52,11 @@ export interface AudioLinkEditorProps {
 
 function resolveAudioSrc(link: AudioLink): string {
   if (link.url) return link.url;
-  if (link.fileKey) return `/api/stand/audio-files/${encodeURIComponent(link.fileKey)}`;
+  if (link.fileKey) {
+    return `/api/stand/audio-files/${encodeURIComponent(
+      link.fileKey
+    )}?pieceId=${encodeURIComponent(link.pieceId)}`;
+  }
   return '';
 }
 
@@ -65,7 +64,10 @@ function LinkLabel({ link }: { link: AudioLink }) {
   const label = link.description ?? link.fileKey ?? link.url ?? 'Audio';
   const isExternal = !!link.url && !link.fileKey;
   return (
-    <span className="flex items-center gap-1 text-sm font-medium truncate" title={label}>
+    <span
+      className="flex items-center gap-1 text-sm font-medium truncate"
+      title={label}
+    >
       {isExternal ? (
         <LinkIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
       ) : (
@@ -99,7 +101,6 @@ function InlinePlayer({ src }: { src: string }) {
 
   return (
     <div className="flex items-center gap-1">
-      {/* Audio player - captions not applicable for externally-linked audio files */}
       <audio
         ref={audioRef}
         src={src}
@@ -126,14 +127,18 @@ function InlinePlayer({ src }: { src: string }) {
   );
 }
 
-export function AudioLinkEditor({ className, pieceId, canManage = false }: AudioLinkEditorProps) {
+export function AudioLinkEditor({
+  className,
+  pieceId,
+  canManage = false,
+}: AudioLinkEditorProps) {
   const [links, setLinks] = useState<AudioLink[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [editingLink, setEditingLink] = useState<AudioLink | null>(null);
 
-  // Form state
   const [addMode, setAddMode] = useState<'file' | 'url'>('url');
   const [addFileKey, setAddFileKey] = useState('');
   const [addUrl, setAddUrl] = useState('');
@@ -141,11 +146,20 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  const [editMode, setEditMode] = useState<'file' | 'url'>('url');
+  const [editFileKey, setEditFileKey] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
   const fetchLinks = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/stand/audio?pieceId=${encodeURIComponent(pieceId)}`);
+      const res = await fetch(
+        `/api/stand/audio?pieceId=${encodeURIComponent(pieceId)}`
+      );
       if (!res.ok) throw new Error(`Status ${res.status}`);
       const data = await res.json();
       setLinks(Array.isArray(data.audioLinks) ? data.audioLinks : []);
@@ -159,6 +173,32 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
   useEffect(() => {
     fetchLinks();
   }, [fetchLinks]);
+
+  const resetAddDialog = () => {
+    setAddFileKey('');
+    setAddUrl('');
+    setAddDescription('');
+    setSaveError(null);
+    setAddMode('url');
+  };
+
+  const openEditDialog = (link: AudioLink) => {
+    setEditingLink(link);
+    setEditMode(link.url ? 'url' : 'file');
+    setEditFileKey(link.fileKey ?? '');
+    setEditUrl(link.url ?? '');
+    setEditDescription(link.description ?? '');
+    setUpdateError(null);
+  };
+
+  const closeEditDialog = () => {
+    setEditingLink(null);
+    setEditMode('url');
+    setEditFileKey('');
+    setEditUrl('');
+    setEditDescription('');
+    setUpdateError(null);
+  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,9 +224,7 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload.error ?? `Status ${res.status}`);
       }
-      setAddFileKey('');
-      setAddUrl('');
-      setAddDescription('');
+      resetAddDialog();
       setShowAddDialog(false);
       await fetchLinks();
     } catch (err) {
@@ -196,10 +234,57 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
     }
   };
 
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLink) return;
+
+    setUpdateError(null);
+    const body: Record<string, unknown> = {
+      fileKey: editMode === 'file' ? editFileKey.trim() : '',
+      url: editMode === 'url' ? editUrl.trim() : null,
+      description: editDescription.trim() || null,
+    };
+
+    if (!body.fileKey && !body.url) {
+      setUpdateError('Provide a file key or a URL.');
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const res = await fetch(
+        `/api/stand/audio?id=${encodeURIComponent(editingLink.id)}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload.error ?? `Status ${res.status}`);
+      }
+
+      closeEditDialog();
+      await fetchLinks();
+    } catch (err) {
+      setUpdateError(
+        err instanceof Error ? err.message : 'Failed to update audio link'
+      );
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleDelete = async (linkId: string) => {
     setDeletingId(linkId);
     try {
-      const res = await fetch(`/api/stand/audio/${linkId}`, { method: 'DELETE' });
+      const res = await fetch(
+        `/api/stand/audio?id=${encodeURIComponent(linkId)}`,
+        {
+          method: 'DELETE',
+        }
+      );
       if (!res.ok) throw new Error('Delete failed');
       setLinks((prev) => prev.filter((l) => l.id !== linkId));
     } catch (err) {
@@ -216,7 +301,9 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
           <MusicIcon className="h-4 w-4" />
           Reference Audio
           {links.length > 0 && (
-            <Badge variant="secondary" className="ml-1">{links.length}</Badge>
+            <Badge variant="secondary" className="ml-1">
+              {links.length}
+            </Badge>
           )}
         </h3>
         <div className="flex items-center gap-1">
@@ -229,7 +316,9 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
             title="Refresh"
             className="h-7 w-7"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+            <RefreshCw
+              className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')}
+            />
           </Button>
           {canManage && (
             <Button
@@ -246,7 +335,6 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
         </div>
       </div>
 
-      {/* Loading */}
       {isLoading && (
         <div className="flex items-center justify-center py-4 text-muted-foreground text-sm">
           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -254,10 +342,8 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
         </div>
       )}
 
-      {/* Error */}
       {error && !isLoading && <p className="text-xs text-destructive">{error}</p>}
 
-      {/* Empty */}
       {!isLoading && !error && links.length === 0 && (
         <p className="text-xs text-muted-foreground text-center py-3">
           {canManage
@@ -266,7 +352,6 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
         </p>
       )}
 
-      {/* Link list */}
       {!isLoading && links.length > 0 && (
         <ul className="space-y-1" aria-label="Audio links">
           {links.map((link) => {
@@ -281,21 +366,33 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
                   <LinkLabel link={link} />
                 </div>
                 {canManage && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
-                    onClick={() => handleDelete(link.id)}
-                    disabled={deletingId === link.id}
-                    aria-label="Delete audio link"
-                    title="Delete"
-                  >
-                    {deletingId === link.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2Icon className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground shrink-0"
+                      onClick={() => openEditDialog(link)}
+                      aria-label="Edit audio link"
+                      title="Edit"
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                      onClick={() => handleDelete(link.id)}
+                      disabled={deletingId === link.id}
+                      aria-label="Delete audio link"
+                      title="Delete"
+                    >
+                      {deletingId === link.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2Icon className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </>
                 )}
               </li>
             );
@@ -303,16 +400,12 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
         </ul>
       )}
 
-      {/* Add dialog */}
       <Dialog
         open={showAddDialog}
         onOpenChange={(open) => {
           setShowAddDialog(open);
           if (!open) {
-            setAddFileKey('');
-            setAddUrl('');
-            setAddDescription('');
-            setSaveError(null);
+            resetAddDialog();
           }
         }}
       >
@@ -321,7 +414,6 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
             <DialogTitle>Add Audio Link</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleAdd} className="space-y-4">
-            {/* Mode tabs */}
             <div className="flex gap-1 p-1 bg-muted rounded-md w-fit">
               <Button
                 type="button"
@@ -376,7 +468,9 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="audio-desc">Description <span className="text-muted-foreground">(optional)</span></Label>
+              <Label htmlFor="audio-desc">
+                Description <span className="text-muted-foreground">(optional)</span>
+              </Label>
               <Input
                 id="audio-desc"
                 placeholder="e.g. Reference recording – Mvt. I"
@@ -397,10 +491,111 @@ export function AudioLinkEditor({ className, pieceId, canManage = false }: Audio
               </DialogClose>
               <Button
                 type="submit"
-                disabled={isSaving || (addMode === 'url' ? !addUrl.trim() : !addFileKey.trim())}
+                disabled={
+                  isSaving || (addMode === 'url' ? !addUrl.trim() : !addFileKey.trim())
+                }
               >
-                {isSaving && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+                {isSaving && (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                )}
                 Add
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingLink)} onOpenChange={(open) => !open && closeEditDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Audio Link</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdate} className="space-y-4">
+            <div className="flex gap-1 p-1 bg-muted rounded-md w-fit">
+              <Button
+                type="button"
+                variant={editMode === 'url' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setEditMode('url')}
+                className="h-7"
+              >
+                <LinkIcon className="h-3.5 w-3.5 mr-1" />
+                URL
+              </Button>
+              <Button
+                type="button"
+                variant={editMode === 'file' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setEditMode('file')}
+                className="h-7"
+              >
+                <HardDriveIcon className="h-3.5 w-3.5 mr-1" />
+                File key
+              </Button>
+            </div>
+
+            {editMode === 'url' ? (
+              <div className="space-y-2">
+                <Label htmlFor="edit-audio-url">Audio URL</Label>
+                <Input
+                  id="edit-audio-url"
+                  type="url"
+                  placeholder="https://example.com/track.mp3"
+                  value={editUrl}
+                  onChange={(e) => setEditUrl(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="edit-audio-filekey">Storage file key</Label>
+                <Input
+                  id="edit-audio-filekey"
+                  placeholder="audio/2026/piece-123.mp3"
+                  value={editFileKey}
+                  onChange={(e) => setEditFileKey(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-audio-desc">
+                Description <span className="text-muted-foreground">(optional)</span>
+              </Label>
+              <Input
+                id="edit-audio-desc"
+                placeholder="e.g. Reference recording – Mvt. I"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                maxLength={200}
+              />
+            </div>
+
+            {updateError && (
+              <p className="text-xs text-destructive">{updateError}</p>
+            )}
+
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="outline">
+                  <XIcon className="h-3.5 w-3.5 mr-1.5" />
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button
+                type="submit"
+                disabled={
+                  isUpdating ||
+                  (editMode === 'url' ? !editUrl.trim() : !editFileKey.trim())
+                }
+              >
+                {isUpdating && (
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                )}
+                Save changes
               </Button>
             </DialogFooter>
           </form>

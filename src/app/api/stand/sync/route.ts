@@ -28,6 +28,8 @@ const syncStateSchema = z.object({
   eventId: z.string().min(1),
   musicId: z.string().optional(),
   currentPage: z.number().int().positive().optional(),
+  currentPieceIndex: z.number().int().min(0).optional(),
+  nightMode: z.boolean().optional(),
   lastSyncAt: z.string().datetime().optional(),
 });
 
@@ -39,10 +41,18 @@ const commandSchema = z.object({
   value: z.boolean().optional(),
 });
 
+const modeSchema = z.object({
+  type: z.literal('mode'),
+  name: z.string(),
+  value: z.unknown(),
+});
+
 const presenceSchema = z.object({
   type: z.literal('presence'),
   status: z.enum(['joined', 'left']),
 });
+
+const ACTIVE_PRESENCE_WINDOW_MS = 30_000;
 
 // In-memory sync state (for simple polling and WebSocket state sharing)
 // In production with custom server, use Redis for distributed state
@@ -70,16 +80,10 @@ const presenceMap = new Map<
   }
 >();
 
-/**
- * Get current stand state for an event
- */
 function getStandState(eventId: string) {
   return standStateMap.get(eventId);
 }
 
-/**
- * Update stand state for an event
- */
 function updateStandState(eventId: string, updates: Partial<{
   musicId: string;
   currentPage: number;
@@ -104,6 +108,13 @@ function updateStandState(eventId: string, updates: Partial<{
   return state;
 }
 
+function getActiveUsers(eventId: string) {
+  const cutoff = new Date(Date.now() - ACTIVE_PRESENCE_WINDOW_MS);
+  return Array.from(presenceMap.values()).filter(
+    (p) => p.eventId === eventId && p.lastSeen > cutoff
+  );
+}
+
 /**
  * GET /api/stand/sync
  * Returns sync state for an event (polling endpoint)
@@ -111,7 +122,6 @@ function updateStandState(eventId: string, updates: Partial<{
  */
 export async function GET(request: NextRequest) {
   try {
-    // Rate limit sync polling
     const rateLimited = await applyRateLimit(request, 'stand-sync');
     if (rateLimited) return rateLimited;
 
@@ -128,47 +138,32 @@ export async function GET(request: NextRequest) {
 
     recordTelemetry({ event: 'stand.sync.poll', userId: ctx.userId, eventId });
 
-    // Get sync state for this event
     const state = getStandState(eventId);
+    const activeUsers = getActiveUsers(eventId);
 
-    // Get active roster count from database
-    const activeRoster = await prisma.standSession.count({
-      where: {
-        eventId,
-        lastSeenAt: {
-          gte: new Date(Date.now() - 30 * 60 * 1000),
-        },
-      },
-    });
-
-    // Get in-memory presence for real-time users
-    const activeUsers = Array.from(presenceMap.values())
-      .filter((p) => p.eventId === eventId && p.lastSeen > new Date(Date.now() - 30000));
-
-    // Get recent annotations with privacy filtering (P0 FIX)
     let recentAnnotations: unknown[] = [];
     if (musicId) {
       const visibilityFilter = annotationVisibilityFilter(ctx, musicId);
       recentAnnotations = await prisma.annotation.findMany({
-          where: {
-            ...visibilityFilter,
-            updatedAt: {
-              gte: new Date(Date.now() - 5 * 60 * 1000),
-            },
+        where: {
+          ...visibilityFilter,
+          updatedAt: {
+            gte: new Date(Date.now() - 5 * 60 * 1000),
           },
-          orderBy: { updatedAt: 'desc' },
-          take: 10,
-        });
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+      });
     }
 
     return NextResponse.json({
       eventId,
-      musicId: state?.musicId,
+      musicId: state?.musicId ?? musicId ?? undefined,
       currentPage: state?.currentPage,
       currentPieceIndex: state?.currentPieceIndex,
       nightMode: state?.nightMode,
       lastSyncAt: state?.lastUpdated?.toISOString() || new Date().toISOString(),
-      activeUsers: activeRoster + activeUsers.length,
+      activeUsers: activeUsers.length,
       activeUserList: activeUsers.map((u) => ({
         userId: u.userId,
         name: u.name,
@@ -188,7 +183,7 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/stand/sync
  * Updates sync state for an event or sends commands (polling endpoint)
- * Body: { eventId, musicId?, currentPage?, currentPieceIndex?, nightMode?, command? }
+ * Body: { eventId, musicId?, currentPage?, currentPieceIndex?, nightMode?, command?, mode? }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -202,18 +197,16 @@ export async function POST(request: NextRequest) {
     const ctx = await requireEventStandAccess(eventId);
     if (ctx instanceof NextResponse) return ctx;
 
-    // Get user info for presence
     const member = await prisma.member.findFirst({
       where: { userId: ctx.userId },
       include: { sections: { where: { isLeader: true }, include: { section: true } } },
     });
 
     const userName = member
-      ? `${member.firstName} ${member.lastName}`
+      ? [member.firstName, member.lastName].filter(Boolean).join(' ').trim() || ctx.userId
       : ctx.userId;
     const userSection = member?.sections[0]?.section.name;
 
-    // Handle command messages
     if (syncData.command) {
       const commandValidation = commandSchema.safeParse(syncData.command);
       if (commandValidation.success) {
@@ -236,7 +229,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Handle presence updates
+    if (syncData.mode) {
+      const modeValidation = modeSchema.safeParse(syncData.mode);
+      if (modeValidation.success) {
+        if (
+          modeValidation.data.name === 'nightMode' &&
+          typeof modeValidation.data.value === 'boolean'
+        ) {
+          updateStandState(eventId, { nightMode: modeValidation.data.value });
+        }
+
+        return NextResponse.json({
+          success: true,
+          mode: modeValidation.data,
+          lastSyncAt: new Date().toISOString(),
+        });
+      }
+    }
+
     if (syncData.presence) {
       const presenceValidation = presenceSchema.safeParse(syncData.presence);
       if (presenceValidation.success) {
@@ -254,7 +264,6 @@ export async function POST(request: NextRequest) {
           presenceMap.delete(`${eventId}:${ctx.userId}`);
         }
 
-        // Update database presence
         await prisma.standSession.upsert({
           where: {
             eventId_userId: {
@@ -279,16 +288,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Handle basic sync state updates
     const validated = syncStateSchema.parse({ eventId, ...syncData });
 
-    // Update sync state
     const state = updateStandState(eventId, {
-      musicId: validated.musicId,
-      currentPage: validated.currentPage,
+      ...(validated.musicId !== undefined ? { musicId: validated.musicId } : {}),
+      ...(validated.currentPage !== undefined ? { currentPage: validated.currentPage } : {}),
+      ...(validated.currentPieceIndex !== undefined
+        ? { currentPieceIndex: validated.currentPieceIndex }
+        : {}),
+      ...(validated.nightMode !== undefined ? { nightMode: validated.nightMode } : {}),
     });
 
-    // Update user's presence in database
     await prisma.standSession.upsert({
       where: {
         eventId_userId: {

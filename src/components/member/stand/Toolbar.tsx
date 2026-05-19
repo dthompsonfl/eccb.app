@@ -3,8 +3,23 @@
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
-  Maximize2, Minimize2, Moon, Sun, Pencil, Highlighter, Eraser, Square, Type, Stamp,
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, BookmarkIcon, ListMusicIcon, TimerIcon,
+  Maximize2,
+  Minimize2,
+  Moon,
+  Sun,
+  Pencil,
+  Highlighter,
+  Eraser,
+  Square,
+  Type,
+  Stamp,
+  ChevronLeft,
+  ChevronRight,
+  ZoomIn,
+  ZoomOut,
+  BookmarkIcon,
+  ListMusicIcon,
+  TimerIcon,
   MusicIcon,
 } from 'lucide-react';
 import { useStandStore, Tool } from '@/store/standStore';
@@ -82,11 +97,26 @@ export function Toolbar({
     setCurrentPage,
   } = useStandStore();
 
-  // Derive totalPages from current piece
+  const userContext = useStandStore((state) => state.userContext);
   const totalPages =
-    useStandStore(
-      (s) => s.pieces[s.currentPieceIndex]?.totalPages ?? 1
-    ) || 1;
+    useStandStore((s) => s.pieces[s.currentPieceIndex]?.totalPages ?? 1) || 1;
+
+  const layerPermissions: Record<'PERSONAL' | 'SECTION' | 'DIRECTOR', boolean> = {
+    PERSONAL: true,
+    SECTION: Boolean(userContext?.isDirector || userContext?.isSectionLeader),
+    DIRECTOR: Boolean(userContext?.isDirector),
+  };
+
+  const layerDescriptions: Record<'PERSONAL' | 'SECTION' | 'DIRECTOR', string> = {
+    PERSONAL: 'Personal annotation layer',
+    SECTION: layerPermissions.SECTION
+      ? 'Section annotation layer'
+      : 'Section annotations are limited to section leaders and directors',
+    DIRECTOR: layerPermissions.DIRECTOR
+      ? 'Director annotation layer'
+      : 'Director annotations are limited to directors',
+  };
+
   const [isUpdating, setIsUpdating] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
 
@@ -125,12 +155,11 @@ export function Toolbar({
   };
 
   return (
-    <div 
-      className="flex items-center gap-2" 
-      role="toolbar" 
+    <div
+      className="flex items-center gap-2"
+      role="toolbar"
       aria-label="Music stand controls"
     >
-      {/* Keyboard shortcuts help - visually hidden but accessible */}
       <div className="sr-only" aria-live="polite" id="toolbar-shortcuts-help">
         Keyboard shortcuts: Arrow keys or Page Up/Down to navigate pages, M for metronome, T for tuner, P for pitch pipe, A for audio player
       </div>
@@ -143,22 +172,26 @@ export function Toolbar({
         title={nightMode ? 'Switch to Day Mode' : 'Switch to Night Mode'}
         aria-label={nightMode ? 'Switch to Day Mode' : 'Switch to Night Mode'}
         aria-pressed={nightMode}
-        className="min-w-[44px] min-h-[44px]" // Ensure 44x44px touch target
+        className="min-w-[44px] min-h-[44px]"
       >
-        {nightMode ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
+        {nightMode ? (
+          <Sun className="h-4 w-4" aria-hidden="true" />
+        ) : (
+          <Moon className="h-4 w-4" aria-hidden="true" />
+        )}
       </Button>
 
-      {/* Layer selection */}
       <div className="flex items-center space-x-1" role="group" aria-label="Annotation layers">
         {(['PERSONAL', 'SECTION', 'DIRECTOR'] as const).map((layer) => (
           <Button
             key={layer}
             variant={selectedLayer === layer ? 'secondary' : 'ghost'}
             size="icon"
-            onClick={() => setLayer(layer)}
-            title={`${layer.toLowerCase()} layer`}
-            aria-label={`${layer.toLowerCase()} annotation layer`}
+            onClick={() => layerPermissions[layer] && setLayer(layer)}
+            title={layerDescriptions[layer]}
+            aria-label={layerDescriptions[layer]}
             aria-pressed={selectedLayer === layer}
+            disabled={!layerPermissions[layer]}
             className="min-w-[44px] min-h-[44px]"
           >
             {layer.charAt(0)}
@@ -166,7 +199,6 @@ export function Toolbar({
         ))}
       </div>
 
-      {/* Edit mode toggle */}
       <Toggle
         pressed={editMode}
         onPressedChange={toggleEditMode}
@@ -176,10 +208,13 @@ export function Toolbar({
         Edit
       </Toggle>
 
-      {/* Tool selection - only visible in edit mode */}
       {editMode && (
         <>
-          <div className="flex items-center space-x-1 border-l pl-2 ml-2" role="group" aria-label="Annotation tools">
+          <div
+            className="flex items-center space-x-1 border-l pl-2 ml-2"
+            role="group"
+            aria-label="Annotation tools"
+          >
             {Object.values(Tool).map((tool) => (
               <Button
                 key={tool}
@@ -197,21 +232,25 @@ export function Toolbar({
             ))}
           </div>
 
-          {/* Color picker */}
           <div className="relative">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setShowColorPicker(!showColorPicker)}
               title="Select annotation color"
-              aria-label={`Select annotation color, current: ${COLORS.find(c => c.value === toolColor)?.label || 'custom'}`}
+              aria-label={`Select annotation color, current: ${
+                COLORS.find((c) => c.value === toolColor)?.label || 'custom'
+              }`}
               aria-expanded={showColorPicker}
               aria-haspopup="listbox"
               style={{ backgroundColor: toolColor }}
-              className={cn('w-11 h-11 rounded-full border-2 min-w-[44px] min-h-[44px]', toolColor === '#ffffff' && 'border-gray-400')}
+              className={cn(
+                'w-11 h-11 rounded-full border-2 min-w-[44px] min-h-[44px]',
+                toolColor === '#ffffff' && 'border-gray-400'
+              )}
             />
             {showColorPicker && (
-              <div 
+              <div
                 className="absolute top-full mt-1 p-2 bg-background border rounded-lg shadow-lg z-50 grid grid-cols-4 gap-1"
                 role="listbox"
                 aria-label="Color options"
@@ -225,7 +264,9 @@ export function Toolbar({
                     }}
                     className={cn(
                       'w-8 h-8 rounded-full border-2 min-w-[44px] min-h-[44px] flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                      color.value === '#ffffff' ? 'border-gray-400' : 'border-transparent',
+                      color.value === '#ffffff'
+                        ? 'border-gray-400'
+                        : 'border-transparent',
                       toolColor === color.value && 'ring-2 ring-primary'
                     )}
                     style={{ backgroundColor: color.value }}
@@ -238,7 +279,6 @@ export function Toolbar({
             )}
           </div>
 
-          {/* Stroke width slider */}
           <div className="flex items-center gap-1">
             <label htmlFor="stroke-width" className="sr-only">
               Stroke width: {strokeWidth}px
@@ -256,14 +296,15 @@ export function Toolbar({
               aria-valuemax={20}
               aria-valuenow={strokeWidth}
             />
-            <span className="text-xs text-muted-foreground w-4" aria-hidden="true">{strokeWidth}</span>
+            <span className="text-xs text-muted-foreground w-4" aria-hidden="true">
+              {strokeWidth}
+            </span>
           </div>
         </>
       )}
 
       <PerformanceModeToggle />
 
-      {/* Page navigation */}
       <div className="flex items-center gap-1 border-l pl-2 ml-1" role="group" aria-label="Page navigation">
         <Button
           variant="ghost"
@@ -277,7 +318,9 @@ export function Toolbar({
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
         <div className="flex items-center gap-1">
-          <label htmlFor="tb-page-input" className="sr-only">Go to page</label>
+          <label htmlFor="tb-page-input" className="sr-only">
+            Go to page
+          </label>
           <input
             id="tb-page-input"
             type="number"
@@ -291,7 +334,9 @@ export function Toolbar({
             className="w-12 h-8 text-center text-sm border rounded bg-background"
             aria-label={`Page ${currentPage} of ${totalPages}`}
           />
-          <span className="text-xs text-muted-foreground" aria-hidden="true">/ {totalPages}</span>
+          <span className="text-xs text-muted-foreground" aria-hidden="true">
+            / {totalPages}
+          </span>
         </div>
         <Button
           variant="ghost"
@@ -306,7 +351,6 @@ export function Toolbar({
         </Button>
       </div>
 
-      {/* Zoom controls */}
       <div className="flex items-center gap-1 border-l pl-2 ml-1" role="group" aria-label="Zoom controls">
         <Button
           variant="ghost"
@@ -338,7 +382,6 @@ export function Toolbar({
         </Button>
       </div>
 
-      {/* Panel toggle buttons */}
       {(onToggleBookmarks || onToggleSetlists || onTogglePractice || onToggleAudio) && (
         <div className="flex items-center gap-1 border-l pl-2 ml-1" role="group" aria-label="Panels">
           {onToggleBookmarks && (
@@ -395,8 +438,7 @@ export function Toolbar({
           )}
         </div>
       )}
-      
-      {/* Utility toggles */}
+
       <div className="flex items-center space-x-1" role="group" aria-label="Rehearsal utilities">
         <Button
           variant="ghost"
@@ -426,7 +468,17 @@ export function Toolbar({
           aria-label="Toggle audio player"
           className="min-w-[44px] min-h-[44px]"
         >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none"/><polygon points="10,8 16,12 10,16" fill="currentColor"/></svg>
+          <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
+            <circle
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="2"
+              fill="none"
+            />
+            <polygon points="10,8 16,12 10,16" fill="currentColor" />
+          </svg>
         </Button>
         <Button
           variant="ghost"
@@ -439,16 +491,20 @@ export function Toolbar({
           P
         </Button>
       </div>
-      
-      <Button 
-        variant="ghost" 
-        size="icon" 
+
+      <Button
+        variant="ghost"
+        size="icon"
         onClick={handleFullscreenToggle}
         title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
         aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
         className="min-w-[44px] min-h-[44px]"
       >
-        {isFullscreen ? <Minimize2 className="h-4 w-4" aria-hidden="true" /> : <Maximize2 className="h-4 w-4" aria-hidden="true" />}
+        {isFullscreen ? (
+          <Minimize2 className="h-4 w-4" aria-hidden="true" />
+        ) : (
+          <Maximize2 className="h-4 w-4" aria-hidden="true" />
+        )}
       </Button>
     </div>
   );
