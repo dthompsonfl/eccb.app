@@ -72,8 +72,7 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
     setIsLoading(true);
     setError(null);
     try {
-      const url = `/api/stand/setlists`;
-      const res = await fetch(url);
+      const res = await fetch('/api/stand/setlists');
       if (!res.ok) throw new Error(`Failed to load setlists: ${res.status}`);
       const data = await res.json();
       setSetlists(Array.isArray(data) ? data : []);
@@ -82,11 +81,10 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
     } finally {
       setIsLoading(false);
     }
-   
   }, []);
 
   useEffect(() => {
-    fetchSetlists();
+    void fetchSetlists();
   }, [fetchSetlists]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -116,12 +114,19 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
 
   const handleDelete = async (setlistId: string) => {
     setDeletingId(setlistId);
+    setError(null);
     try {
-      const res = await fetch(`/api/stand/setlists/${setlistId}`, { method: 'DELETE' });
+      const res = await fetch('/api/stand/setlists', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: setlistId }),
+      });
       if (!res.ok) throw new Error('Failed to delete setlist');
       setSetlists((prev) => prev.filter((s) => s.id !== setlistId));
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete setlist';
       console.error('Delete setlist failed:', err);
+      setError(message);
     } finally {
       setDeletingId(null);
     }
@@ -145,7 +150,7 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
           <Button
             variant="ghost"
             size="icon"
-            onClick={fetchSetlists}
+            onClick={() => void fetchSetlists()}
             disabled={isLoading}
             aria-label="Refresh setlists"
             title="Refresh setlists"
@@ -224,7 +229,7 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
-                    onClick={() => handleDelete(setlist.id)}
+                    onClick={() => void handleDelete(setlist.id)}
                     disabled={deletingId === setlist.id}
                     aria-label={`Delete ${setlist.name}`}
                     title="Delete setlist"
