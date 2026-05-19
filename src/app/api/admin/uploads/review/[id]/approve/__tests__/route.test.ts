@@ -311,7 +311,7 @@ describe('Approve Upload Session API', () => {
       const data = await response.json();
 
       expect(response.status).toBe(400);
-      expect(data.error).toBe('Session is not pending review');
+      expect(data.error).toBe('Session is not awaiting review');
     });
   });
 

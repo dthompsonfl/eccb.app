@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 
 // Mock NextResponse
-vi.mock('next/server', () => {
+vi.mock('next/server', async () => {
   return {
     NextResponse: {
       json: (body: any, init?: any) => ({
@@ -28,7 +28,7 @@ vi.mock('@/lib/env', () => ({
 
 import { validateSetupRequest } from '../setup/setup-guard';
 
-describe('validateSetupRequest', () => {
+describe('validateSetupRequest', async () => {
   beforeEach(() => {
     // Ensure we test the fallback behavior by clearing process env overrides.
     delete process.env.SETUP_MODE;
@@ -38,70 +38,70 @@ describe('validateSetupRequest', () => {
     mockSetupToken = undefined;
   });
 
-  it('should return 403 if SETUP_MODE is false', () => {
+  it('should return 403 if SETUP_MODE is false', async () => {
     mockSetupMode = false;
     const req = new Request('http://localhost');
-    const res = validateSetupRequest(req) as any;
+    const res = await validateSetupRequest(req) as any;
 
     expect(res).not.toBeNull();
     expect(res?.status).toBe(403);
     expect(res?.body?.error).toBe('Setup mode is disabled');
   });
 
-  it('should return 401 if SETUP_MODE is true but token is missing and SETUP_TOKEN is configured', () => {
+  it('should return 401 if SETUP_MODE is true but token is missing and SETUP_TOKEN is configured', async () => {
     mockSetupMode = true;
     mockSetupToken = 'secret';
 
     const req = new Request('http://localhost');
-    const res = validateSetupRequest(req) as any;
+    const res = await validateSetupRequest(req) as any;
 
     expect(res).not.toBeNull();
     expect(res?.status).toBe(401);
     expect(res?.body?.error).toBe('Invalid setup token');
   });
 
-  it('should return 401 if token is incorrect', () => {
+  it('should return 401 if token is incorrect', async () => {
     mockSetupMode = true;
     mockSetupToken = 'secret';
 
     const req = new Request('http://localhost', {
       headers: { 'x-setup-token': 'wrong' },
     });
-    const res = validateSetupRequest(req) as any;
+    const res = await validateSetupRequest(req) as any;
 
     expect(res).not.toBeNull();
     expect(res?.status).toBe(401);
   });
 
-  it('should return null (success) if token is correct', () => {
+  it('should return null (success) if token is correct', async () => {
     mockSetupMode = true;
     mockSetupToken = 'secret';
 
     const req = new Request('http://localhost', {
       headers: { 'x-setup-token': 'secret' },
     });
-    const res = validateSetupRequest(req);
+    const res = await validateSetupRequest(req);
 
     expect(res).toBeNull();
   });
 
-  it('should return null (success) if SETUP_MODE is true and no token configured', () => {
+  it('should return null (success) if SETUP_MODE is true and no token configured', async () => {
     mockSetupMode = true;
     mockSetupToken = undefined;
 
     const req = new Request('http://localhost');
-    const res = validateSetupRequest(req);
+    const res = await validateSetupRequest(req);
 
     expect(res).toBeNull();
   });
 
-  it('should respect process.env overrides for setup mode', () => {
+  it('should respect process.env overrides for setup mode', async () => {
     // Force setup mode off at runtime, even if env module says true
     mockSetupMode = true;
     process.env.SETUP_MODE = 'false';
 
     const req = new Request('http://localhost');
-    const res = validateSetupRequest(req) as any;
+    const res = await validateSetupRequest(req) as any;
 
     expect(res).not.toBeNull();
     expect(res.status).toBe(403);

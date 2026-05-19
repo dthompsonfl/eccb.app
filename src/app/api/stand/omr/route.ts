@@ -306,8 +306,15 @@ async function pdfBufferToPngBase64(pdfBuffer: Buffer): Promise<string> {
  * Download a file from a URL (absolute or relative to app base) and return its buffer.
  */
 async function fetchFileBuffer(fileUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  // Prevent SSRF: only allow relative paths starting with /
+  if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://') || !fileUrl.startsWith('/')) {
+    throw new Error('Invalid file URL: must be a relative path');
+  }
+
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const fullUrl = fileUrl.startsWith('http') ? fileUrl : `${baseUrl}${fileUrl}`;
+  // Ensure we don't end up with // if baseUrl ends with /
+  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const fullUrl = `${cleanBaseUrl}${fileUrl}`;
 
   const res = await fetch(fullUrl);
   if (!res.ok) throw new Error(`Failed to fetch file: ${res.status} ${res.statusText}`);

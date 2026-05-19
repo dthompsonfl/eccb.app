@@ -44,13 +44,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: Setup environment
         run: |
@@ -66,21 +70,21 @@ jobs:
           echo "SUPER_ADMIN_PASSWORD=some-secure-test-password-123!" >> .env
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       - name: Run database migrations
-        run: npm run db:migrate:deploy
+        run: pnpm run db:migrate:deploy
 
       - name: Seed database
-        run: npm run db:seed
+        run: pnpm run db:seed
 
       - name: Run E2E setup
-        run: npm run test:e2e:setup
+        run: pnpm run test:e2e:setup
         env:
           CI: true
 
       - name: Run E2E tests
-        run: npm run test:e2e:ci
+        run: pnpm run test:e2e:ci
         env:
           CI: true
           PLAYWRIGHT_BASE_URL: http://localhost:3000
@@ -144,13 +148,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Install Playwright
-        run: npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: Setup environment
         run: |
@@ -166,16 +174,16 @@ jobs:
           echo "SUPER_ADMIN_PASSWORD=some-secure-test-password-123!" >> .env
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       - name: Run database migrations
-        run: npm run db:migrate:deploy
+        run: pnpm run db:migrate:deploy
 
       - name: Seed database
-        run: npm run db:seed
+        run: pnpm run db:seed
 
       - name: Run performance tests
-        run: npx playwright test e2e/public/homepage.spec.ts --grep "Performance" --reporter=list
+        run: pnpm exec playwright test e2e/public/homepage.spec.ts --grep "Performance" --reporter=list
         env:
           CI: true
 
@@ -212,13 +220,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Install Playwright
-        run: npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: Setup environment
         run: |
@@ -234,15 +246,15 @@ jobs:
           echo "SUPER_ADMIN_PASSWORD=some-secure-test-password-123!" >> .env
 
       - name: Generate Prisma client
-        run: npm run db:generate
+        run: pnpm run db:generate
 
       - name: Run database migrations
-        run: npm run db:migrate:deploy
+        run: pnpm run db:migrate:deploy
 
       - name: Seed database
-        run: npm run db:seed
+        run: pnpm run db:seed
 
       - name: Run accessibility tests
-        run: npx playwright test e2e/public/homepage.spec.ts --grep "Accessibility" --reporter=list
+        run: pnpm exec playwright test e2e/public/homepage.spec.ts --grep "Accessibility" --reporter=list
         env:
           CI: true

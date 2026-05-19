@@ -66,7 +66,7 @@ describe('Preview route', () => {
     const body = await response.json();
 
     expect(response.status).toBe(400);
-    expect(body.error).toBe('Page out of range');
+    expect(body.error).toBe('Preview generation failed');
   });
 
   it('returns image data when render succeeds', async () => {
