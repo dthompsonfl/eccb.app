@@ -22,15 +22,13 @@ import {
   type SmartUploadSecondPassJobData,
 } from './definitions';
 import { logger } from '@/lib/logger';
-import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
 
 // ============================================================================
 // Redis Connection
 // ============================================================================
 
 const createRedisConnection = (): Redis => {
-  const connection = new Redis({
-    ...buildRedisOptionsFromUrl(env.REDIS_URL),
+  const connection = new Redis(env.REDIS_URL, {
     maxRetriesPerRequest: null, // Required for BullMQ
     enableReadyCheck: false,
     retryStrategy: (times: number) => {
@@ -83,6 +81,7 @@ interface QueueInstances {
   cleanup: Queue | null;
   deadLetter: Queue | null;
   smartUpload: Queue | null;
+  ocr: Queue | null;
 }
 
 const queues: QueueInstances = {
@@ -92,6 +91,7 @@ const queues: QueueInstances = {
   cleanup: null,
   deadLetter: null,
   smartUpload: null,
+  ocr: null,
 };
 
 const queueEvents: Map<string, QueueEvents> = new Map();
@@ -104,7 +104,6 @@ let _queuesInitialized = false;
 
 export function initializeQueues(): void {
   if (_queuesInitialized) return;
-  _queuesInitialized = true;
 
   const connection = getRedisConnection();
   const bullConnection = connection as unknown as ConnectionOptions;
@@ -133,7 +132,17 @@ export function initializeQueues(): void {
   queues.smartUpload = new Queue(QUEUE_NAMES.SMART_UPLOAD, { connection: bullConnection });
   queueEvents.set(QUEUE_NAMES.SMART_UPLOAD, new QueueEvents(QUEUE_NAMES.SMART_UPLOAD, { connection: bullConnection }));
 
+  // OCR queue
+  queues.ocr = new Queue(QUEUE_NAMES.OCR, { connection: bullConnection });
+  queueEvents.set(QUEUE_NAMES.OCR, new QueueEvents(QUEUE_NAMES.OCR, { connection: bullConnection }));
+
+  _queuesInitialized = true;
+
   logger.info('All job queues initialized');
+}
+
+export function areQueuesInitialized(): boolean {
+  return _queuesInitialized;
 }
 
 /**
@@ -153,6 +162,8 @@ export function getQueue(name: keyof typeof QUEUE_NAMES): Queue | null {
       return queues.deadLetter;
     case 'SMART_UPLOAD':
       return queues.smartUpload;
+    case 'OCR':
+      return queues.ocr;
     default:
       return null;
   }
@@ -469,6 +480,7 @@ export async function closeQueues(): Promise<void> {
       await queue.close();
       logger.debug(`Queue closed: ${name}`);
     }
+    (queues as Record<string, Queue | null>)[name] = null;
   }
 
   // Close Redis connection
@@ -476,6 +488,8 @@ export async function closeQueues(): Promise<void> {
     await redisConnection.quit();
     redisConnection = null;
   }
+
+  _queuesInitialized = false;
 
   logger.info('All queues closed');
 }
