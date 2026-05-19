@@ -232,7 +232,7 @@ function mergeExtractedMetadata(
     existing && typeof existing === 'object' && !Array.isArray(existing) ? (existing as Record<string, unknown>) : {};
 
   const existingTitle = typeof base.title === 'string' ? base.title : undefined;
-  const existingComposer = typeof base.composer === 'string' ? base.title : undefined;
+  const existingComposer = typeof base.composer === 'string' ? base.composer : undefined;
 
   const next: Record<string, unknown> = { ...base };
 
