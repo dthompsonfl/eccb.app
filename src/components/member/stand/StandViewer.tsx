@@ -219,11 +219,6 @@ function normalizeStrokeData(strokeData: unknown): Record<string, unknown> {
     : {};
 }
 
-/**
- * Build StandPiece[] from serialized music assignments.
- * Uses piece.id (MusicPiece PK) as the identity – NOT EventMusic.id.
- * PDF URLs go through the authenticated file proxy with eventId scope.
- */
 function buildStandPieces(
   music: SerializedMusicAssignment[],
   eventId: string
@@ -263,8 +258,12 @@ function StandViewerContent({ data }: StandViewerProps) {
     updateAudioTrackerSettings,
     setUserContext,
     updatePiecePdfUrl,
+    setCurrentPieceIndex,
+    setCurrentPage,
     pieces,
     currentPieceIndex,
+    _currentPage: currentPage,
+    nightMode,
   } = useStandStore();
 
   const {
@@ -330,6 +329,121 @@ function StandViewerContent({ data }: StandViewerProps) {
     []
   );
 
+  const applyRemoteState = useCallback(
+    (incoming: {
+      currentPage?: number;
+      currentPieceIndex?: number;
+      nightMode?: boolean;
+    }) => {
+      const store = useStandStore.getState();
+
+      if (
+        typeof incoming.currentPieceIndex === 'number' &&
+        incoming.currentPieceIndex !== store.currentPieceIndex
+      ) {
+        store.setCurrentPieceIndex(incoming.currentPieceIndex);
+      }
+
+      const refreshedStore = useStandStore.getState();
+      if (
+        typeof incoming.currentPage === 'number' &&
+        incoming.currentPage !== refreshedStore._currentPage
+      ) {
+        refreshedStore.setCurrentPage(incoming.currentPage);
+      }
+
+      const latestStore = useStandStore.getState();
+      if (
+        typeof incoming.nightMode === 'boolean' &&
+        incoming.nightMode !== latestStore.nightMode
+      ) {
+        latestStore.toggleNightMode();
+      }
+    },
+    []
+  );
+
+  const mergeRemoteAnnotation = useCallback(
+    (payload: Record<string, unknown>) => {
+      const id = typeof payload.id === 'string' ? payload.id : null;
+      const pieceId =
+        typeof payload.pieceId === 'string'
+          ? payload.pieceId
+          : typeof payload.musicId === 'string'
+            ? payload.musicId
+            : null;
+      const pageValue =
+        typeof payload.page === 'number'
+          ? payload.page
+          : typeof payload.pageNumber === 'number'
+            ? payload.pageNumber
+            : null;
+      const layer =
+        payload.layer === 'PERSONAL' ||
+        payload.layer === 'SECTION' ||
+        payload.layer === 'DIRECTOR'
+          ? payload.layer
+          : null;
+      const remoteUserId = typeof payload.userId === 'string' ? payload.userId : undefined;
+
+      if (!id || !pieceId || !pageValue || !layer) {
+        return;
+      }
+
+      if (layer === 'PERSONAL' && remoteUserId && remoteUserId !== userId) {
+        return;
+      }
+
+      const annotation = {
+        id,
+        pieceId,
+        pageNumber: pageValue,
+        layer,
+        strokeData: normalizeStrokeData(payload.strokeData),
+        sectionId:
+          typeof payload.sectionId === 'string' || payload.sectionId === null
+            ? payload.sectionId
+            : null,
+        userId: remoteUserId,
+        createdAt:
+          typeof payload.createdAt === 'string'
+            ? payload.createdAt
+            : new Date().toISOString(),
+        updatedAt:
+          typeof payload.updatedAt === 'string' ? payload.updatedAt : undefined,
+      };
+
+      useStandStore.setState((state) => {
+        const updated = {
+          personal: { ...state.annotations.personal },
+          section: { ...state.annotations.section },
+          director: { ...state.annotations.director },
+        };
+
+        (['personal', 'section', 'director'] as const).forEach((layerKey) => {
+          Object.keys(updated[layerKey]).forEach((key) => {
+            const filtered = updated[layerKey][key].filter((entry) => entry.id !== id);
+            if (filtered.length === 0) {
+              delete updated[layerKey][key];
+            } else {
+              updated[layerKey][key] = filtered;
+            }
+          });
+        });
+
+        const targetLayer = layer.toLowerCase() as 'personal' | 'section' | 'director';
+        const annotationKey = `${pieceId}-${pageValue}`;
+        updated[targetLayer][annotationKey] = [
+          ...(updated[targetLayer][annotationKey] ?? []),
+          annotation,
+        ];
+
+        return { annotations: updated };
+      });
+    },
+    [userId]
+  );
+
   useEffect(() => {
     setUserContext({
       userId,
@@ -344,56 +458,49 @@ function StandViewerContent({ data }: StandViewerProps) {
       setEventInfo(eventId, eventTitle);
     }
 
-    if (annotations.length > 0) {
-      const mappedAnnotations = annotations.map((a) => ({
-        id: a.id,
-        pieceId: a.pieceId,
-        pageNumber: a.page,
-        layer: a.layer,
-        strokeData: normalizeStrokeData(a.strokeData),
-        userId: a.userId,
-        sectionId: a.sectionId,
-        createdAt: a.createdAt,
-        updatedAt: a.updatedAt,
-      }));
-      setAnnotations(mappedAnnotations);
-    }
+    const mappedAnnotations = annotations.map((a) => ({
+      id: a.id,
+      pieceId: a.pieceId,
+      pageNumber: a.page,
+      layer: a.layer,
+      strokeData: normalizeStrokeData(a.strokeData),
+      userId: a.userId,
+      sectionId: a.sectionId,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
+    }));
+    setAnnotations(mappedAnnotations);
 
-    if (navigationLinks.length > 0) {
-      const mappedLinks = navigationLinks.map((nl) => ({
-        id: nl.id,
-        fromPieceId: nl.musicId,
-        fromPage: nl.fromPage,
-        fromX: nl.fromX,
-        fromY: nl.fromY,
-        toPieceId: nl.toMusicId || nl.musicId,
-        toPage: nl.toPage,
-        toX: nl.toX,
-        toY: nl.toY,
-        label: nl.label,
-        createdAt: nl.createdAt,
-        toMusicId: nl.toMusicId,
-      }));
-      setNavigationLinks(mappedLinks);
-    }
+    const mappedLinks = navigationLinks.map((nl) => ({
+      id: nl.id,
+      fromPieceId: nl.musicId,
+      fromPage: nl.fromPage,
+      fromX: nl.fromX,
+      fromY: nl.fromY,
+      toPieceId: nl.toMusicId || nl.musicId,
+      toPage: nl.toPage,
+      toX: nl.toX,
+      toY: nl.toY,
+      label: nl.label,
+      createdAt: nl.createdAt,
+      toMusicId: nl.toMusicId,
+    }));
+    setNavigationLinks(mappedLinks);
+    setAudioLinks(audioLinks);
 
-    if (audioLinks.length > 0) {
-      setAudioLinks(audioLinks);
-    }
-
-    if (roster.length > 0) {
-      setRoster(
-        roster.map((r) => ({
-          userId: r.userId,
-          name: r.name || r.userId.slice(0, 8),
-          section: r.section ?? undefined,
-          joinedAt: r.lastSeenAt,
-        }))
-      );
-    }
+    setRoster(
+      roster.map((r) => ({
+        userId: r.userId,
+        name: r.name || r.userId.slice(0, 8),
+        section: r.section ?? undefined,
+        joinedAt: r.lastSeenAt,
+      }))
+    );
 
     if (preferences) {
-      if (preferences.nightMode) toggleNightMode();
+      if (preferences.nightMode !== nightMode) {
+        toggleNightMode();
+      }
       if (preferences.metronomeSettings) {
         updateMetronomeSettings(preferences.metronomeSettings as any);
       }
@@ -413,13 +520,18 @@ function StandViewerContent({ data }: StandViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const currentPiece = pieces[currentPieceIndex] ?? null;
+  const currentMusicEntry = music[currentPieceIndex] ?? null;
+
   useStandSync({
     eventId,
     userId,
+    musicId: currentPiece?.id,
     realtimeEnabled:
       standConfig?.websocketEnabled === true &&
       standConfig?.realtimeMode === 'websocket',
     pollingInterval: standConfig?.pollingIntervalMs ?? 5000,
+    onStateChange: (state) => applyRemoteState(state),
     onRosterChange: (members) => setRoster(members),
     onPresenceChange: (presence) => {
       if (presence.status === 'joined') {
@@ -433,10 +545,26 @@ function StandViewerContent({ data }: StandViewerProps) {
         removeRosterEntry(presence.userId);
       }
     },
+    onCommand: (command) => {
+      if (command.action === 'setPage') {
+        applyRemoteState({ currentPage: command.page });
+        return;
+      }
+      if (command.action === 'setPiece') {
+        applyRemoteState({ currentPieceIndex: command.pieceIndex });
+        return;
+      }
+      if (command.action === 'toggleNightMode') {
+        applyRemoteState({ nightMode: command.value });
+      }
+    },
+    onModeChange: (mode) => {
+      if (mode.name === 'nightMode' && typeof mode.value === 'boolean') {
+        applyRemoteState({ nightMode: mode.value });
+      }
+    },
+    onAnnotation: (annotation) => mergeRemoteAnnotation(annotation.data),
   });
-
-  const currentPiece = pieces[currentPieceIndex] ?? null;
-  const currentMusicEntry = music[currentPieceIndex] ?? null;
 
   const partOptions = (() => {
     if (!currentMusicEntry) return { fullScore: null, parts: [], activeId: null };
@@ -542,10 +670,10 @@ function StandViewerContent({ data }: StandViewerProps) {
           <div className="w-80 border-l bg-card flex-shrink-0 overflow-y-auto">
             {activePanel === 'bookmarks' && (
               <BookmarksPanel
-                currentPieceId={currentPiece?.id ?? null}
+                currentPieceId={currentPiece?.id}
                 onSelect={(pieceId) => {
                   const idx = pieces.findIndex((p) => p.id === pieceId);
-                  if (idx >= 0) useStandStore.getState().setCurrentPieceIndex(idx);
+                  if (idx >= 0) setCurrentPieceIndex(idx);
                   setActivePanel(null);
                 }}
               />
