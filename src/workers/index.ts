@@ -23,6 +23,7 @@ import {
   closeStandSocketServer,
 } from '@/lib/websocket/stand-socket';
 import { getStandSettings } from '@/lib/stand/settings';
+import { evaluateWorkerRuntimeHealth } from './runtime-health';
 
 /**
  * Worker Entry Point for ECCB Platform
@@ -169,10 +170,17 @@ function startHealthServer(): void {
     if (req.url === '/health') {
       try {
         const stats = await getAllQueueStats();
-        const workersHealthy = isEmailWorkerRunning() && isSchedulerWorkerRunning() && isSmartUploadProcessorWorkerRunning();
+        const runtimeHealth = evaluateWorkerRuntimeHealth({
+          email: isEmailWorkerRunning(),
+          scheduler: isSchedulerWorkerRunning(),
+          smartUpload: isSmartUploadProcessorWorkerRunning(),
+          ocr: isOcrWorkerRunning(),
+          sockets: isSocketWorkerRunning(),
+          socketsRequired: ENABLE_WEBSOCKETS,
+        });
 
         const health = {
-          status: workersHealthy ? 'healthy' : 'unhealthy',
+          status: runtimeHealth.healthy ? 'healthy' : 'unhealthy',
           timestamp: new Date().toISOString(),
           uptime: process.uptime(),
           workers: {
@@ -185,7 +193,7 @@ function startHealthServer(): void {
           queues: stats,
         };
 
-        res.writeHead(workersHealthy ? 200 : 503, { 'Content-Type': 'application/json' });
+        res.writeHead(runtimeHealth.healthy ? 200 : 503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(health, null, 2));
       } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -196,7 +204,15 @@ function startHealthServer(): void {
       }
     } else if (req.url === '/ready') {
       // Readiness probe - check if workers are ready to accept jobs
-      const ready = isEmailWorkerRunning() && isSchedulerWorkerRunning() && isSmartUploadProcessorWorkerRunning() && isOcrWorkerRunning();
+      const runtimeHealth = evaluateWorkerRuntimeHealth({
+        email: isEmailWorkerRunning(),
+        scheduler: isSchedulerWorkerRunning(),
+        smartUpload: isSmartUploadProcessorWorkerRunning(),
+        ocr: isOcrWorkerRunning(),
+        sockets: isSocketWorkerRunning(),
+        socketsRequired: ENABLE_WEBSOCKETS,
+      });
+      const ready = runtimeHealth.ready;
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ready, ocr: isOcrWorkerRunning(), sockets: isSocketWorkerRunning() }));
     } else {
@@ -303,7 +319,7 @@ async function main(): Promise<void> {
   startEmailWorker();
   startSchedulerWorker();
   await startSmartUploadProcessorWorker();
-  startOcrWorker();
+  await startOcrWorker();
 
   // Start scheduler intervals
   startSchedulerIntervals();
