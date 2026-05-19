@@ -97,6 +97,7 @@ describe('Job Queue System', () => {
       expect(QUEUE_NAMES.SCHEDULED).toBe('eccb-scheduled');
       expect(QUEUE_NAMES.CLEANUP).toBe('eccb-cleanup');
       expect(QUEUE_NAMES.DEAD_LETTER).toBe('eccb-dead-letter');
+      expect(QUEUE_NAMES.OCR).toBe('eccb-ocr');
     });
   });
 
@@ -191,7 +192,8 @@ describe('Job Queue System', () => {
       const allStats = await getAllQueueStats();
 
       expect(allStats).toBeDefined();
-      expect(allStats.length).toBeGreaterThan(0);
+      expect(allStats.length).toBe(Object.keys(QUEUE_NAMES).length);
+      expect(allStats.map((stat) => stat.name)).toContain('eccb-ocr');
     });
   });
 
