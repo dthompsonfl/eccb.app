@@ -259,10 +259,8 @@ function StandViewerContent({ data }: StandViewerProps) {
     setUserContext,
     updatePiecePdfUrl,
     setCurrentPieceIndex,
-    setCurrentPage,
     pieces,
     currentPieceIndex,
-    _currentPage: currentPage,
     nightMode,
   } = useStandStore();
 
