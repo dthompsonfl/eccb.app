@@ -7,6 +7,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
 } from 'react';
 import { useStandStore, StandPiece } from '@/store/standStore';
 import { useStandSync } from '@/hooks/use-stand-sync';
@@ -116,6 +117,7 @@ interface SerializedPreferences {
   tunerSettings?: Record<string, unknown>;
   pitchPipeSettings?: Record<string, unknown>;
   audioTrackerSettings?: Record<string, unknown>;
+  selectedParts?: Record<string, string>;
 }
 
 interface SerializedRosterEntry {
@@ -261,6 +263,7 @@ function StandViewerContent({ data }: StandViewerProps) {
     setCurrentPieceIndex,
     pieces,
     currentPieceIndex,
+    _currentPage: currentPage,
     nightMode,
   } = useStandStore();
 
@@ -281,6 +284,7 @@ function StandViewerContent({ data }: StandViewerProps) {
   } = data;
 
   const isLibrarian = roles.includes('LIBRARIAN');
+  const lastBroadcastRef = useRef<string>('');
 
   const [standConfig, setStandConfig] = useState<StandConfig | null>(null);
   type PanelName = 'bookmarks' | 'setlists' | 'practice' | 'audio';
@@ -514,6 +518,40 @@ function StandViewerContent({ data }: StandViewerProps) {
       if (preferences.audioTrackerSettings) {
         updateAudioTrackerSettings(preferences.audioTrackerSettings as any);
       }
+      if (preferences.selectedParts) {
+        const selectedParts = preferences.selectedParts;
+        setActivePiecePartId(selectedParts);
+
+        for (const musicEntry of music) {
+          const selectedPartId = selectedParts[musicEntry.piece.id];
+          if (!selectedPartId) continue;
+
+          const selectedPart = musicEntry.piece.parts.find(
+            (part) => part.id === selectedPartId && part.storageKey
+          );
+          if (selectedPart?.storageKey) {
+            updatePiecePdfUrl(
+              musicEntry.piece.id,
+              `/api/stand/files/${encodeURIComponent(
+                selectedPart.storageKey
+              )}?eventId=${encodeURIComponent(eventId)}`
+            );
+            continue;
+          }
+
+          const fullScoreFile = musicEntry.piece.files.find(
+            (file) => file.id === selectedPartId && file.storageKey
+          );
+          if (fullScoreFile?.storageKey) {
+            updatePiecePdfUrl(
+              musicEntry.piece.id,
+              `/api/stand/files/${encodeURIComponent(
+                fullScoreFile.storageKey
+              )}?eventId=${encodeURIComponent(eventId)}`
+            );
+          }
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -563,6 +601,34 @@ function StandViewerContent({ data }: StandViewerProps) {
     },
     onAnnotation: (annotation) => mergeRemoteAnnotation(annotation.data),
   });
+
+  useEffect(() => {
+    if (!standConfig?.enabled || !currentPiece) {
+      return;
+    }
+
+    const payload = JSON.stringify({
+      eventId,
+      musicId: currentPiece.id,
+      currentPieceIndex,
+      currentPage,
+      nightMode,
+    });
+
+    if (lastBroadcastRef.current === payload) {
+      return;
+    }
+
+    lastBroadcastRef.current = payload;
+
+    fetch('/api/stand/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    }).catch(() => {
+      /* sync broadcast is best-effort */
+    });
+  }, [currentPage, currentPiece, currentPieceIndex, eventId, nightMode, standConfig?.enabled]);
 
   const partOptions = (() => {
     if (!currentMusicEntry) return { fullScore: null, parts: [], activeId: null };
