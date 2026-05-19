@@ -70,14 +70,29 @@ export async function POST(request: NextRequest) {
 
     const { musicId, fromPage, fromX, fromY, toPage, toMusicId, toX, toY, label } = parsed;
 
-    const piece = await prisma.musicPiece.findUnique({ where: { id: musicId }, select: { id: true } });
-    if (!piece) return json400('Piece not found');
+    const hasSourceAccess = await canAccessPiece(ctx.userId, musicId);
+    if (!hasSourceAccess) return json404('Source piece not found');
+
+    if (toMusicId) {
+      const hasTargetAccess = await canAccessPiece(ctx.userId, toMusicId);
+      if (!hasTargetAccess) return json404('Destination piece not found');
+    }
 
     const link = await prisma.navigationLink.create({
-      data: { musicId, fromPage, fromX, fromY, toPage, toMusicId: toMusicId ?? null, toX, toY, label: label ?? null },
+      data: {
+        musicId,
+        fromPage,
+        fromX,
+        fromY,
+        toPage,
+        toMusicId: toMusicId ?? null,
+        toX,
+        toY,
+        label: label ?? null,
+      },
     });
 
-    return jsonOk({ link }, 201);
+    return jsonOk({ navigationLink: link }, 201);
   } catch (error) {
     console.error('[NavLinks POST]', error);
     return json500();
