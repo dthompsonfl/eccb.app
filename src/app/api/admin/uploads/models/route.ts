@@ -30,7 +30,7 @@ async function resolveEndpoint(provider: Provider, clientEndpoint?: string): Pro
 // Enhanced Types with Recommendation Support
 // =============================================================================
 
-type Provider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'mistral' | 'groq' | 'ollama-cloud' | 'custom';
+type Provider = 'glm-ocr' | 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'mistral' | 'groq' | 'ollama-cloud' | 'custom';
 
 interface ModelInfo {
   id: string;
@@ -267,6 +267,26 @@ function getModelMetadata(modelId: string, provider: Provider): Partial<ModelMet
     return ANTHROPIC_METADATA[modelId] || {};
   }
   return {};
+}
+
+function getGlmOcrModels(): ModelInfo[] {
+  return [
+    {
+      id: 'zai-org/GLM-OCR',
+      name: 'zai-org/GLM-OCR',
+      isVision: true,
+      supportsStructuredOutput: false,
+      contextWindow: null,
+      pricePerToken: null,
+      priceDisplay: 'Local GPU',
+      isDeprecated: false,
+      releaseDate: null,
+      providerNote: 'Image-based OCR only. Native PDF input stays disabled for Smart Upload.',
+      recommended: true,
+      recommendationReason: 'Best fit for local Smart Upload OCR migration',
+      recommendationScore: 1000,
+    },
+  ];
 }
 
 function calculateRecommendationScore(model: ModelInfo): number {
@@ -707,6 +727,13 @@ export async function GET(request: NextRequest) {
     let warning: string | undefined;
 
     switch (provider) {
+      case 'glm-ocr': {
+        models = getGlmOcrModels();
+        filteredForVision = true;
+        warning = 'GLM-OCR runs as a local image-based OCR provider. Keep full-PDF sending disabled.';
+        break;
+      }
+
       case 'ollama': {
         const ollamaEndpoint = safeEndpoint || 'http://localhost:11434';
         models = await fetchOllamaModels(ollamaEndpoint);

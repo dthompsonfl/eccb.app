@@ -37,6 +37,7 @@ describe('LLM_PROVIDERS', () => {
 
 describe('getProviderMeta', () => {
   it('returns the correct meta for each provider', () => {
+    expect(getProviderMeta('glm-ocr')?.value).toBe('glm-ocr');
     expect(getProviderMeta('ollama')?.value).toBe('ollama');
     expect(getProviderMeta('openai')?.value).toBe('openai');
     expect(getProviderMeta('anthropic')?.value).toBe('anthropic');
@@ -52,6 +53,7 @@ describe('getProviderMeta', () => {
 
 describe('getDefaultEndpointForProvider', () => {
   it('returns expected defaults for each provider', () => {
+    expect(getDefaultEndpointForProvider('glm-ocr')).toBe('http://glm-ocr:8090/v1');
     expect(getDefaultEndpointForProvider('ollama')).toBe('http://localhost:11434');
     expect(getDefaultEndpointForProvider('openai')).toBe('https://api.openai.com/v1');
     expect(getDefaultEndpointForProvider('anthropic')).toBe('https://api.anthropic.com');
@@ -73,6 +75,13 @@ describe('getDefaultEndpointForProvider', () => {
 });
 
 describe('maxImagesPerRequest', () => {
+  it('glm-ocr has maxImagesPerRequest of 1 and no PDF input support', () => {
+    const glm = getProviderMeta('glm-ocr');
+    expect(glm?.maxImagesPerRequest).toBe(1);
+    expect(glm?.supportsPdfInput).toBe(false);
+    expect(glm?.defaultVisionModel).toBe('zai-org/GLM-OCR');
+  });
+
   it('groq has maxImagesPerRequest of 1 (single-image vision models)', () => {
     const groq = getProviderMeta('groq');
     expect(groq?.maxImagesPerRequest).toBe(1);

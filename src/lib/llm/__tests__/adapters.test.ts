@@ -8,6 +8,7 @@ import { OllamaAdapter } from '../ollama';
 import { OllamaCloudAdapter } from '../ollama-cloud';
 import { MistralAdapter } from '../mistral';
 import { GroqAdapter } from '../groq';
+import { GlmOcrAdapter } from '../glm-ocr';
 import { CustomAdapter } from '../custom';
 
 describe('LLM Adapters', () => {
@@ -17,6 +18,7 @@ describe('LLM Adapters', () => {
     llm_anthropic_api_key: 'sk-ant-test',
     llm_gemini_api_key: 'gemini-test',
     llm_openrouter_api_key: 'sk-or-test',
+    llm_glm_ocr_api_key: 'glm-token',
     llm_vision_model: 'gpt-4-turbo',
   };
 
@@ -44,6 +46,11 @@ describe('LLM Adapters', () => {
     it('should return CustomAdapter for custom provider', async () => {
       const adapter = await getAdapter('custom');
       expect(adapter).toBeInstanceOf(CustomAdapter);
+    });
+
+    it('should return GlmOcrAdapter for glm-ocr provider', async () => {
+      const adapter = await getAdapter('glm-ocr');
+      expect(adapter).toBeInstanceOf(GlmOcrAdapter);
     });
 
     it('should return OllamaAdapter for ollama provider', async () => {
@@ -195,6 +202,50 @@ describe('LLM Adapters', () => {
 
       expect(openaiResult.headers['Authorization']).toBe('Bearer sk-test');
       expect(anthropicResult.headers['x-api-key']).toBe('sk-ant-test');
+    });
+  });
+
+  describe('GLM-OCR Adapter', () => {
+    const adapter = new GlmOcrAdapter();
+
+    it('builds an OpenAI-compatible chat.completions request', () => {
+      const result = adapter.buildRequest(
+        {
+          ...mockConfig,
+          llm_provider: 'glm-ocr',
+          llm_endpoint_url: 'http://glm-ocr:8090/v1',
+          llm_vision_model: 'zai-org/GLM-OCR',
+        },
+        {
+          images: [{ mimeType: 'image/png', base64Data: 'abcd', label: 'Header' }],
+          prompt: 'Return JSON only',
+          responseFormat: { type: 'json' },
+        },
+      );
+
+      expect(result.url).toBe('http://glm-ocr:8090/v1/chat/completions');
+      expect(result.headers.Authorization).toBe('Bearer glm-token');
+      expect(result.body).toMatchObject({
+        model: 'zai-org/GLM-OCR',
+        response_format: { type: 'json_object' },
+      });
+    });
+
+    it('normalizes endpoints that omit /v1', () => {
+      const result = adapter.buildRequest(
+        {
+          ...mockConfig,
+          llm_provider: 'glm-ocr',
+          llm_endpoint_url: 'http://glm-ocr:8090',
+          llm_vision_model: 'zai-org/GLM-OCR',
+        },
+        {
+          images: [{ mimeType: 'image/png', base64Data: 'abcd' }],
+          prompt: 'Test',
+        },
+      );
+
+      expect(result.url).toBe('http://glm-ocr:8090/v1/chat/completions');
     });
   });
 

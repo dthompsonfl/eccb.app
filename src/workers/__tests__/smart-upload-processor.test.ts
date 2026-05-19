@@ -53,7 +53,7 @@ vi.mock('@/lib/llm/config-loader', () => ({
     provider: 'openai',
     model: 'gpt-4o',
     apiKey: 'test-key',
-    baseUrl: 'https://api.openai.com/v1',
+    endpointUrl: 'https://api.openai.com/v1',
     temperature: 0.1,
     maxTokens: 4096,
   }),
@@ -151,7 +151,7 @@ import { prisma } from '@/lib/db';
 import { deepCloneJSON } from '@/lib/json';
 import { downloadFile, uploadFile } from '@/lib/services/storage';
 import { callVisionModel } from '@/lib/llm';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
 import { splitPdfByCuttingInstructions, validatePdfBuffer } from '@/lib/services/pdf-splitter';
 import {
   queueSmartUploadSecondPass,
@@ -682,6 +682,52 @@ describe('processSmartUpload — integration', () => {
 
     // No uploads of unlabelled parts
     expect(uploadFile).not.toHaveBeenCalled();
+
+    vi.mocked(getProviderMeta).mockReturnValue({ supportsPdfInput: true } as any);
+  });
+
+  it('image mode: routes vision calls through the configured glm-ocr provider', async () => {
+    const { getProviderMeta } = await import('@/lib/llm/providers');
+    vi.mocked(getProviderMeta).mockReturnValue({ supportsPdfInput: false } as any);
+    vi.mocked(loadSmartUploadRuntimeConfig).mockResolvedValue(
+      makeLlmConfig({
+        sendFullPdfToLlm: false,
+        provider: 'glm-ocr',
+        endpointUrl: 'http://glm-ocr:8090/v1',
+        visionModel: 'zai-org/GLM-OCR',
+      }) as any,
+    );
+    vi.mocked(buildAdapterConfigForStep).mockResolvedValueOnce({
+      provider: 'glm-ocr',
+      model: 'zai-org/GLM-OCR',
+      apiKey: '',
+      endpointUrl: 'http://glm-ocr:8090/v1',
+      systemPrompt: 'glm-system',
+      userPrompt: undefined,
+      modelParams: { top_p: 0.9 },
+    } as any);
+    vi.mocked(labelPages).mockResolvedValue({
+      cuttingInstructions: [],
+      pageLabels: {},
+      confidence: 0,
+      strategyUsed: 'ocr',
+      diagnostics: {
+        strategies: [],
+        totalDurationMs: 0,
+        budgetRemaining: 10,
+        budgetLimit: 10,
+      },
+    });
+    vi.mocked(callVisionModel).mockResolvedValue({ content: LOW_CONFIDENCE_RESPONSE });
+
+    const job = makeJob(SESSION_ID);
+    await processSmartUpload(job);
+
+    expect(callVisionModel).toHaveBeenCalled();
+    const adapterConfig = vi.mocked(callVisionModel).mock.calls[0][0] as Record<string, string>;
+    expect(adapterConfig.llm_provider).toBe('glm-ocr');
+    expect(adapterConfig.llm_endpoint_url).toBe('http://glm-ocr:8090/v1');
+    expect(adapterConfig.llm_vision_model).toBe('zai-org/GLM-OCR');
 
     vi.mocked(getProviderMeta).mockReturnValue({ supportsPdfInput: true } as any);
   });

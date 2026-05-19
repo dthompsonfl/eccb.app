@@ -57,7 +57,7 @@ vi.mock('@/lib/llm/config-loader', () => ({
     provider: 'openai',
     model: 'gpt-4o',
     apiKey: 'test-key',
-    baseUrl: 'https://api.openai.com/v1',
+    endpointUrl: 'https://api.openai.com/v1',
     temperature: 0.1,
     maxTokens: 4096,
   }),
@@ -119,7 +119,7 @@ vi.mock('@/lib/logger', () => ({
 import { prisma } from '@/lib/db';
 import { downloadFile } from '@/lib/services/storage';
 import { callVisionModel } from '@/lib/llm';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
 
 const { processSecondPass } = await import('@/workers/smart-upload-worker');
 
@@ -304,6 +304,27 @@ describe('processSecondPass — integration', () => {
       (call) => (call[0] as any).data?.secondPassStatus === 'FAILED'
     );
     expect(failedUpdate).toBeDefined();
+  });
+
+  it('routes verification calls through the configured glm-ocr provider', async () => {
+    vi.mocked(buildAdapterConfigForStep).mockResolvedValueOnce({
+      provider: 'glm-ocr',
+      model: 'zai-org/GLM-OCR',
+      apiKey: '',
+      endpointUrl: 'http://glm-ocr:8090/v1',
+      systemPrompt: 'glm-system',
+      userPrompt: undefined,
+      modelParams: { top_p: 0.9 },
+    } as any);
+
+    const job = makeJob(SESSION_ID);
+    await processSecondPass(job);
+
+    expect(callVisionModel).toHaveBeenCalled();
+    const adapterConfig = vi.mocked(callVisionModel).mock.calls[0][0] as Record<string, string>;
+    expect(adapterConfig.llm_provider).toBe('glm-ocr');
+    expect(adapterConfig.llm_endpoint_url).toBe('http://glm-ocr:8090/v1');
+    expect(adapterConfig.llm_vision_model).toBe('zai-org/GLM-OCR');
   });
 
   it('rejects sessions not in QUEUED or FAILED status', async () => {

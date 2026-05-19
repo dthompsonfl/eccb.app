@@ -173,6 +173,16 @@ For smart upload verification and adjudication, always reason about:
 
 If a model/provider combination cannot satisfy the request safely, route around it or fall back to human review. Do not brute-force retries.
 
+#### GLM-OCR operating rule
+When Smart Upload is configured to use `glm-ocr`, treat it as a local image-based OCR provider:
+- vision capable
+- not native-PDF capable
+- single-image conservative request path unless explicitly proven otherwise
+- local/internal endpoint only
+- optional bearer-token auth via settings-backed API key
+
+Do not send full PDFs to `glm-ocr` as the default Smart Upload path.
+
 ### 3. Segmentation must be conservative and evidence-based
 Do not trust high text-layer coverage by itself. Music PDFs can have noisy text layers.
 
