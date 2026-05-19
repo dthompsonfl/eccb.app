@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useEffect,
+  useState,
+  useCallback,
+} from 'react';
 import { useStandStore, StandPiece } from '@/store/standStore';
 import { useStandSync } from '@/hooks/use-stand-sync';
 import { useAudioTracker } from '@/hooks/useAudioTracker';
@@ -23,9 +30,6 @@ import { SetlistsPanel } from './SetlistsPanel';
 import { PracticeTimer } from './PracticeTimer';
 import { AudioLinkEditor } from './AudioLinkEditor';
 import { PartSelector } from './PartSelector';
-
-// ── Serialised types coming from the server page ────────────────
-// All Date fields are pre-serialised to ISO strings on the server.
 
 interface SerializedMusicFile {
   id: string;
@@ -143,15 +147,75 @@ interface StandViewerProps {
   data: StandLoaderData;
 }
 
+interface StandErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface StandErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string | null;
+}
+
+class StandErrorBoundary extends Component<
+  StandErrorBoundaryProps,
+  StandErrorBoundaryState
+> {
+  state: StandErrorBoundaryState = {
+    hasError: false,
+    errorMessage: null,
+  };
+
+  static getDerivedStateFromError(error: Error): StandErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error.message,
+    };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('[StandViewer ErrorBoundary]', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full min-h-[24rem] flex-col items-center justify-center gap-4 px-6 text-center">
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold">Music stand unavailable</h2>
+            <p className="text-sm text-muted-foreground">
+              {this.state.errorMessage ??
+                'The music stand hit an unexpected problem while loading.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Reload stand
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 /**
  * Build StandPiece[] from serialized music assignments.
  * Uses piece.id (MusicPiece PK) as the identity – NOT EventMusic.id.
  * PDF URLs go through the authenticated file proxy with eventId scope.
  */
-function buildStandPieces(music: SerializedMusicAssignment[], eventId: string): StandPiece[] {
+function buildStandPieces(
+  music: SerializedMusicAssignment[],
+  eventId: string
+): StandPiece[] {
   return music.map((m) => {
     const pdf = m.piece.files.find((f) => f.mimeType === 'application/pdf');
-    const proxyBase = `/api/stand/files/${encodeURIComponent(pdf?.storageKey ?? '')}?eventId=${encodeURIComponent(eventId)}`;
+    const proxyBase = `/api/stand/files/${encodeURIComponent(
+      pdf?.storageKey ?? ''
+    )}?eventId=${encodeURIComponent(eventId)}`;
     return {
       id: m.piece.id,
       title: m.piece.title ?? 'Untitled',
@@ -162,7 +226,7 @@ function buildStandPieces(music: SerializedMusicAssignment[], eventId: string): 
   });
 }
 
-export function StandViewer({ data }: StandViewerProps) {
+function StandViewerContent({ data }: StandViewerProps) {
   const {
     setPieces,
     setEventInfo,
@@ -204,61 +268,65 @@ export function StandViewer({ data }: StandViewerProps) {
 
   const isLibrarian = roles.includes('LIBRARIAN');
 
-  // Stand runtime config (fetched from /api/stand/config after hydration)
   const [standConfig, setStandConfig] = useState<StandConfig | null>(null);
-  // Which side panel is currently open
   type PanelName = 'bookmarks' | 'setlists' | 'practice' | 'audio';
   const [activePanel, setActivePanel] = useState<PanelName | null>(null);
-  // Per-piece active part ID (keyed by pieceId)
-  const [activePiecePartId, setActivePiecePartId] = useState<Record<string, string>>({});
+  const [activePiecePartId, setActivePiecePartId] = useState<Record<string, string>>(
+    {}
+  );
 
-  // Initialize audio tracker hook
   useAudioTracker();
 
-  // ── Fetch runtime config (stand feature flags) ─────────────
   useEffect(() => {
     fetch('/api/stand/config')
       .then((r) => (r.ok ? r.json() : null))
       .then((cfg: StandConfig | null) => {
         if (cfg) setStandConfig(cfg);
       })
-      .catch(() => {/* config fetch is best-effort */});
+      .catch(() => {
+        /* config fetch is best-effort */
+      });
   }, []);
 
-  // ── Part-selection handler ──────────────────────────────────
   const handlePartSelect = useCallback(
     (pieceId: string, option: { id: string; url: string; pageCount: number }) => {
       setActivePiecePartId((prev) => ({ ...prev, [pieceId]: option.id }));
       updatePiecePdfUrl(pieceId, option.url);
-      // Persist selection to preferences (fire-and-forget)
       fetch('/api/stand/preferences', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedParts: { [pieceId]: option.id } }),
+        body: JSON.stringify({
+          otherSettings: {
+            selectedParts: {
+              [pieceId]: option.id,
+            },
+          },
+        }),
       }).catch(() => {});
     },
     [updatePiecePdfUrl]
   );
 
-  // ── Panel toggle callbacks ──────────────────────────────────
   const togglePanel = useCallback(
     (name: 'bookmarks' | 'setlists' | 'practice' | 'audio') =>
       setActivePanel((prev) => (prev === name ? null : name)),
     []
   );
 
-  // ── Hydrate store with server data (runs once) ──────────────
   useEffect(() => {
-    // User context (roles, sections)
-    setUserContext({ userId, roles, isDirector, isSectionLeader, userSectionIds });
+    setUserContext({
+      userId,
+      roles,
+      isDirector,
+      isSectionLeader,
+      userSectionIds,
+    });
 
-    // Pieces
     if (music.length > 0) {
       setPieces(buildStandPieces(music, eventId));
       setEventInfo(eventId, eventTitle);
     }
 
-    // Annotations – stored keyed by pieceId:page:layer in store
     if (annotations.length > 0) {
       const mappedAnnotations = annotations.map((a) => ({
         id: a.id,
@@ -274,7 +342,6 @@ export function StandViewer({ data }: StandViewerProps) {
       setAnnotations(mappedAnnotations);
     }
 
-    // Navigation links – bulk set
     if (navigationLinks.length > 0) {
       const mappedLinks = navigationLinks.map((nl) => ({
         id: nl.id,
@@ -293,12 +360,10 @@ export function StandViewer({ data }: StandViewerProps) {
       setNavigationLinks(mappedLinks);
     }
 
-    // Audio links – per-piece map built inside store
     if (audioLinks.length > 0) {
       setAudioLinks(audioLinks);
     }
 
-    // Roster (serialized strings, no Date conversion needed)
     if (roster.length > 0) {
       setRoster(
         roster.map((r) => ({
@@ -310,24 +375,27 @@ export function StandViewer({ data }: StandViewerProps) {
       );
     }
 
-    // Preferences
     if (preferences) {
       if (preferences.nightMode) toggleNightMode();
-      if (preferences.metronomeSettings)
+      if (preferences.metronomeSettings) {
         updateMetronomeSettings(preferences.metronomeSettings as any);
-      if (preferences.tunerSettings)
+      }
+      if (preferences.tunerSettings) {
         updateTunerSettings(preferences.tunerSettings as any);
-      if (preferences.pitchPipeSettings)
+      }
+      if (preferences.pitchPipeSettings) {
         updatePitchPipeSettings(preferences.pitchPipeSettings as any);
-      if (preferences.midiMappings)
+      }
+      if (preferences.midiMappings) {
         useStandStore.getState().setMidiMappings(preferences.midiMappings as any);
-      if (preferences.audioTrackerSettings)
+      }
+      if (preferences.audioTrackerSettings) {
         updateAudioTrackerSettings(preferences.audioTrackerSettings as any);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Real-time sync ──────────────────────────────────────────
   useStandSync({
     eventId,
     userId,
@@ -350,20 +418,30 @@ export function StandViewer({ data }: StandViewerProps) {
     },
   });
 
-  // Current piece for panel context
   const currentPiece = pieces[currentPieceIndex] ?? null;
   const currentMusicEntry = music[currentPieceIndex] ?? null;
 
-  // Build PartSelector options for the current piece
   const partOptions = (() => {
     if (!currentMusicEntry) return { fullScore: null, parts: [], activeId: null };
     const { piece } = currentMusicEntry;
     const proxyBase = (key: string) =>
-      `/api/stand/audio-files/${encodeURIComponent(key)}?eventId=${encodeURIComponent(eventId)}`;
+      `/api/stand/files/${encodeURIComponent(key)}?eventId=${encodeURIComponent(
+        eventId
+      )}`;
 
-    const fullScoreFile = piece.files.find((f) => f.mimeType === 'application/pdf' && !f.partLabel);
+    const fullScoreFile = piece.files.find(
+      (f) => f.mimeType === 'application/pdf' && !f.partLabel
+    );
     const fullScore = fullScoreFile
-      ? { id: fullScoreFile.id, label: 'Full Score', url: proxyBase(fullScoreFile.storageKey), pageCount: fullScoreFile.pageCount ?? 1 }
+      ? {
+          id: fullScoreFile.id,
+          label:
+            fullScoreFile.partLabel ??
+            fullScoreFile.instrumentName ??
+            'Full Score',
+          url: proxyBase(fullScoreFile.storageKey),
+          pageCount: fullScoreFile.pageCount ?? 1,
+        }
       : null;
 
     const parts = piece.parts
@@ -375,11 +453,11 @@ export function StandViewer({ data }: StandViewerProps) {
         pageCount: p.pageCount ?? 1,
       }));
 
-    const activeId = activePiecePartId[piece.id] ?? fullScore?.id ?? parts[0]?.id ?? null;
+    const activeId =
+      activePiecePartId[piece.id] ?? fullScore?.id ?? parts[0]?.id ?? null;
     return { fullScore, parts, activeId };
   })();
 
-  // Empty state
   if (!music || music.length === 0) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
@@ -394,7 +472,6 @@ export function StandViewer({ data }: StandViewerProps) {
         isFullscreen ? 'fixed inset-0 z-50 bg-background h-screen' : ''
       }`}
     >
-      {/* Controls Bar */}
       <div
         className={`p-4 border-b flex items-center justify-between bg-card ${
           gigMode || (!showControls && isFullscreen) ? 'hidden' : ''
@@ -411,8 +488,16 @@ export function StandViewer({ data }: StandViewerProps) {
           <Toolbar
             onToggleBookmarks={() => togglePanel('bookmarks')}
             onToggleSetlists={() => togglePanel('setlists')}
-            onTogglePractice={standConfig?.practiceTrackingEnabled ? () => togglePanel('practice') : undefined}
-            onToggleAudio={standConfig?.audioSyncEnabled ? () => togglePanel('audio') : undefined}
+            onTogglePractice={
+              standConfig?.practiceTrackingEnabled
+                ? () => togglePanel('practice')
+                : undefined
+            }
+            onToggleAudio={
+              standConfig?.audioSyncEnabled
+                ? () => togglePanel('audio')
+                : undefined
+            }
             activePanel={activePanel ?? undefined}
           />
         </div>
@@ -421,9 +506,7 @@ export function StandViewer({ data }: StandViewerProps) {
       <KeyboardHandler />
       <MidiHandler />
 
-      {/* Viewer area */}
       <div className="flex-1 bg-muted/20 relative overflow-hidden flex">
-        {/* Setlist sidebar */}
         <SetlistManager />
 
         <div className="flex-1 relative overflow-hidden">
@@ -438,7 +521,6 @@ export function StandViewer({ data }: StandViewerProps) {
           <AudioTrackerSettings />
         </div>
 
-        {/* Side panel — slides in from the right */}
         {activePanel && (
           <div className="w-80 border-l bg-card flex-shrink-0 overflow-y-auto">
             {activePanel === 'bookmarks' && (
@@ -470,5 +552,13 @@ export function StandViewer({ data }: StandViewerProps) {
         )}
       </div>
     </div>
+  );
+}
+
+export function StandViewer({ data }: StandViewerProps) {
+  return (
+    <StandErrorBoundary>
+      <StandViewerContent data={data} />
+    </StandErrorBoundary>
   );
 }
