@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
         musicId,
         page,
         layer,
-        strokeData,
+        strokeData: strokeJson,
         userId: ctx.userId,
         sectionId:
           layer === 'SECTION'
