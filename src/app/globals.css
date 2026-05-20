@@ -121,24 +121,24 @@ h1, h2, h3, h4, h5, h6 {
   100% { opacity: 0.25; }
 }
 
-.hero-particle { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.08); animation: floatParticle 6s ease-in-out infinite; }
-@keyframes floatParticle { 0% { transform: translateY(0) } 50% { transform: translateY(-12px) } 100% { transform: translateY(0) } }
+.hero-particle { position: absolute; border-radius: 50%; background: rgba(255,255,255,0.08); animation: floatParticle 6s ease-in-out infinite; will-change: transform; }
+@keyframes floatParticle { 0% { transform: translateY(0) translateZ(0) } 50% { transform: translateY(-12px) translateZ(0) } 100% { transform: translateY(0) translateZ(0) } }
 
-.glow-pulse-enhanced { box-shadow: 0 6px 30px rgba(15,118,110,0.12), inset 0 -6px 20px rgba(0,0,0,0.06); }
+.glow-pulse-enhanced { box-shadow: 0 6px 30px rgba(15,118,110,0.12), inset 0 -6px 20px rgba(0,0,0,0.06); will-change: box-shadow; }
 
-.shimmer { background: linear-gradient(90deg, rgba(255,255,255,0.02) 20%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.02) 80%); background-size: 200% 100%; animation: shimmer 2.5s linear infinite; }
+.shimmer { background: linear-gradient(90deg, rgba(255,255,255,0.02) 20%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.02) 80%); background-size: 200% 100%; animation: shimmer 2.5s linear infinite; will-change: background-position; }
 @keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
 
-.rotate-slow { animation: rotateSlow 24s linear infinite; }
-@keyframes rotateSlow { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+.rotate-slow { animation: rotateSlow 24s linear infinite; will-change: transform; }
+@keyframes rotateSlow { from { transform: rotate(0deg) translateZ(0) } to { transform: rotate(360deg) translateZ(0) } }
 
-.shadow-3d { box-shadow: 0 18px 35px -20px rgba(0,0,0,0.35); }
-.shadow-3d-hover { box-shadow: 0 30px 60px -10px rgba(0,0,0,0.45); }
+.shadow-3d { box-shadow: 0 18px 35px -20px rgba(0,0,0,0.35); will-change: box-shadow; }
+.shadow-3d-hover { box-shadow: 0 30px 60px -10px rgba(0,0,0,0.45); will-change: box-shadow; }
 
-.musical-note-1 { animation: floatNote 6s ease-in-out infinite; }
-.musical-note-2 { animation: floatNote 8s ease-in-out infinite; }
-.musical-note-3 { animation: floatNote 10s ease-in-out infinite; }
-@keyframes floatNote { 0% { transform: translateY(0) } 50% { transform: translateY(-20px) } 100% { transform: translateY(0) } }
+.musical-note-1 { animation: floatNote 6s ease-in-out infinite; will-change: transform; }
+.musical-note-2 { animation: floatNote 8s ease-in-out infinite; will-change: transform; }
+.musical-note-3 { animation: floatNote 10s ease-in-out infinite; will-change: transform; }
+@keyframes floatNote { 0% { transform: translateY(0) translateZ(0) } 50% { transform: translateY(-20px) translateZ(0) } 100% { transform: translateY(0) translateZ(0) } }
 
 /* Accessibility: reduce motion respects */
 @media (prefers-reduced-motion: reduce) {
