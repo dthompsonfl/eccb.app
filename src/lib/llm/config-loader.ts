@@ -442,6 +442,7 @@ const LLM_API_KEY_ENV_MAP: Record<string, string> = {
   llm_anthropic_api_key: 'LLM_ANTHROPIC_API_KEY',
   llm_openrouter_api_key: 'LLM_OPENROUTER_API_KEY',
   llm_gemini_api_key: 'LLM_GEMINI_API_KEY',
+  llm_glm_ocr_api_key: 'LLM_GLM_OCR_API_KEY',
   llm_ollama_cloud_api_key: 'LLM_OLLAMA_CLOUD_API_KEY',
   llm_mistral_api_key: 'LLM_MISTRAL_API_KEY',
   llm_groq_api_key: 'LLM_GROQ_API_KEY',
@@ -602,9 +603,11 @@ export async function buildAdapterConfigForStep(
       modelParams = cfg.verificationModelParams;
   }
 
-  // Preserve an explicitly configured endpoint for local/proxy deployments.
-  // Otherwise, use the selected provider default.
-  const endpointUrl = cfg.explicitEndpointUrl?.trim()
+  // Scope the editable endpoint to the default provider only.
+  // If a specific step uses a different provider, derive that provider's
+  // canonical endpoint instead of leaking the default provider endpoint.
+  const endpointOwner = cfg.defaultProvider || cfg.provider;
+  const endpointUrl = cfg.explicitEndpointUrl?.trim() && provider === endpointOwner
     ? cfg.explicitEndpointUrl.trim()
     : getDefaultEndpointForProvider(provider);
 

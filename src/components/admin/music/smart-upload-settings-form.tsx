@@ -545,7 +545,7 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
               )}
             />
 
-            {/* Endpoint URL (only for custom provider) */}
+            {/* Endpoint URL (editable endpoint for the current default provider) */}
             {requiresEndpoint && (
               <FormField
                 control={form.control}
@@ -560,7 +560,9 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
                         value={field.value ?? ''}
                       />
                     </FormControl>
-                    <FormDescription>Base URL for the custom API endpoint</FormDescription>
+                    <FormDescription>
+                      Base URL for the current default provider. Per-step providers that differ fall back to their own provider endpoint.
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

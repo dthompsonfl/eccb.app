@@ -22,6 +22,7 @@ const mockLoggerError = vi.hoisted(() => vi.fn());
 const mockLoggerWarn = vi.hoisted(() => vi.fn());
 const mockResetPromptsToDefaults = vi.hoisted(() => vi.fn());
 const mockLoadSmartUploadSettingsFromDB = vi.hoisted(() => vi.fn());
+const mockGetPrimaryApiKey = vi.hoisted(() => vi.fn());
 
 // Mock dependencies
 vi.mock('@/lib/auth/guards', () => ({
@@ -61,6 +62,10 @@ vi.mock('@/lib/logger', () => ({
 vi.mock('@/lib/smart-upload/bootstrap', () => ({
   resetPromptsToDefaults: mockResetPromptsToDefaults,
   loadSmartUploadSettingsFromDB: mockLoadSmartUploadSettingsFromDB,
+}));
+
+vi.mock('@/lib/llm/api-key-service', () => ({
+  getPrimaryApiKey: mockGetPrimaryApiKey,
 }));
 
 // Mock global fetch for connection tests
@@ -170,6 +175,7 @@ describe('Smart Upload Settings API', () => {
       success: true,
       resetKeys: ['llm_vision_system_prompt', 'llm_verification_system_prompt', 'llm_prompt_version'],
     });
+    mockGetPrimaryApiKey.mockResolvedValue('');
 
     // Default fetch response for connection tests
     mockFetch.mockResolvedValue({
@@ -892,6 +898,40 @@ describe('Smart Upload Settings API', () => {
         expect(data.ok).toBe(true);
         expect(mockFetch).toHaveBeenCalled();
       }
+    });
+
+    it('should use the stored GLM service token when testing a protected local service', async () => {
+      mockGetPrimaryApiKey.mockResolvedValueOnce('glm-stored-token');
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'ready' }),
+      });
+
+      const request = createMockRequest({
+        method: 'POST',
+        url: 'http://localhost/api/admin/uploads/settings/test',
+        body: {
+          provider: 'glm-ocr',
+          endpoint: 'http://127.0.0.1:8090/v1',
+          model: 'zai-org/GLM-OCR',
+        },
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.ok).toBe(true);
+      expect(mockGetPrimaryApiKey).toHaveBeenCalledWith('glm-ocr');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:8090/readyz',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer glm-stored-token',
+          }),
+        }),
+      );
     });
 
     it('should require API key for cloud providers', async () => {

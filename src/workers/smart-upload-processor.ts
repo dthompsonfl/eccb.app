@@ -1048,11 +1048,19 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
                 llm_endpoint_url: headerLabelStepConfig.endpointUrl,
                 llm_vision_model: headerLabelStepConfig.model,
               };
+              const headerProviderMeta = getProviderMeta(headerLabelStepConfig.provider);
+              const headerBatchSize = Math.max(
+                1,
+                Math.min(
+                  MAX_HEADER_CROP_BATCH_SIZE,
+                  headerProviderMeta?.maxImagesPerRequest ?? MAX_HEADER_CROP_BATCH_SIZE,
+                ),
+              );
 
               const allParsedHeaderLabels: HeaderLabelEntry[] = [];
 
-              for (let batchStart = 0; batchStart < headerCropImages.length; batchStart += MAX_HEADER_CROP_BATCH_SIZE) {
-                const batchEnd = Math.min(batchStart + MAX_HEADER_CROP_BATCH_SIZE, headerCropImages.length);
+              for (let batchStart = 0; batchStart < headerCropImages.length; batchStart += headerBatchSize) {
+                const batchEnd = Math.min(batchStart + headerBatchSize, headerCropImages.length);
                 const batchPageIndices = allPageIndices.slice(batchStart, batchEnd);
                 const batchImages = headerCropImages.slice(batchStart, batchEnd);
 

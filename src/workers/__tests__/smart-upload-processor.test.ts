@@ -48,7 +48,9 @@ vi.mock('@/lib/llm', () => ({
 
 vi.mock('@/lib/llm/config-loader', () => ({
   loadSmartUploadRuntimeConfig: vi.fn(),
-  runtimeToAdapterConfig: vi.fn().mockReturnValue({}),
+  runtimeToAdapterConfig: vi.fn().mockReturnValue({
+    llm_glm_ocr_api_key: 'glm-token',
+  }),
   buildAdapterConfigForStep: vi.fn().mockResolvedValue({
     provider: 'openai',
     model: 'gpt-4o',
@@ -728,6 +730,7 @@ describe('processSmartUpload — integration', () => {
     expect(adapterConfig.llm_provider).toBe('glm-ocr');
     expect(adapterConfig.llm_endpoint_url).toBe('http://glm-ocr:8090/v1');
     expect(adapterConfig.llm_vision_model).toBe('zai-org/GLM-OCR');
+    expect(adapterConfig.llm_glm_ocr_api_key).toBe('glm-token');
 
     vi.mocked(getProviderMeta).mockReturnValue({ supportsPdfInput: true } as any);
   });

@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
     const needsApiKey = providerRequiresApiKey(provider);
     let apiKey = requestApiKey?.trim() || '';
 
-    if (!apiKey && needsApiKey) {
+    if (!apiKey && (needsApiKey || provider === 'glm-ocr')) {
       try {
         apiKey = await getPrimaryApiKey(provider as LLMProviderValue);
       } catch {
