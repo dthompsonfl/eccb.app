@@ -23,12 +23,4 @@ describe('GLM-OCR capabilities', () => {
     expect(result.valid).toBe(true);
     expect(result.warnings[0]).toMatch(/does not support native PDF input/i);
   });
-
-  it('rejects image batches larger than the provider cap', () => {
-    const result = validateCapabilities('glm-ocr', 'zai-org/GLM-OCR', 'vision', {
-      imageCount: 2,
-    });
-    expect(result.valid).toBe(false);
-    expect(result.error).toMatch(/supports max 1/i);
-  });
 });

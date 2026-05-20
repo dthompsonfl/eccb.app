@@ -56,12 +56,6 @@ Use these settings through the admin Smart Upload settings UI:
 - `smart_upload_send_full_pdf_to_llm=false`
 - `smart_upload_store_raw_ocr_text=false`
 
-Endpoint note:
-
-- `llm_endpoint_url` is treated as the editable endpoint for the current default provider
-- if a specific Smart Upload step uses a different provider, that step falls back to that provider's canonical endpoint unless it also becomes the default provider
-- for mixed-provider rollouts, avoid assuming one endpoint value will be reused across every step
-
 ## Security defaults
 
 - keep the service bound to localhost or an internal Docker network

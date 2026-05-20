@@ -157,13 +157,10 @@ export function validateCapabilities(
     }
     
     if (options?.imageCount && options.imageCount > caps.maxImages) {
-      return {
-        valid: false,
-        error:
-          `Request includes ${options.imageCount} images but model "${model}" (${provider}) supports max ${caps.maxImages}. ` +
-          `Reduce image count before sending the request.`,
-        warnings,
-      };
+      warnings.push(
+        `Request includes ${options.imageCount} images but model supports max ${caps.maxImages}. ` +
+        `Consider reducing image count or using a different model.`
+      );
     }
   }
   

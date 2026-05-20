@@ -180,7 +180,6 @@ When Smart Upload is configured to use `glm-ocr`, treat it as a local image-base
 - single-image conservative request path unless explicitly proven otherwise
 - local/internal endpoint only
 - optional bearer-token auth via settings-backed API key
-- an explicitly configured endpoint belongs only to the current default provider; per-step providers that differ must fall back to their own provider endpoint unless they become the default owner
 
 Do not send full PDFs to `glm-ocr` as the default Smart Upload path.
 
