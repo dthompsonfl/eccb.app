@@ -1,10 +1,10 @@
-    'use server';
-
 import { Breadcrumbs } from '@/components/shared/breadcrumbs';
 import { PageForm } from '@/components/admin/pages/page-form';
 import { createPage } from '../actions';
 export default function NewPagePage() {
   async function handleCreatePage(formData: FormData) {
+    'use server';
+
     return createPage(formData);
   }
 

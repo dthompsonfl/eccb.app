@@ -1,11 +1,10 @@
-    'use server';
-
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createUser } from '../actions';
 export default function NewUserPage() {
   async function handleCreateUser(formData: FormData) {
-    
+    'use server';
+
     const email = formData.get('email') as string;
     const name = formData.get('name') as string;
     const sendInvite = formData.get('sendInvite') === 'on';
