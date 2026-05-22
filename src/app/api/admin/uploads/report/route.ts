@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/permissions';
-import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 export async function GET(_request: NextRequest) {
   try {
     await requirePermission(MUSIC_VIEW_ALL);

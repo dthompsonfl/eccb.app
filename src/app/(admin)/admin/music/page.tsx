@@ -22,6 +22,7 @@ import { type MusicPieceWithRelations } from '@/components/admin/MusicLibraryTab
 import { RealTimeMusicLibrary } from '@/components/admin/RealTimeMusicLibrary';
 
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 export const metadata: Metadata = {
   title: 'Music Library',
 };
@@ -44,7 +45,7 @@ export default async function AdminMusicPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
   const params = await searchParams;
 
   const search = params.search || '';

@@ -1,3 +1,4 @@
+import { MUSIC_UPLOAD, SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 /**
  * POST /api/admin/uploads/second-pass
  *
@@ -15,7 +16,6 @@ import { checkUserPermission } from '@/lib/auth/permissions';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
-import { MUSIC_UPLOAD, SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 import { queueSmartUploadSecondPass } from '@/lib/jobs/smart-upload';
 import type { SecondPassStatus } from '@/types/smart-upload';
 

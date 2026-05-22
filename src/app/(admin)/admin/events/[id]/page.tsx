@@ -19,12 +19,13 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
+import { EVENT_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EventDetailPage({ params }: PageProps) {
-  await requirePermission('events:read');
+  await requirePermission(EVENT_VIEW_ALL);
   const { id } = await params;
 
   const event = await prisma.event.findUnique({

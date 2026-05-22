@@ -4,7 +4,6 @@ import { checkUserPermission } from '@/lib/auth/permissions';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { auditLog } from '@/lib/services/audit';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 import { z } from 'zod';
 import {
   listApiKeys,
@@ -17,6 +16,7 @@ import {
 } from '@/lib/llm/api-key-service';
 import { LLM_PROVIDER_VALUES } from '@/lib/llm/providers';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Schemas
 // =============================================================================

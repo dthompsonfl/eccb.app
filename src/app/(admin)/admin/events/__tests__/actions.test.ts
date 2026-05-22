@@ -4,8 +4,8 @@ import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { revalidatePath } from 'next/cache';
-import { EVENT_EDIT } from '@/lib/auth/permission-constants';
 
+import { EVENT_EDIT } from '@/lib/auth/permission-constants';
 // Mock dependencies
 vi.mock('@/lib/db', () => ({
   prisma: {

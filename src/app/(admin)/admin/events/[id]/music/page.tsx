@@ -7,12 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ArrowLeft, Music } from 'lucide-react';
 import { EventMusicManager } from '@/components/admin/events/EventMusicManager';
 
+import { EVENT_EDIT } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function AdminEventMusicPage({ params }: PageProps) {
-  await requirePermission('events:edit');
+  await requirePermission(EVENT_EDIT);
   const { id } = await params;
 
   const [event, allPieces] = await Promise.all([

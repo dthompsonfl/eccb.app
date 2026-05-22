@@ -15,12 +15,13 @@ import {
   Users,
 } from 'lucide-react';
 
+import { ATTENDANCE_MARK_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EventAttendancePage({ params }: PageProps) {
-  await requirePermission('attendance:mark:all');
+  await requirePermission(ATTENDANCE_MARK_ALL);
   const { id } = await params;
 
   // Fetch event with venue info

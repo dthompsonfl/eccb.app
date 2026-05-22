@@ -39,7 +39,6 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
       },
       testIgnore: [/admin\/.*\.spec\.ts/],
-      dependencies: ['setup'],
     },
     
     // Desktop Firefox
@@ -49,7 +48,6 @@ export default defineConfig({
         ...devices['Desktop Firefox'],
       },
       testIgnore: [/admin\/.*\.spec\.ts/],
-      dependencies: ['setup'],
     },
     
     // Desktop Safari
@@ -59,7 +57,6 @@ export default defineConfig({
         ...devices['Desktop Safari'],
       },
       testIgnore: [/admin\/.*\.spec\.ts/],
-      dependencies: ['setup'],
     },
     
     // Mobile Chrome
@@ -69,7 +66,6 @@ export default defineConfig({
         ...devices['Pixel 5'],
       },
       testIgnore: [/admin\/.*\.spec\.ts/],
-      dependencies: ['setup'],
     },
     
     // Mobile Safari
@@ -79,7 +75,6 @@ export default defineConfig({
         ...devices['iPhone 12'],
       },
       testIgnore: [/admin\/.*\.spec\.ts/],
-      dependencies: ['setup'],
     },
     
     // Tablet
@@ -89,7 +84,6 @@ export default defineConfig({
         ...devices['iPad (gen 7)'],
       },
       testIgnore: [/admin\/.*\.spec\.ts/],
-      dependencies: ['setup'],
     },
     
     // Admin tests
@@ -105,7 +99,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'npm run dev',
+    command: 'pnpm run dev',
     url: playwrightBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

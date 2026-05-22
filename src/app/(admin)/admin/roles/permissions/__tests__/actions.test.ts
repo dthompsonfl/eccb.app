@@ -15,8 +15,8 @@ import {
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
-import { isValidPermission } from '@/lib/auth/permission-constants';
 
+import { isValidPermission } from '@/lib/auth/permission-constants';
 // Mock dependencies
 vi.mock('@/lib/db', () => ({
   prisma: {

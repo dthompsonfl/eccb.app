@@ -52,31 +52,24 @@ git clone https://github.com/your-org/eccb.app.git
 cd eccb.app
 
 # Install dependencies
-npm ci
+pnpm install --frozen-lockfile
 
-# Interactive environment setup (recommended)
-npm run setup
+# Create and edit environment configuration
+cp env.example .env
+# Edit .env with real secrets, database URL, storage, and email values
 
-# Non-interactive (accept defaults)
-# Use in scripts or CI to accept defaults: npm run setup -- --yes
-
-# Or manual setup:
-# cp .env.example .env && nano .env
+# Validate environment and generate Prisma client
+pnpm run setup
 
 # Setup database
-npm run db:migrate
-npm run db:seed
+pnpm run db:migrate
+pnpm run db:seed
 
 # Start development server
-npm run dev
+pnpm run dev
 ```
 
-The `npm run setup` command opens an interactive, guided wizard that:
-- prompts for every environment variable (database, auth, storage, email, etc.) and shows current values / safe defaults,
-- auto-generates strong secrets if left blank (AUTH_SECRET, BETTER_AUTH_SECRET),
-- conditionally prompts S3/SMTP/ClamAV/VAPID values only when required,
-- creates a timestamped backup of any existing `.env` before overwriting it,
-- writes the completed `.env` and is safe to re-run (idempotent).
+The `pnpm run setup` command validates the current environment and regenerates the Prisma client. It intentionally does not generate production secrets. Create strong secrets with a password manager or `openssl rand -base64 32`, then store them in `.env` or the deployment secret store.
 
 ### Setup and Repair System
 
@@ -97,7 +90,6 @@ The platform includes a comprehensive **Setup and Repair System** for database m
 
 The `force` parameter (optional, defaults to `false`) can be used to bypass confirmation prompts during repair operations.
 
- For production builds, `npm run build` executes `scripts/setup-admin.sh` (npm `prebuild`) to validate required variables; a masked summary is written to `./build/env-variables-check.txt` and the check is strict for non-CI production builds.
 
 Access the application at http://localhost:3000
 
@@ -107,15 +99,15 @@ For detailed setup instructions, see [LOCAL_SETUP.md](./LOCAL_SETUP.md).
 
 | Script | Description |
 |--------|-------------|
-| `npm run dev` | Start development server with hot reload |
-| `npm run build` | Type-check and build for production |
-| `npm start` | Start production server |
-| `npm run lint` | Run ESLint on codebase |
-| `npm run test` | Run test suite |
-| `npm run setup` | Interactive environment configuration (`--yes` for non-interactive) |
-| `npm run db:migrate` | Run database migrations |
-| `npm run db:seed` | Seed database with initial data |
-| `npm run db:studio` | Open Prisma Studio GUI |
+| `pnpm run dev` | Start development server with hot reload |
+| `pnpm run build` | Type-check and build for production |
+| `pnpm run start` | Start production server |
+| `pnpm run lint` | Run ESLint on codebase |
+| `pnpm run test` | Run test suite |
+| `pnpm run setup` | Validate environment and generate Prisma client |
+| `pnpm run db:migrate` | Run database migrations |
+| `pnpm run db:seed` | Seed database with initial data |
+| `pnpm run db:studio` | Open Prisma Studio GUI |
 
 ## Project Structure
 
@@ -174,10 +166,10 @@ The platform is designed for self-hosting on Ubuntu 22.04 LTS without Docker.
 
 ```bash
 # Build for production
-npm run build
+pnpm run build
 
 # Start production server
-npm start
+pnpm run start
 ```
 
 For complete deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
@@ -234,10 +226,10 @@ All application settings are managed through an intuitive browser-based admin pa
 
 ```bash
 # Run all tests
-npm run test
+pnpm run test
 
 # Run with coverage
-npm run test:coverage
+pnpm run test:coverage
 
 # Run specific test
 npx vitest run path/to/test.test.ts
@@ -247,8 +239,8 @@ npx vitest run path/to/test.test.ts
 
 1. Create a feature branch: `git checkout -b feat/description`
 2. Make changes following the code style in [AGENTS.md](./AGENTS.md)
-3. Run tests: `npm run test`
-4. Run linting: `npm run lint`
+3. Run tests: `pnpm run test`
+4. Run linting: `pnpm run lint`
 5. Submit a pull request
 
 ## License

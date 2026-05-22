@@ -12,12 +12,12 @@
     "dev:workers": "tsx src/workers/index.ts",
     "dev:full": "concurrently -n \"next,workers\" -c \"cyan,magenta\" \"next dev --port 3025\" \"tsx src/workers/index.ts\"",
     "build": "next build",
-    "build:production": "npm run db:generate && next build",
+    "build:production": "pnpm run db:generate && next build",
     "start:server": "next start",
     "start:workers": "tsx src/workers/index.ts",
     "lint": "eslint",
-    "test": "tsx scripts/assert-no-skipped-tests.ts && vitest",
-    "test:run": "tsx scripts/assert-no-skipped-tests.ts && vitest run",
+    "test": "pnpm run permissions:audit && tsx scripts/assert-no-skipped-tests.ts && vitest",
+    "test:run": "pnpm run permissions:audit && tsx scripts/assert-no-skipped-tests.ts && vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch",
     "test:smart-upload:fixtures": "tsx scripts/test-smart-upload-fixtures.ts",
@@ -27,7 +27,7 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ci": "playwright test --reporter=html,json,line",
     "test:e2e:setup": "playwright test e2e/auth.setup.ts --project=setup",
-    "test:all": "npm run test:run && npm run test:e2e:ci",
+    "test:all": "pnpm run test:run && pnpm run test:e2e:ci",
     "verify:preview": "tsx scripts/verify-upload-review-preview.ts",
     "check-routes": "tsx scripts/check-routes.ts",
     "db:generate": "prisma generate",
@@ -37,11 +37,18 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "security:audit": "bash scripts/security-audit.sh",
-    "security:check": "npm audit --audit-level=moderate",
-    "security:fix": "npm audit fix",
+    "security:check": "pnpm audit --audit-level=moderate",
+    "security:fix": "pnpm audit --fix",
     "deps:check": "tsx scripts/dependency-check.ts",
-    "deps:update": "npm outdated && npm update --interactive",
-    "start:sockets": "tsx src/server/socket-worker.ts"
+    "deps:update": "pnpm outdated && pnpm update --interactive",
+    "start:sockets": "tsx src/server/socket-worker.ts",
+    "setup": "tsx scripts/verify-env.ts && pnpm run db:generate",
+    "start": "next start",
+    "start:all": "tsx scripts/start.ts",
+    "typecheck": "tsc --noEmit",
+    "validate": "pnpm run lint && pnpm run typecheck && pnpm run test:run && pnpm run build",
+    "validate:ci": "pnpm run lint && pnpm run typecheck && pnpm run test:run && pnpm run test:e2e:ci && pnpm run build",
+    "permissions:audit": "tsx scripts/assert-canonical-permissions.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.893.0",
@@ -171,5 +178,6 @@
     },
     "minimatch": ">=10.2.1",
     "@eslint/config-array": ">=0.23.0"
-  }
+  },
+  "packageManager": "pnpm@9.15.9"
 }

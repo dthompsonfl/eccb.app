@@ -31,8 +31,9 @@ import {
   Lock,
 } from 'lucide-react';
 
+import { CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 export default async function AdminPagesPage() {
-  await requirePermission('content:read');
+  await requirePermission(CMS_VIEW_ALL);
 
   const [pages, stats] = await Promise.all([
     prisma.page.findMany({

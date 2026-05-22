@@ -60,6 +60,8 @@ const nextConfig: NextConfig = {
   // Security headers configuration
   async headers() {
     const isProduction = process.env.NODE_ENV === 'production';
+    const allowUnsafeEval = process.env.NEXT_ENABLE_UNSAFE_EVAL === 'true';
+    const scriptSrc = ["script-src 'self'", "'unsafe-inline'", ...(allowUnsafeEval ? ["'unsafe-eval'"] : [])].join(' ');
 
     const securityHeaders = [
       // Prevent MIME type sniffing
@@ -100,11 +102,11 @@ const nextConfig: NextConfig = {
         key: 'Content-Security-Policy',
         value: [
           "default-src 'self'",
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com",
+          scriptSrc,
           "style-src 'self' 'unsafe-inline'",
           "img-src 'self' data: blob: https:",
           "font-src 'self' data:",
-          "connect-src 'self' wss: https://va.vercel-scripts.com",
+          "connect-src 'self' wss:",
           "worker-src 'self' blob:",
           "frame-ancestors 'none'",
           "base-uri 'self'",

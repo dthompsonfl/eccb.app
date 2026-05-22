@@ -31,6 +31,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 
+import { ATTENDANCE_MARK_ALL } from '@/lib/auth/permission-constants';
 interface SearchParams {
   search?: string;
   type?: string;
@@ -42,7 +43,7 @@ export default async function AdminAttendancePage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requirePermission('attendance:mark:all');
+  await requirePermission(ATTENDANCE_MARK_ALL);
   const params = await searchParams;
 
   const search = params.search || '';

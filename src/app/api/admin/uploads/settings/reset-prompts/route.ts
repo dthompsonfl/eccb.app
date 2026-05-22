@@ -4,9 +4,9 @@ import { checkUserPermission } from '@/lib/auth/permissions';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { auditLog } from '@/lib/services/audit';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 import { resetPromptsToDefaults, loadSmartUploadSettingsFromDB } from '@/lib/smart-upload/bootstrap';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 // =============================================================================
 // POST /api/admin/uploads/settings/reset-prompts
 // =============================================================================
