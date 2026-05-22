@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requirePermission } from '@/lib/auth/guards';
+import { USER_MANAGE } from '@/lib/auth/permission-constants';
 import { formatDate, formatDateTime } from '@/lib/date';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -37,7 +38,7 @@ export default async function UserDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
   const { id } = await params;
 
   const user = await getUserDetails(id);

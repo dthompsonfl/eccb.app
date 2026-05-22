@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
+import Link from 'next/link';
 import { ContactForm } from '@/components/public/contact-form';
-import { Mail, Phone, MapPin, Clock } from 'lucide-react';
+import { Mail, Phone, MapPin, Clock, Navigation } from 'lucide-react';
 
 export const metadata: Metadata = {
   title: 'Contact Us',
@@ -89,9 +90,18 @@ export default function ContactPage() {
                 ))}
               </div>
 
-              {/* Map placeholder */}
-              <div className="mt-8 aspect-video bg-slate-200 dark:bg-slate-800 rounded-xl flex items-center justify-center">
-                <MapPin className="h-12 w-12 text-muted-foreground" />
+              <div className="mt-8 rounded-xl border bg-muted/40 p-6">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                    <Navigation className="h-6 w-6 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Rehearsal and booking details</h3>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Rehearsal locations and event logistics can vary by season. Submit the form and the band will confirm the current location, parking details, and availability for bookings.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -116,8 +126,7 @@ export default function ContactPage() {
             <div className="bg-white dark:bg-slate-800 rounded-xl p-6">
               <h3 className="font-semibold">How do I join the band?</h3>
               <p className="mt-2 text-muted-foreground">
-                Visit our <a href="/auditions" className="text-primary hover:underline">Join the Band</a> page 
-                for information about joining. Most sections are open to all skill levels.
+                Start with the <Link href="/signup" className="text-primary hover:underline">member signup</Link> flow or use this contact form if you have questions first. Most sections welcome a range of skill levels.
               </p>
             </div>
             <div className="bg-white dark:bg-slate-800 rounded-xl p-6">

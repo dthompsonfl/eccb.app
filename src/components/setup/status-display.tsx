@@ -1,10 +1,10 @@
+'use client';
+
 /**
  * Status Display Component
  *
  * Displays status messages, errors, and success states during the setup process.
  */
-
-'use client';
 
 import { AlertCircle, CheckCircle2, Info, Loader2 } from 'lucide-react';
 

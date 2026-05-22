@@ -160,12 +160,23 @@ export async function rateLimit(
     };
   } catch (error) {
     console.error('Rate limit error:', error);
-    // Fallback to allow if Redis is down (fail open)
+
+    const failOpen = process.env.RATE_LIMIT_FAIL_OPEN === 'true' || process.env.NODE_ENV !== 'production';
+    if (failOpen) {
+      return {
+        success: true,
+        limit,
+        remaining: 1,
+        reset: Math.floor((now + (window * 1000)) / 1000),
+      };
+    }
+
     return {
-      success: true,
+      success: false,
       limit,
-      remaining: 1,
+      remaining: 0,
       reset: Math.floor((now + (window * 1000)) / 1000),
+      retryAfter: Math.min(window, 60),
     };
   }
 }

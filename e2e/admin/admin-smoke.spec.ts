@@ -8,6 +8,11 @@ const adminRoutes = [
   '/admin/music',
   '/admin/attendance',
   '/admin/pages',
+  '/admin/assets',
+  '/admin/sponsors',
+  '/admin/gallery',
+  '/admin/leadership',
+  '/admin/contact-submissions',
   '/admin/settings',
 ];
 

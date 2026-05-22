@@ -38,7 +38,7 @@ function log(message: string, color: keyof typeof colors = 'reset'): void {
 
 function getOutdatedPackages(): OutdatedPackage[] {
   try {
-    const output = execSync('npm outdated --json', {
+    const output = execSync('pnpm outdated --format json', {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: process.cwd(),
@@ -54,7 +54,7 @@ function getOutdatedPackages(): OutdatedPackage[] {
       ...(info as Omit<OutdatedPackage, 'name'>),
     }));
   } catch (error) {
-    // npm outdated returns exit code 1 when packages are outdated
+    // pnpm outdated returns exit code 1 when packages are outdated
     const output = (error as { stdout?: string })?.stdout;
     if (output && output.trim()) {
       const outdated = JSON.parse(output);
@@ -78,7 +78,7 @@ function getPackageJson(): PackageJson {
 
 function checkVulnerabilities(): { count: number; summary: string } {
   try {
-    const output = execSync('npm audit --json', {
+    const output = execSync('pnpm audit --json', {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).toString();
@@ -141,7 +141,7 @@ function main(): void {
   // Vulnerability report
   if (vulnerabilities.count > 0) {
     log(`\n⚠️  Security: ${vulnerabilities.summary}`, 'red');
-    log('  Run "npm audit" for details or "npm audit fix" to fix', 'yellow');
+    log('  Run "pnpm audit" for details or "pnpm audit --fix" to fix', 'yellow');
   } else {
     log('\n✓ No known vulnerabilities', 'green');
   }
@@ -201,15 +201,15 @@ function main(): void {
 
     // Recommendations
     log('📝 Recommendations:', 'cyan');
-    console.log('  1. Run "npm update" to apply safe updates (within version ranges)');
-    console.log('  2. Run "npm outdated" to see full details');
+    console.log('  1. Run "pnpm update" to apply safe updates (within version ranges)');
+    console.log('  2. Run "pnpm outdated" to see full details');
     console.log('  3. Review major updates carefully before updating');
     console.log('  4. Test thoroughly after updating dependencies');
     console.log('');
     log('🔧 Quick Commands:', 'cyan');
-    console.log('  npm run deps:update     - Interactive update');
-    console.log('  npm update              - Apply safe updates');
-    console.log('  npm audit fix           - Fix vulnerabilities');
+    console.log('  pnpm run deps:update    - Interactive update');
+    console.log('  pnpm update             - Apply safe updates');
+    console.log('  pnpm audit --fix        - Fix vulnerabilities');
     console.log('');
 
     // Exit with error if there are major updates or vulnerabilities

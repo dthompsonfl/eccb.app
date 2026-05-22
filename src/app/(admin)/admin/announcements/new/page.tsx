@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { requirePermission } from '@/lib/auth/guards';
+import { ANNOUNCEMENT_CREATE } from '@/lib/auth/permission-constants';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { AnnouncementForm } from '@/components/admin/announcements/announcement-form';
@@ -7,7 +8,7 @@ import { createAnnouncement } from '../actions';
 import type { AnnouncementType, AnnouncementAudience, ContentStatus } from '@prisma/client';
 
 export default async function NewAnnouncementPage() {
-  await requirePermission('announcement.create');
+  await requirePermission(ANNOUNCEMENT_CREATE);
 
   return (
     <div className="space-y-6">

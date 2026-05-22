@@ -1,11 +1,11 @@
+'use client';
+
 /**
  * Setup Wizard Component
  *
  * Main multi-step wizard that orchestrates the setup flow:
  * Welcome -> Database Config -> Environment -> Progress -> Completion
  */
-
-'use client';
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';

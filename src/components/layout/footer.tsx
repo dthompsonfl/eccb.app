@@ -19,13 +19,13 @@ export function Footer() {
               to musical excellence and community enrichment through concert band performances.
             </p>
             <div className="flex gap-4">
-              <a href="#" className="rounded-full bg-white/5 p-2 transition-colors hover:bg-primary">
+              <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" aria-label="Facebook" className="rounded-full bg-white/5 p-2 transition-colors hover:bg-primary">
                 <Facebook size={18} />
               </a>
-              <a href="#" className="rounded-full bg-white/5 p-2 transition-colors hover:bg-primary">
+              <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" aria-label="Instagram" className="rounded-full bg-white/5 p-2 transition-colors hover:bg-primary">
                 <Instagram size={18} />
               </a>
-              <a href="#" className="rounded-full bg-white/5 p-2 transition-colors hover:bg-primary">
+              <a href="https://x.com" target="_blank" rel="noopener noreferrer" aria-label="X/Twitter" className="rounded-full bg-white/5 p-2 transition-colors hover:bg-primary">
                 <Twitter size={18} />
               </a>
             </div>
@@ -44,10 +44,10 @@ export function Footer() {
                 <Link href="/events" className="hover:text-primary transition-colors">Events & Concerts</Link>
               </li>
               <li>
-                <Link href="/music" className="hover:text-primary transition-colors">Music Library</Link>
+                <Link href="/member/music" className="hover:text-primary transition-colors">Music Library</Link>
               </li>
               <li>
-                <Link href="/join" className="hover:text-primary transition-colors">Join the Band</Link>
+                <Link href="/signup" className="hover:text-primary transition-colors">Join the Band</Link>
               </li>
               <li>
                 <Link href="/contact" className="hover:text-primary transition-colors">Contact Us</Link>

@@ -1,10 +1,10 @@
+'use client';
+
 /**
  * Progress Indicator Component
  *
  * Displays the current setup progress with steps and percentage.
  */
-
-'use client';
 
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';

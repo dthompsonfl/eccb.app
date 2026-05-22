@@ -130,8 +130,8 @@ function startNextServer(): void {
   const managed: ManagedProcess = {
     name: 'next-server',
     process: null,
-    command: 'npx',
-    args: ['next', 'start', '-p', String(PORT)],
+    command: 'pnpm',
+    args: ['exec', 'next', 'start', '-p', String(PORT)],
     env: {},
     restartCount: 0,
     lastRestart: 0,
@@ -148,8 +148,8 @@ function startWorkers(): void {
   const managed: ManagedProcess = {
     name: 'workers',
     process: null,
-    command: 'npx',
-    args: ['tsx', 'src/workers/index.ts'],
+    command: 'pnpm',
+    args: ['exec', 'tsx', 'src/workers/index.ts'],
     env: {
       WORKER_HEALTH_PORT: String(WORKER_HEALTH_PORT),
     },

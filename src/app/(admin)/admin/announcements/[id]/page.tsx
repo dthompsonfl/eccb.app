@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requirePermission } from '@/lib/auth/guards';
+import { ANNOUNCEMENT_CREATE } from '@/lib/auth/permission-constants';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { AnnouncementForm } from '@/components/admin/announcements/announcement-form';
@@ -12,7 +13,7 @@ interface PageProps {
 }
 
 export default async function EditAnnouncementPage({ params }: PageProps) {
-  await requirePermission('announcement.create');
+  await requirePermission(ANNOUNCEMENT_CREATE);
   const { id } = await params;
 
   const announcement = await getAnnouncement(id);

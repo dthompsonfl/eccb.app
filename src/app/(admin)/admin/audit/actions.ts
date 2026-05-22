@@ -2,6 +2,7 @@
 
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
+import { AUDIT_VIEW, MEMBER_VIEW_OWN } from '@/lib/auth/permission-constants';
 import { Prisma } from '@prisma/client';
 import { format } from 'date-fns';
 import { z } from 'zod';
@@ -38,7 +39,7 @@ export async function getAuditLogs(
   page: number = 1,
   limit: number = 50
 ): Promise<{ logs: AuditLogEntry[]; total: number; totalPages: number }> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const where: Prisma.AuditLogWhereInput = {};
 
@@ -96,7 +97,7 @@ export async function getAuditLogs(
  * Get a single audit log entry with details
  */
 export async function getAuditLogDetails(id: string): Promise<AuditLogEntry | null> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const log = await prisma.auditLog.findUnique({
     where: { id },
@@ -109,7 +110,7 @@ export async function getAuditLogDetails(id: string): Promise<AuditLogEntry | nu
  * Get audit log statistics for dashboard
  */
 export async function getAuditLogStats(days: number = 30): Promise<AuditLogStats> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
@@ -157,7 +158,7 @@ export async function getAuditLogStats(days: number = 30): Promise<AuditLogStats
  * Get unique action types from audit logs
  */
 export async function getUniqueActions(): Promise<string[]> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const actions = await prisma.auditLog.findMany({
     select: { action: true },
@@ -172,7 +173,7 @@ export async function getUniqueActions(): Promise<string[]> {
  * Get unique entity types from audit logs
  */
 export async function getUniqueEntityTypes(): Promise<string[]> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const types = await prisma.auditLog.findMany({
     select: { entityType: true },
@@ -187,7 +188,7 @@ export async function getUniqueEntityTypes(): Promise<string[]> {
  * Export audit logs as CSV
  */
 export async function exportAuditLogsCsv(filters: AuditLogFilters = {}): Promise<string> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const { logs } = await getAuditLogs(filters, 1, 10000);
 
@@ -231,7 +232,7 @@ export async function exportAuditLogsCsv(filters: AuditLogFilters = {}): Promise
  * Export audit logs as JSON
  */
 export async function exportAuditLogsJson(filters: AuditLogFilters = {}): Promise<string> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const { logs } = await getAuditLogs(filters, 1, 10000);
 
@@ -246,7 +247,7 @@ export async function getEntityAuditLogs(
   entityId: string,
   limit: number = 20
 ): Promise<AuditLogEntry[]> {
-  await requirePermission('admin.audit.view');
+  await requirePermission(AUDIT_VIEW);
 
   const logs = await prisma.auditLog.findMany({
     where: {
@@ -266,7 +267,7 @@ export async function getEntityAuditLogs(
 export async function getMyAuditLogs(
   limit: number = 20
 ): Promise<AuditLogEntry[]> {
-  const session = await requirePermission('member.profile.view');
+  const session = await requirePermission(MEMBER_VIEW_OWN);
 
   const logs = await prisma.auditLog.findMany({
     where: {

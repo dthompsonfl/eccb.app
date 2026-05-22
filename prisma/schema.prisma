@@ -1423,3 +1423,126 @@ enum SmartUploadItem_currentStep {
   SPLIT_COMPLETE
   INGESTED
 }
+
+
+enum SponsorLevel {
+  PLATINUM
+  GOLD
+  SILVER
+  BRONZE
+  COMMUNITY
+  IN_KIND
+}
+
+enum LeadershipProfileType {
+  DIRECTOR
+  BOARD
+  STAFF
+  VOLUNTEER
+}
+
+enum ContactSubmissionStatus {
+  NEW
+  READ
+  REPLIED
+  RESOLVED
+  ARCHIVED
+}
+
+model Sponsor {
+  id          String       @id @default(cuid())
+  name        String
+  level       SponsorLevel @default(BRONZE)
+  description String?      @db.Text
+  websiteUrl  String?
+  logoAssetId String?
+  logoUrl     String?
+  isActive    Boolean      @default(true)
+  sortOrder   Int          @default(0)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  updatedBy   String?
+
+  @@index([level])
+  @@index([isActive])
+  @@index([sortOrder])
+}
+
+model GalleryAlbum {
+  id          String         @id @default(cuid())
+  title       String
+  slug        String         @unique
+  description String?        @db.Text
+  isPublished Boolean        @default(false)
+  sortOrder   Int            @default(0)
+  coverImageId String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  updatedBy   String?
+  images      GalleryImage[]
+
+  @@index([isPublished])
+  @@index([sortOrder])
+}
+
+model GalleryImage {
+  id          String        @id @default(cuid())
+  albumId     String?
+  assetId     String?
+  imageUrl    String?
+  title       String?
+  altText     String
+  caption     String?       @db.Text
+  isPublished Boolean       @default(false)
+  sortOrder   Int           @default(0)
+  uploadedAt  DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  updatedBy   String?
+  album       GalleryAlbum? @relation(fields: [albumId], references: [id], onDelete: SetNull)
+
+  @@index([albumId])
+  @@index([isPublished])
+  @@index([sortOrder])
+}
+
+model LeadershipProfile {
+  id          String                @id @default(cuid())
+  name        String
+  role        String
+  profileType LeadershipProfileType @default(VOLUNTEER)
+  bio         String?               @db.Text
+  photoAssetId String?
+  photoUrl    String?
+  email       String?
+  isPublished Boolean              @default(false)
+  sortOrder   Int                  @default(0)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  updatedBy   String?
+
+  @@index([profileType])
+  @@index([isPublished])
+  @@index([sortOrder])
+}
+
+model ContactSubmission {
+  id          String                  @id @default(cuid())
+  name        String
+  email       String
+  subject     String
+  message     String                  @db.LongText
+  status      ContactSubmissionStatus @default(NEW)
+  ipAddress   String?
+  userAgent   String?
+  responseNotes String?               @db.Text
+  handledBy   String?
+  handledAt   DateTime?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([email])
+}

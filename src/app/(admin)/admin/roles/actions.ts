@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
+import { USER_MANAGE } from '@/lib/auth/permission-constants';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
 import type { UserWithRoles, RoleWithPermissions } from './types';
@@ -29,7 +30,7 @@ const removeRoleSchema = z.object({
  * Get all users with their roles
  */
 export async function getUserRoles(): Promise<UserWithRoles[]> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const users = await prisma.user.findMany({
     where: {
@@ -72,7 +73,7 @@ export async function getUserRoles(): Promise<UserWithRoles[]> {
  * Get all available roles with their permissions
  */
 export async function getAvailableRoles(): Promise<RoleWithPermissions[]> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const roles = await prisma.role.findMany({
     include: {
@@ -102,7 +103,7 @@ export async function assignRole(
   userId: string,
   roleId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const session = await requirePermission('admin.users.manage');
+  const session = await requirePermission(USER_MANAGE);
 
   try {
     const validated = assignRoleSchema.parse({ userId, roleId });
@@ -175,7 +176,7 @@ export async function removeRole(
   userId: string,
   roleId: string
 ): Promise<{ success: boolean; error?: string }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const validated = removeRoleSchema.parse({ userId, roleId });
@@ -248,7 +249,7 @@ export async function searchUsers(
   total: number;
   totalPages: number;
 }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const where = query
     ? {
@@ -318,7 +319,7 @@ export async function searchUsers(
 export async function getUserWithRoles(
   userId: string
 ): Promise<UserWithRoles | null> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const user = await prisma.user.findUnique({
     where: {

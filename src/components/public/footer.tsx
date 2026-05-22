@@ -13,8 +13,8 @@ const footerNavigation = {
   ],
   band: [
     { name: 'Directors & Staff', href: '/directors' },
-    { name: 'Our History', href: '/about/history' },
-    { name: 'Join the Band', href: '/auditions' },
+    { name: 'Our History', href: '/about' },
+    { name: 'Join the Band', href: '/signup' },
     { name: 'Policies', href: '/policies' },
     { name: 'Sponsors', href: '/sponsors' },
   ],

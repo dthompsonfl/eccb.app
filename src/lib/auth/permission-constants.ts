@@ -183,6 +183,9 @@ export const REPORT_VIEW = 'report.view';
 /** Export reports and data */
 export const REPORT_EXPORT = 'report.export';
 
+/** Manage user accounts, sessions, bans, impersonation, and role assignment */
+export const USER_MANAGE = 'user.manage';
+
 /** Configure system settings */
 export const SYSTEM_CONFIG = 'system.config';
 
@@ -246,6 +249,7 @@ export type Permission =
   | typeof STAND_PRACTICE_VIEW_ALL
   | typeof REPORT_VIEW
   | typeof REPORT_EXPORT
+  | typeof USER_MANAGE
   | typeof SYSTEM_CONFIG
   | typeof AUDIT_VIEW;
 
@@ -318,6 +322,7 @@ export const COMMUNICATION_PERMISSIONS = [
 export const ADMIN_PERMISSIONS = [
   REPORT_VIEW,
   REPORT_EXPORT,
+  USER_MANAGE,
   SYSTEM_CONFIG,
   AUDIT_VIEW,
 ] as const;
@@ -356,6 +361,49 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
  */
 export function isValidPermission(value: string): value is Permission {
   return ALL_PERMISSIONS.includes(value as Permission);
+}
+
+// =============================================================================
+// LEGACY PERMISSION COMPATIBILITY
+// =============================================================================
+
+/**
+ * Deprecated colon-delimited permission names that existed before the
+ * resource.action.scope permission contract was standardized. Keep this map
+ * intentionally small and explicit so stale runtime checks are visible during
+ * review while legacy data/tests can be normalized safely.
+ */
+export const LEGACY_PERMISSION_ALIASES = {
+  'music:read': MUSIC_VIEW_ALL,
+  'music:update': MUSIC_EDIT,
+  'members:read': MEMBER_VIEW_ALL,
+  'members:create': MEMBER_CREATE,
+  'members:update': MEMBER_EDIT_ALL,
+  'events:read': EVENT_VIEW_ALL,
+  'events:create': EVENT_CREATE,
+  'events:edit': EVENT_EDIT,
+  'attendance:read': ATTENDANCE_VIEW_ALL,
+  'attendance:mark:all': ATTENDANCE_MARK_ALL,
+  'content:read': CMS_VIEW_ALL,
+  'communications:read': ANNOUNCEMENT_VIEW_ALL,
+  'communications:write': MESSAGE_SEND_ALL,
+  'message:send:all': MESSAGE_SEND_ALL,
+  'reports:read': REPORT_VIEW,
+  'admin.audit.view': AUDIT_VIEW,
+  'admin.users.manage': USER_MANAGE,
+  'member.profile.view': MEMBER_VIEW_OWN,
+  'settings:read': SYSTEM_CONFIG,
+  'system:settings': SYSTEM_CONFIG,
+} as const satisfies Record<string, Permission>;
+
+export type LegacyPermission = keyof typeof LEGACY_PERMISSION_ALIASES;
+
+/**
+ * Normalize a caller-provided permission to the canonical permission string.
+ * New code must import named constants instead of passing legacy strings.
+ */
+export function normalizePermission(value: string): Permission | string {
+  return LEGACY_PERMISSION_ALIASES[value as LegacyPermission] ?? value;
 }
 
 /**

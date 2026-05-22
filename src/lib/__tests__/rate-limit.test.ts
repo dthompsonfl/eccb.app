@@ -166,6 +166,42 @@ describe('rateLimit', () => {
     expect(result.remaining).toBe(0);
     expect(result.retryAfter).toBeGreaterThan(0);
   });
+
+
+  it('should fail closed in production when Redis rate-limit storage fails', async () => {
+    const mockMulti = vi.mocked(redis.multi);
+    mockMulti.mockReturnValueOnce({
+      zremrangebyscore: vi.fn().mockReturnThis(),
+      zcard: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockRejectedValue(new Error('redis unavailable')),
+      zadd: vi.fn().mockReturnThis(),
+      expire: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof redis.multi>);
+
+    const result = await rateLimit('test-key', { limit: 5, window: 60 });
+
+    expect(result.success).toBe(false);
+    expect(result.remaining).toBe(0);
+    expect(result.retryAfter).toBe(60);
+  });
+
+  it('can fail open outside production or when explicitly configured', async () => {
+    vi.stubEnv('RATE_LIMIT_FAIL_OPEN', 'true');
+
+    const mockMulti = vi.mocked(redis.multi);
+    mockMulti.mockReturnValueOnce({
+      zremrangebyscore: vi.fn().mockReturnThis(),
+      zcard: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockRejectedValue(new Error('redis unavailable')),
+      zadd: vi.fn().mockReturnThis(),
+      expire: vi.fn().mockReturnThis(),
+    } as unknown as ReturnType<typeof redis.multi>);
+
+    const result = await rateLimit('test-key', { limit: 5, window: 60 });
+
+    expect(result.success).toBe(true);
+    expect(result.remaining).toBe(1);
+  });
 });
 
 describe('rateLimitSignIn', () => {

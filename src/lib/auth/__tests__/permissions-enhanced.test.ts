@@ -78,7 +78,8 @@ describe('Permission System - Enhanced Tests', () => {
       // Test with malformed permission strings
       expect(await checkUserPermission('user-123', '')).toBe(false);
       expect(await checkUserPermission('user-123', 'invalid')).toBe(false);
-      expect(await checkUserPermission('user-123', 'music:read')).toBe(false); // Old colon notation
+      // Legacy aliases normalize to canonical permissions during migration.
+      expect(await checkUserPermission('user-123', 'music:read')).toBe(true);
     });
 
     it('should handle permission check with wildcard-like patterns', async () => {
@@ -462,10 +463,18 @@ describe('Permission Constants', () => {
     const { isValidPermission } = await import('../permission-constants');
 
     expect(isValidPermission('invalid.permission')).toBe(false);
-    expect(isValidPermission('music:read')).toBe(false); // Old colon notation
+    expect(isValidPermission('music:read')).toBe(false); // Legacy aliases are not canonical permissions
     expect(isValidPermission('')).toBe(false);
     expect(isValidPermission('music')).toBe(false); // Missing action
     expect(isValidPermission('MUSIC.VIEW.ALL')).toBe(false); // Uppercase
+  });
+
+  it('should normalize legacy permission aliases without adding them to canonical permissions', async () => {
+    const { normalizePermission } = await import('../permission-constants');
+
+    expect(normalizePermission('music:read')).toBe('music.view.all');
+    expect(normalizePermission('members:update')).toBe('member.edit.all');
+    expect(normalizePermission('unknown:legacy')).toBe('unknown:legacy');
   });
 
   it('should have all expected permission groups', async () => {

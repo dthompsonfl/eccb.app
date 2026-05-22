@@ -1,10 +1,10 @@
+'use client';
+
 /**
  * Database Config Form Component
  *
  * Form for entering database configuration details.
  */
-
-'use client';
 
 import { useState } from 'react';
 

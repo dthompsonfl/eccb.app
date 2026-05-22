@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/auth/guards';
+import { AUDIT_VIEW } from '@/lib/auth/permission-constants';
 import {
   exportAuditLogsCsv,
   exportAuditLogsJson,
@@ -7,7 +8,7 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
-    await requirePermission('admin.audit.view');
+    await requirePermission(AUDIT_VIEW);
 
     const searchParams = request.nextUrl.searchParams;
     const format = searchParams.get('format') || 'csv';

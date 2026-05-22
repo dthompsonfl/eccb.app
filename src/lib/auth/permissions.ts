@@ -2,8 +2,10 @@ import { auth } from './config';
 import { prisma } from '@/lib/db';
 import { redis } from '@/lib/redis';
 import { headers } from 'next/headers';
+import { normalizePermission } from './permission-constants';
 
 export async function requirePermission(permission: string): Promise<void> {
+  const normalizedPermission = normalizePermission(permission);
   const headersList = await headers();
   const session = await auth.api.getSession({ headers: headersList });
 
@@ -11,10 +13,10 @@ export async function requirePermission(permission: string): Promise<void> {
     throw new Error('Unauthorized');
   }
 
-  const hasPermission = await checkUserPermission(session.user.id, permission);
+  const hasPermission = await checkUserPermission(session.user.id, normalizedPermission);
 
   if (!hasPermission) {
-    throw new Error(`Forbidden: Missing permission ${permission}`);
+    throw new Error(`Forbidden: Missing permission ${normalizedPermission}`);
   }
 }
 
@@ -22,13 +24,14 @@ export async function checkUserPermission(
   userId: string,
   permission: string
 ): Promise<boolean> {
+  const normalizedPermission = normalizePermission(permission);
   // SUPER_ADMIN bypasses all permission checks
   const userRoles = await getUserRoles(userId);
   if (userRoles.includes('SUPER_ADMIN')) {
     return true;
   }
   const userPermissions = await getUserPermissions(userId);
-  return userPermissions.includes(permission);
+  return userPermissions.includes(normalizedPermission);
 }
 
 export async function getUserPermissions(userId: string): Promise<string[]> {

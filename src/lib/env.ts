@@ -6,6 +6,7 @@ const envSchema = z.object({
   
   // Redis
   REDIS_URL: z.string().default('redis://localhost:6379'),
+  RATE_LIMIT_FAIL_OPEN: z.string().default('false').transform((val) => `${val}`.trim().split(/\s+/)[0].toLowerCase() === 'true'),
 
   // WebSocket / Socket.IO worker
   /** Set to "true" to enable the standalone Socket.IO process (socket-worker). */

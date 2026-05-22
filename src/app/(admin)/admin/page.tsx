@@ -9,7 +9,10 @@ import {
   ChevronRight,
   Clock,
   Activity,
-  UserPlus
+  UserPlus,
+  MessageSquare,
+  ImageIcon,
+  Handshake
 } from 'lucide-react';
 import { formatDate, formatRelativeTime } from '@/lib/date';
 import { Button } from '@/components/ui/button';
@@ -26,6 +29,9 @@ async function getDashboardStats() {
     eventCount,
     upcomingEvents,
     recentAuditLogs,
+    newContactSubmissions,
+    publicGalleryImages,
+    activeSponsors,
   ] = await Promise.all([
     prisma.member.count({ where: { deletedAt: null } }),
     prisma.musicPiece.count({ where: { deletedAt: null } }),
@@ -43,6 +49,9 @@ async function getDashboardStats() {
       take: 6,
       include: { user: true },
     }),
+    prisma.contactSubmission.count({ where: { status: 'NEW' } }),
+    prisma.galleryImage.count({ where: { isPublished: true } }),
+    prisma.sponsor.count({ where: { isActive: true } }),
   ]);
 
   return {
@@ -51,6 +60,9 @@ async function getDashboardStats() {
     eventCount,
     upcomingEvents,
     recentAuditLogs,
+    newContactSubmissions,
+    publicGalleryImages,
+    activeSponsors,
   };
 }
 
@@ -82,7 +94,7 @@ export default async function AdminDashboardPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-7">
         <div className="rounded-2xl border bg-card p-6 shadow-sm">
           <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Users size={20} />
@@ -113,6 +125,30 @@ export default async function AdminDashboardPage() {
           </div>
           <p className="text-sm font-medium text-muted-foreground">Audit Logs</p>
           <h4 className="text-2xl font-bold">Live</h4>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600">
+            <MessageSquare size={20} />
+          </div>
+          <p className="text-sm font-medium text-muted-foreground">New Messages</p>
+          <h4 className="text-2xl font-bold">{stats.newContactSubmissions}</h4>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
+            <ImageIcon size={20} />
+          </div>
+          <p className="text-sm font-medium text-muted-foreground">Gallery Images</p>
+          <h4 className="text-2xl font-bold">{stats.publicGalleryImages}</h4>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600">
+            <Handshake size={20} />
+          </div>
+          <p className="text-sm font-medium text-muted-foreground">Sponsors</p>
+          <h4 className="text-2xl font-bold">{stats.activeSponsors}</h4>
         </div>
       </div>
 

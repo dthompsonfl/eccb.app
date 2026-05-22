@@ -1,9 +1,10 @@
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
+import { CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 import { AssetsClient } from './assets-client';
 
 export default async function AdminAssetsPage() {
-  await requirePermission('cms.view.all');
+  await requirePermission(CMS_VIEW_ALL);
 
   const [assets, stats] = await Promise.all([
     prisma.mediaAsset.findMany({

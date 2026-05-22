@@ -179,7 +179,7 @@ describe('Permission Constants', () => {
     const { isValidPermission } = await import('../permission-constants');
 
     expect(isValidPermission('invalid.permission')).toBe(false);
-    expect(isValidPermission('music:read')).toBe(false); // Old colon notation
+    expect(isValidPermission('music:read')).toBe(false); // Legacy alias, not canonical
     expect(isValidPermission('')).toBe(false);
     expect(isValidPermission('music')).toBe(false); // Missing action
   });

@@ -69,6 +69,10 @@ const navigation = [
     children: [
       { name: 'Pages', href: '/admin/pages' },
       { name: 'Media Assets', href: '/admin/assets' },
+      { name: 'Sponsors', href: '/admin/sponsors' },
+      { name: 'Gallery', href: '/admin/gallery' },
+      { name: 'Leadership', href: '/admin/leadership' },
+      { name: 'Contact Submissions', href: '/admin/contact-submissions' },
       { name: 'Announcements', href: '/admin/announcements' },
     ],
   },

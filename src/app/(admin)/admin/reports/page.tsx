@@ -162,9 +162,11 @@ export default async function AdminReportsPage() {
             View band statistics and generate reports
           </p>
         </div>
-        <Button variant="outline">
-          <Download className="mr-2 h-4 w-4" />
-          Export All Data
+        <Button variant="outline" asChild>
+          <a href="/api/admin/reports/export">
+            <Download className="mr-2 h-4 w-4" />
+            Export All Data
+          </a>
         </Button>
       </div>
 

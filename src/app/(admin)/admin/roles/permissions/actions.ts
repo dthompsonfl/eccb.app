@@ -7,6 +7,7 @@ import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
 import {
   isValidPermission,
+  USER_MANAGE,
 } from '@/lib/auth/permission-constants';
 
 // =============================================================================
@@ -88,7 +89,7 @@ const revokePermissionSchema = z.object({
  * Get all available permissions grouped by resource
  */
 export async function getAllPermissions(): Promise<GroupedPermissions> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const permissions = await prisma.permission.findMany({
     orderBy: [{ resource: 'asc' }, { action: 'asc' }],
@@ -110,7 +111,7 @@ export async function getAllPermissions(): Promise<GroupedPermissions> {
  * Get all available permissions as a flat list
  */
 export async function getAllPermissionsList(): Promise<PermissionWithDetails[]> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   return prisma.permission.findMany({
     orderBy: [{ resource: 'asc' }, { action: 'asc' }],
@@ -123,7 +124,7 @@ export async function getAllPermissionsList(): Promise<PermissionWithDetails[]> 
 export async function getUserCustomPermissions(
   userId: string
 ): Promise<UserPermissionInfo[]> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const userPermissions = await prisma.userPermission.findMany({
     where: { userId },
@@ -142,7 +143,7 @@ export async function getUserCustomPermissions(
 export async function getUserWithPermissions(
   userId: string
 ): Promise<UserWithPermissions | null> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const user = await prisma.user.findUnique({
     where: {
@@ -193,7 +194,7 @@ export async function getUserWithPermissions(
 export async function getUsersWithCustomPermissions(): Promise<
   UserWithPermissions[]
 > {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const users = await prisma.user.findMany({
     where: {
@@ -246,7 +247,7 @@ export async function getUsersWithCustomPermissions(): Promise<
 export async function getUserEffectivePermissions(
   userId: string
 ): Promise<Map<string, { source: string; isCustom: boolean }>> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const user = await prisma.user.findUnique({
     where: { id: userId, deletedAt: null },
@@ -309,7 +310,7 @@ export async function grantPermission(
   userId: string,
   permission: string
 ): Promise<{ success: boolean; error?: string }> {
-  const session = await requirePermission('admin.users.manage');
+  const session = await requirePermission(USER_MANAGE);
 
   try {
     const validated = grantPermissionSchema.parse({ userId, permission });
@@ -393,7 +394,7 @@ export async function revokePermission(
   userId: string,
   permissionId: string
 ): Promise<{ success: boolean; error?: string }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const validated = revokePermissionSchema.parse({ userId, permissionId });
@@ -461,7 +462,7 @@ export async function batchGrantPermissions(
   userId: string,
   permissions: string[]
 ): Promise<{ success: boolean; error?: string; granted?: number }> {
-  const session = await requirePermission('admin.users.manage');
+  const session = await requirePermission(USER_MANAGE);
 
   try {
     // Validate all permissions first
@@ -548,7 +549,7 @@ export async function batchRevokePermissions(
   userId: string,
   permissionIds: string[]
 ): Promise<{ success: boolean; error?: string; revoked?: number }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const result = await prisma.userPermission.deleteMany({
@@ -589,7 +590,7 @@ export async function searchUsersForPermissions(
   total: number;
   totalPages: number;
 }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const where = query
     ? {

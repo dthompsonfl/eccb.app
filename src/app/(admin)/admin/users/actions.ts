@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
+import { USER_MANAGE } from '@/lib/auth/permission-constants';
 import { auditLog } from '@/lib/services/audit';
 import { sendEmail } from '@/lib/email';
 import { z } from 'zod';
@@ -101,7 +102,7 @@ export async function getUsers(
   page: number = 1,
   limit: number = 20
 ): Promise<{ users: UserWithDetails[]; total: number; totalPages: number }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const where: {
     deletedAt: null;
@@ -222,7 +223,7 @@ export async function getUsers(
  * Get a single user with full details
  */
 export async function getUserDetails(userId: string): Promise<UserWithDetails | null> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const user = await prisma.user.findUnique({
     where: { id: userId, deletedAt: null },
@@ -284,7 +285,7 @@ export async function updateUser(
   userId: string,
   data: { name?: string; email?: string; emailVerified?: boolean }
 ): Promise<{ success: boolean; error?: string }> {
-  const _session = await requirePermission('admin.users.manage');
+  const _session = await requirePermission(USER_MANAGE);
 
   try {
     const validated = updateUserSchema.parse(data);
@@ -322,7 +323,7 @@ export async function banUser(
   banReason?: string,
   banExpires?: Date
 ): Promise<{ success: boolean; error?: string }> {
-  const session = await requirePermission('admin.users.manage');
+  const session = await requirePermission(USER_MANAGE);
 
   try {
     // Prevent banning yourself
@@ -369,7 +370,7 @@ export async function banUser(
  * Unban/Activate a user
  */
 export async function unbanUser(userId: string): Promise<{ success: boolean; error?: string }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const user = await prisma.user.update({
@@ -404,7 +405,7 @@ export async function unbanUser(userId: string): Promise<{ success: boolean; err
 export async function sendPasswordReset(
   userId: string
 ): Promise<{ success: boolean; error?: string }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const user = await prisma.user.findUnique({
@@ -469,7 +470,7 @@ export async function createUser(
   name?: string,
   sendInvite: boolean = true
 ): Promise<{ success: boolean; error?: string; userId?: string }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const validated = createUserSchema.parse({ email, name, sendInvite });
@@ -545,7 +546,7 @@ export async function createUser(
  * Delete a user (soft delete)
  */
 export async function deleteUser(userId: string): Promise<{ success: boolean; error?: string }> {
-  const session = await requirePermission('admin.users.manage');
+  const session = await requirePermission(USER_MANAGE);
 
   try {
     // Prevent deleting yourself
@@ -585,7 +586,7 @@ export async function deleteUser(userId: string): Promise<{ success: boolean; er
 export async function revokeSession(
   sessionId: string
 ): Promise<{ success: boolean; error?: string }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const session = await prisma.session.delete({
@@ -615,7 +616,7 @@ export async function revokeSession(
 export async function revokeAllSessions(
   userId: string
 ): Promise<{ success: boolean; error?: string; count?: number }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   try {
     const result = await prisma.session.deleteMany({
@@ -650,7 +651,7 @@ export async function revokeAllSessions(
 export async function impersonateUser(
   userId: string
 ): Promise<{ success: boolean; error?: string; impersonationToken?: string }> {
-  const session = await requirePermission('admin.users.manage');
+  const session = await requirePermission(USER_MANAGE);
 
   try {
     // Prevent impersonating yourself
@@ -713,7 +714,7 @@ export async function getUserStats(): Promise<{
   withMember: number;
   withoutMember: number;
 }> {
-  await requirePermission('admin.users.manage');
+  await requirePermission(USER_MANAGE);
 
   const [total, active, banned, unverified, withMember, withoutMember] = await Promise.all([
     prisma.user.count({ where: { deletedAt: null } }),

@@ -1,181 +1,103 @@
 import Image from 'next/image';
+import { prisma } from '@/lib/db';
 import { Card, CardContent } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Camera, Calendar, Music, Users } from 'lucide-react';
+import { Calendar, Camera, Music, Users } from 'lucide-react';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Photo Gallery | Emerald Coast Community Band',
-  description: 'Browse photos from concerts, rehearsals, and events of the Emerald Coast Community Band',
+  description: 'Photos from Emerald Coast Community Band concerts, rehearsals, and community events.',
 };
 
-// Placeholder gallery data - in production, this would come from a database or storage
-const galleryCategories = [
-  {
-    id: 'concerts',
-    label: 'Concerts',
-    icon: Music,
-    images: [
-      {
-        src: '/gallery/concert1.jpg',
-        alt: 'Outdoor concert performance with band members on stage at Northwest Florida State College',
-        date: 'June 2025',
+export default async function GalleryPage() {
+  const albums = await prisma.galleryAlbum.findMany({
+    where: { isPublished: true },
+    include: {
+      images: {
+        where: { isPublished: true },
+        orderBy: [{ sortOrder: 'asc' }, { uploadedAt: 'desc' }],
       },
-      {
-        src: '/gallery/concert2.jpg',
-        alt: 'Close‑up of trumpet section during a summer concert',
-        date: 'June 2025',
-      },
-      {
-        src: '/gallery/concert3.jpg',
-        alt: 'Full ensemble rehearsing indoors with conductor in red jacket',
-        date: 'March 2025',
-      },
-    ],
-  },
-  {
-    id: 'rehearsals',
-    label: 'Rehearsals',
-    icon: Users,
-    images: [
-      {
-        src: '/gallery/rehearsal1.jpg',
-        alt: 'Band members gathered in a rehearsal room with instruments',
-        date: 'April 2025',
-      },
-      {
-        src: '/gallery/rehearsal2.jpg',
-        alt: 'Section leaders giving pointers during a percussion practice',
-        date: 'May 2025',
-      },
-    ],
-  },
-  {
-    id: 'events',
-    label: 'Community Events',
-    icon: Calendar,
-    images: [
-      {
-        src: '/gallery/event1.jpg',
-        alt: 'Holiday party group photo with festive decorations',
-        date: 'December 2024',
-      },
-      {
-        src: '/gallery/event2.jpg',
-        alt: 'Band members posing on a sleigh at a winter fundraiser',
-        date: 'December 2024',
-      },
-      {
-        src: '/gallery/event3.jpg',
-        alt: 'Members socializing at a local restaurant after rehearsal',
-        date: 'November 2024',
-      },
-    ],
-  },
-];
+    },
+    orderBy: [{ sortOrder: 'asc' }, { title: 'asc' }],
+  });
 
-export default function GalleryPage() {
-  const hasImages = galleryCategories.some(cat => cat.images.length > 0);
+  const publishedImages = albums.flatMap((album) => album.images.map((image) => ({ ...image, albumTitle: album.title })));
 
   return (
     <div className="w-full py-12 md:py-16">
-      {/* Hero Section */}
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center gap-2 text-primary mb-4">
-          <Camera className="h-8 w-8" />
-        </div>
-        <h1 className="text-4xl font-bold tracking-tight mb-4">Photo Gallery</h1>
-        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-          Explore photos from our concerts, rehearsals, and community events
+      <div className="mb-16 text-center">
+        <Camera className="mx-auto mb-4 h-10 w-10 text-primary" />
+        <h1 className="mb-4 text-4xl font-bold tracking-tight">Photo Gallery</h1>
+        <p className="mx-auto max-w-2xl text-xl text-muted-foreground">
+          Explore moments from concerts, rehearsals, and community performances.
         </p>
       </div>
 
-      {hasImages ? (
-        <Tabs defaultValue="concerts" className="space-y-8">
-          <TabsList className="justify-center">
-            {galleryCategories.map((category) => (
-              <TabsTrigger key={category.id} value={category.id} className="gap-2">
-                <category.icon className="h-4 w-4" />
-                {category.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-
-          {galleryCategories.map((category) => (
-            <TabsContent key={category.id} value={category.id}>
-              {category.images.length === 0 ? (
-                <Card>
-                  <CardContent className="py-12 text-center">
-                    <category.icon className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="text-lg font-semibold mb-2">No photos yet</h3>
-                    <p className="text-muted-foreground">
-                      Photos from {category.label.toLowerCase()} will appear here
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                  {category.images.map((image, index) => (
-                    <Card key={index} className="overflow-hidden group cursor-pointer">
-                      <div className="aspect-square relative">
-                        <Image
-                          src={image.src}
-                          alt={image.alt}
-                          fill
-                          className="object-cover transition-transform group-hover:scale-105"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors" />
+      {publishedImages.length === 0 ? (
+        <Card className="mx-auto max-w-3xl">
+          <CardContent className="py-12 text-center">
+            <Camera className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
+            <h2 className="mb-4 text-2xl font-bold">Gallery photos are being curated</h2>
+            <p className="mx-auto mb-6 max-w-xl text-muted-foreground">
+              The band can publish concert photos and event albums from the admin gallery workspace.
+            </p>
+            <div className="mx-auto grid max-w-lg gap-4 text-sm text-muted-foreground md:grid-cols-3">
+              <div className="flex items-center justify-center gap-2">
+                <Music className="h-4 w-4" /> Concert photos
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <Users className="h-4 w-4" /> Rehearsal shots
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <Calendar className="h-4 w-4" /> Event highlights
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-12">
+          {albums.map((album) => {
+            if (album.images.length === 0) return null;
+            return (
+              <section key={album.id}>
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold">{album.title}</h2>
+                  {album.description && <p className="mt-2 max-w-3xl text-muted-foreground">{album.description}</p>}
+                </div>
+                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {album.images.map((image) => (
+                    <Card key={image.id} className="overflow-hidden">
+                      <div className="relative aspect-[4/3] bg-muted">
+                        {image.imageUrl ? (
+                          <Image src={image.imageUrl} alt={image.altText} fill sizes="(min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw" className="object-cover" unoptimized />
+                        ) : (
+                          <div className="flex h-full items-center justify-center">
+                            <Camera className="h-12 w-12 text-muted-foreground/40" />
+                          </div>
+                        )}
                       </div>
-                      {image.date && (
-                        <CardContent className="p-3">
-                          <p className="text-sm text-muted-foreground">{image.date}</p>
+                      {(image.title || image.caption) && (
+                        <CardContent className="p-4">
+                          {image.title && <h3 className="font-semibold">{image.title}</h3>}
+                          {image.caption && <p className="mt-1 text-sm text-muted-foreground">{image.caption}</p>}
                         </CardContent>
                       )}
                     </Card>
                   ))}
                 </div>
-              )}
-            </TabsContent>
-          ))}
-        </Tabs>
-      ) : (
-        <Card className="max-w-2xl mx-auto">
-          <CardContent className="py-16 text-center">
-            <Camera className="mx-auto h-16 w-16 text-muted-foreground mb-6" />
-            <h2 className="text-2xl font-bold mb-4">Gallery Coming Soon</h2>
-            <p className="text-muted-foreground mb-6">
-              We&apos;re working on adding photos from our recent events. 
-              Check back soon to see the Emerald Coast Community Band in action!
-            </p>
-            <div className="grid gap-4 md:grid-cols-3 max-w-lg mx-auto text-sm text-muted-foreground">
-              <div className="flex items-center gap-2 justify-center">
-                <Music className="h-4 w-4" />
-                Concert Photos
-              </div>
-              <div className="flex items-center gap-2 justify-center">
-                <Users className="h-4 w-4" />
-                Rehearsal Shots
-              </div>
-              <div className="flex items-center gap-2 justify-center">
-                <Calendar className="h-4 w-4" />
-                Event Highlights
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+              </section>
+            );
+          })}
+        </div>
       )}
 
-      {/* Photo Submission Info */}
       <section className="mt-16">
         <Card className="bg-muted/50">
           <CardContent className="p-8 text-center">
-            <h2 className="text-2xl font-bold mb-4">Share Your Photos</h2>
-            <p className="text-muted-foreground max-w-xl mx-auto mb-4">
-              Have photos from one of our events? We&apos;d love to include them in our gallery!
-              Please email your photos to our webmaster or share them at the next rehearsal.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              By submitting photos, you grant the Emerald Coast Community Band permission 
-              to use them for promotional purposes.
+            <h2 className="mb-4 text-2xl font-bold">Share Your Photos</h2>
+            <p className="mx-auto max-w-xl text-muted-foreground">
+              Have photos from one of our events? Contact the band so we can review and add them to the public gallery.
             </p>
           </CardContent>
         </Card>

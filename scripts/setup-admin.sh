@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Validate environment and ensure SUPER_ADMIN credentials are present for production builds.
-# Intended to run as part of `npm run build` (npm lifecycle `prebuild`).
+# Intended to run as part of `pnpm run build` when wired explicitly by the deployment pipeline.
 
 set -euo pipefail
 shopt -s expand_aliases
@@ -14,7 +14,7 @@ if [ -f .env ]; then
   set +a
 else
   echo "⚠️  No .env file found."
-  echo "   Run 'npm run setup' to create one interactively with all required variables."
+  echo "   Run 'pnpm run setup' to create one interactively with all required variables."
   exit 0
 fi
 

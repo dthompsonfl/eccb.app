@@ -122,7 +122,7 @@ export default function AboutPage() {
             </div>
             <div className="mt-12 text-center">
               <Button asChild>
-                <Link href="/about/history">
+                <Link href="/about">
                   Read Our Full History
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
@@ -144,7 +144,7 @@ export default function AboutPage() {
           </p>
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
             <Button size="lg" variant="secondary" asChild>
-              <Link href="/auditions">
+              <Link href="/signup">
                 Join the Band
               </Link>
             </Button>
