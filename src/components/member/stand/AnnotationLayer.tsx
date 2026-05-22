@@ -81,6 +81,7 @@ export function AnnotationLayer() {
   const currentStrokeRef = useRef<StrokeData | null>(null);
 
   const renderCancelRef = useRef<(() => void) | null>(null);
+  const scheduleCanvasRenderRef = useRef<(() => void) | null>(null);
   const stampCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
   const [showStampPalette, setShowStampPalette] = useState(false);
@@ -163,7 +164,7 @@ export function AnnotationLayer() {
           loadStampImage(stroke.stampId)
             .then((img) => {
               stampCacheRef.current.set(stroke.stampId!, img);
-              scheduleCanvasRender();
+              scheduleCanvasRenderRef.current?.();
             })
             .catch(console.error);
         }
@@ -246,6 +247,15 @@ export function AnnotationLayer() {
       });
     });
   }, [annotations, drawStroke, key, layerMap, pieceId]);
+
+  useEffect(() => {
+    scheduleCanvasRenderRef.current = scheduleCanvasRender;
+    return () => {
+      if (scheduleCanvasRenderRef.current === scheduleCanvasRender) {
+        scheduleCanvasRenderRef.current = null;
+      }
+    };
+  }, [scheduleCanvasRender]);
 
   useEffect(() => {
     scheduleCanvasRender();
