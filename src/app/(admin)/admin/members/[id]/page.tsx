@@ -18,12 +18,13 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 
+import { MEMBER_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function MemberDetailPage({ params }: PageProps) {
-  await requirePermission('members:read');
+  await requirePermission(MEMBER_VIEW_ALL);
   const { id } = await params;
 
   const member = await prisma.member.findUnique({

@@ -5,7 +5,6 @@ import { checkUserPermission } from '@/lib/auth/permissions';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { auditLog } from '@/lib/services/audit';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 import { z } from 'zod';
 import {
   validateSmartUploadSettings,
@@ -16,6 +15,7 @@ import {
 import { loadSmartUploadSettingsFromDB } from '@/lib/smart-upload/bootstrap';
 import { getDefaultPromptsRecord } from '@/lib/smart-upload/prompts';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Schema Validation
 // =============================================================================

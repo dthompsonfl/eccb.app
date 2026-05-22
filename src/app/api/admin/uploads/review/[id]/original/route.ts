@@ -6,6 +6,7 @@ import { downloadFile } from '@/lib/services/storage';
 import { logger } from '@/lib/logger';
 import type { DownloadResult } from '@/lib/services/storage';
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 // =============================================================================
 // GET /api/admin/uploads/review/[id]/original
 //
@@ -28,7 +29,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const hasPerm = await checkUserPermission(session.user.id, 'music:read');
+    const hasPerm = await checkUserPermission(session.user.id, MUSIC_VIEW_ALL);
     if (!hasPerm) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

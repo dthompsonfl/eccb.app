@@ -5,10 +5,10 @@ import { headers } from 'next/headers';
 import { z } from 'zod';
 import { validateCSRF } from '@/lib/csrf';
 import { applyRateLimit } from '@/lib/rate-limit';
-import { ATTENDANCE_MARK_ALL } from '@/lib/auth/permission-constants';
 import { checkUserPermission } from '@/lib/auth/permissions';
 import { auditLog } from '@/lib/services/audit';
 
+import { ATTENDANCE_MARK_ALL } from '@/lib/auth/permission-constants';
 const bulkAttendanceSchema = z.object({
   eventId: z.string(),
   records: z.array(

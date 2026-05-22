@@ -6,12 +6,13 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 import { MusicForm } from '@/components/admin/music/music-form';
 
+import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EditMusicPage({ params }: PageProps) {
-  await requirePermission('music:update');
+  await requirePermission(MUSIC_EDIT);
   const { id } = await params;
 
   const [piece, composers, arrangers, publishers, instruments] = await Promise.all([

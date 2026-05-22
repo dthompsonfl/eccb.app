@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
-import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 /**
  * GET /api/admin/music/events
  * 

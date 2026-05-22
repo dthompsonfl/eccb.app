@@ -157,27 +157,20 @@ cd eccb.app
 
 ```bash
 # Install Node.js dependencies
-npm ci
+pnpm install --frozen-lockfile
 ```
 
 ### Environment Configuration
 
-The easiest way to configure your environment is to use the interactive setup script (recommended):
+Create your `.env` from the checked-in example and then validate it:
 
 ```bash
-# Interactive setup (guided through all variables)
-npm run setup
-
-# Non-interactive (accept defaults) — useful for CI or automation
-npm run setup -- --yes
+cp env.example .env
+# Edit .env with real local values and strong secrets
+pnpm run setup
 ```
 
-Interactive setup features:
-- Prompts for all required and optional variables and shows current values / safe defaults
-- Auto-generates secure secrets when left blank (AUTH_SECRET, BETTER_AUTH_SECRET)
-- Conditionally prompts S3 / SMTP / ClamAV / VAPID variables only when needed
-- Backs up an existing `.env` to `.env.backup.<timestamp>` before writing
-- Validates key lengths (secrets ≥32 chars, SUPER_ADMIN_PASSWORD ≥8 chars)
+`pnpm run setup` validates the environment and regenerates the Prisma client. It does not create production secrets; generate those explicitly and keep them out of version control.
 - Idempotent — safe to re-run and preserves existing values
 
 If you prefer manual setup, continue with the steps below:
@@ -186,7 +179,7 @@ Alternatively, for manual setup:
 
 ```bash
 # Copy example environment file
-cp .env.example .env
+cp env.example .env
 
 # Edit environment variables
 nano .env
@@ -234,7 +227,7 @@ openssl rand -base64 32
 
 ```bash
 # Run Prisma migrations
-npm run db:migrate
+pnpm run db:migrate
 
 # Generate Prisma client
 npx prisma generate
@@ -246,10 +239,10 @@ npx prisma generate
 
 ```bash
 # Ensure SUPER_ADMIN_PASSWORD is set in .env, then seed with initial data (admin user, roles, permissions)
-npm run db:seed
+pnpm run db:seed
 ```
 
-> Note: `npm run build` now runs `scripts/setup-admin.sh` (via npm's `prebuild`) to validate/capture required environment variables before building. The script writes a masked summary to `./build/env-variables-check.txt`.
+> Note: run `pnpm run setup` before building to validate required environment variables and regenerate the Prisma client. Production secrets must be supplied explicitly and kept out of version control.
 
 ### Create Storage Directory
 
@@ -267,7 +260,7 @@ chmod 755 storage
 
 ```bash
 # Start development server with hot reload
-npm run dev
+pnpm run dev
 ```
 
 Access the application at: http://localhost:3000
@@ -276,24 +269,24 @@ Access the application at: http://localhost:3000
 
 ```bash
 # Build for production
-npm run build
+pnpm run build
 
 # Start production server
-npm start
+pnpm run start
 ```
 
 ### Available Scripts
 
 | Script | Description |
 |--------|-------------|
-| `npm run dev` | Start development server with hot reload |
-| `npm run build` | Type-check and build for production |
-| `npm start` | Start production server (requires build first) |
-| `npm run lint` | Run ESLint on codebase |
-| `npm run test` | Run test suite with Vitest |
-| `npm run db:migrate` | Run database migrations |
-| `npm run db:seed` | Seed database with initial data |
-| `npm run db:studio` | Open Prisma Studio GUI |
+| `pnpm run dev` | Start development server with hot reload |
+| `pnpm run build` | Type-check and build for production |
+| `pnpm run start` | Start production server (requires build first) |
+| `pnpm run lint` | Run ESLint on codebase |
+| `pnpm run test` | Run test suite with Vitest |
+| `pnpm run db:migrate` | Run database migrations |
+| `pnpm run db:seed` | Seed database with initial data |
+| `pnpm run db:studio` | Open Prisma Studio GUI |
 
 ## Default Login Credentials
 
@@ -302,7 +295,7 @@ After seeding, the seeder ensures a `SUPER_ADMIN` account exists. Behavior is id
 - **Email:** `admin@eccb.org` (or value of `SUPER_ADMIN_EMAIL`)
 - **Password:** Value of `SUPER_ADMIN_PASSWORD` in `.env`
 
-**Important:** You must set `SUPER_ADMIN_PASSWORD` before running `npm run db:seed` — the seeder will refuse to run without it. Change the password immediately after first login and never commit credentials to version control.
+**Important:** You must set `SUPER_ADMIN_PASSWORD` before running `pnpm run db:seed` — the seeder will refuse to run without it. Change the password immediately after first login and never commit credentials to version control.
 
 ## Troubleshooting
 
@@ -363,10 +356,10 @@ rm -rf .next
 
 # Reinstall dependencies
 rm -rf node_modules
-npm ci
+pnpm install --frozen-lockfile
 
 # Rebuild
-npm run build
+pnpm run build
 ```
 
 ## Health Check
@@ -395,7 +388,7 @@ curl http://localhost:3000/api/health
 
 ```bash
 # Open Prisma Studio (GUI for database)
-npm run db:studio
+pnpm run db:studio
 
 # Create a new migration after schema changes
 npx prisma migrate dev --name description_of_change
@@ -405,10 +398,10 @@ npx prisma migrate dev --name description_of_change
 
 ```bash
 # Run all tests
-npm run test
+pnpm run test
 
 # Run tests with coverage
-npm run test:coverage
+pnpm run test:coverage
 
 # Run specific test file
 npx vitest run path/to/test.test.ts
@@ -418,10 +411,10 @@ npx vitest run path/to/test.test.ts
 
 ```bash
 # Run linter
-npm run lint
+pnpm run lint
 
 # Fix auto-fixable issues
-npm run lint -- --fix
+pnpm run lint -- --fix
 ```
 
 ## Architecture Overview

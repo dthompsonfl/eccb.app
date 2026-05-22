@@ -23,12 +23,13 @@ import {
 import { ArrowLeft, ExternalLink, Trash2 } from 'lucide-react';
 import { normalizePageContent } from '@/lib/cms/page-content';
 
+import { CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface EditPageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EditPagePage({ params }: EditPageProps) {
-  await requirePermission('content:read');
+  await requirePermission(CMS_VIEW_ALL);
   const { id } = await params;
 
   const page = await prisma.page.findUnique({

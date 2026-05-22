@@ -1,12 +1,13 @@
 'use server';
 
+import { MUSIC_EDIT, MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { uploadFile, deleteFile } from '@/lib/services/storage';
 import { auditLog } from '@/lib/services/audit';
 import { FileType } from '@prisma/client';
-import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
 import { invalidateMusicCache } from '@/lib/cache';
 
 function getFileType(mimeType: string): FileType {
@@ -182,7 +183,7 @@ export async function updateMusicFile(fileId: string, data: {
 }
 
 export async function getFileVersionHistory(fileId: string) {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
 
   try {
     const versions = await prisma.musicFileVersion.findMany({

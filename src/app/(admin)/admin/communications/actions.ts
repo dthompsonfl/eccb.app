@@ -1,12 +1,13 @@
 'use server';
 
+import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { sendEmail, sendBulkEmails } from '@/lib/email';
-import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
 
 const composeEmailSchema = z.object({
   subject: z.string().min(1, 'Subject is required'),

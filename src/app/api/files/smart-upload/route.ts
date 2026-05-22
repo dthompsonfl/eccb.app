@@ -6,7 +6,6 @@ import { uploadFile, validateFileMagicBytes } from '@/lib/services/storage';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
-import { MUSIC_UPLOAD } from '@/lib/auth/permission-constants';
 import { queueSmartUploadProcess } from '@/lib/jobs/smart-upload';
 import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
 import { computeSha256 } from '@/lib/smart-upload/duplicate-detection';
@@ -16,6 +15,7 @@ import type {
   SecondPassStatus,
 } from '@/types/smart-upload';
 
+import { MUSIC_UPLOAD } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Constants (defaults — overridden by DB config at runtime)
 // =============================================================================

@@ -42,6 +42,7 @@ import {
   MapPin,
 } from 'lucide-react';
 
+import { EVENT_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface SearchParams {
   search?: string;
   type?: string;
@@ -55,7 +56,7 @@ export default async function AdminEventsPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requirePermission('events:read');
+  await requirePermission(EVENT_VIEW_ALL);
   const params = await searchParams;
 
   const search = params.search || '';

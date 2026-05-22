@@ -6,8 +6,9 @@ import { ArrowLeft } from 'lucide-react';
 import { EventForm } from '@/components/admin/events/event-form';
 import { createEvent } from '../actions';
 
+import { EVENT_CREATE } from '@/lib/auth/permission-constants';
 export default async function NewEventPage() {
-  await requirePermission('events:create');
+  await requirePermission(EVENT_CREATE);
 
   const venues = await prisma.venue.findMany({
     select: { id: true, name: true },

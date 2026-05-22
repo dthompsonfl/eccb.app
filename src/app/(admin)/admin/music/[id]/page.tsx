@@ -17,12 +17,13 @@ import {
 import { MusicFilesList } from '@/components/admin/music/music-files-list';
 import { MusicAssignments } from '@/components/admin/music/music-assignments';
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function MusicDetailPage({ params }: PageProps) {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
   const { id } = await params;
 
   const [piece, instruments] = await Promise.all([

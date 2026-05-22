@@ -1,11 +1,12 @@
 'use server';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 
 const _settingSchema = z.object({
   key: z.string().min(1),

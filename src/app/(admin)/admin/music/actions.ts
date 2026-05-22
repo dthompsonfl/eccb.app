@@ -1,17 +1,13 @@
 'use server';
 
+import { MUSIC_ASSIGN, MUSIC_CREATE, MUSIC_DELETE, MUSIC_EDIT, MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission, getSession } from '@/lib/auth/guards';
 import { uploadFile, deleteFile } from '@/lib/services/storage';
 import { auditLog } from '@/lib/services/audit';
 import { MusicDifficulty, FileType, AssignmentStatus } from '@prisma/client';
-import {
-  MUSIC_CREATE,
-  MUSIC_EDIT,
-  MUSIC_DELETE,
-  MUSIC_ASSIGN,
-} from '@/lib/auth/permission-constants';
 import {
   invalidateMusicCache,
   invalidateMusicAssignmentCache,
@@ -450,7 +446,7 @@ export async function getAssignmentHistory(options: {
   assignmentId?: string;
   limit?: number;
 }) {
-  const _session = await requirePermission('music:read');
+  const _session = await requirePermission(MUSIC_VIEW_ALL);
   
   try {
     const where: Record<string, unknown> = {};
@@ -488,7 +484,7 @@ export async function getAssignmentHistory(options: {
  * Get librarian dashboard statistics
  */
 export async function getLibrarianDashboardStats() {
-  const _session = await requirePermission('music:read');
+  const _session = await requirePermission(MUSIC_VIEW_ALL);
   
   try {
     const now = new Date();
@@ -611,7 +607,7 @@ export async function getAssignmentsForLibrarian(filters?: {
   overdue?: boolean;
   search?: string;
 }) {
-  const _session = await requirePermission('music:read');
+  const _session = await requirePermission(MUSIC_VIEW_ALL);
   
   try {
     const where: Record<string, unknown> = {};
@@ -1120,7 +1116,7 @@ export async function updateMusicFile(fileId: string, data: {
 }
 
 export async function getFileVersionHistory(fileId: string) {
-  const _session = await requirePermission('music:read');
+  const _session = await requirePermission(MUSIC_VIEW_ALL);
 
   try {
     const versions = await prisma.musicFileVersion.findMany({
@@ -1297,7 +1293,7 @@ export interface MusicExportFilters {
 }
 
 export async function exportMusicToCSV(filters: MusicExportFilters = {}) {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
 
   try {
     // Build where clause

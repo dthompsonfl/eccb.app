@@ -3,8 +3,8 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
-import { CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 
+import { CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Route Handler - GET (List Assets)
 // =============================================================================
