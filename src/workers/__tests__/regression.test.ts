@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'node:stream';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -355,7 +356,10 @@ describe('Regression: AmericanPatrol condensed title layout', () => {
     const updateCalls = vi.mocked(prisma.smartUploadSession.update).mock.calls;
     const finalUpdate = updateCalls.find((c) => (c[0] as any).data?.parseStatus === 'PARSED');
     expect(finalUpdate).toBeDefined();
-    const meta = (finalUpdate![0] as any).data.extractedMetadata;
+    const meta = parseSmartUploadJsonField<Record<string, unknown>>(
+      (finalUpdate![0] as any).data.extractedMetadata,
+      {},
+    );
     expect(meta.copyrightYear).toBe(1977);
     expect(meta.title).toBe('American Patrol');
     expect(meta.composer).toBe('F.W. Meacham');
@@ -414,7 +418,8 @@ describe('Regression: multi-part PDF with frequent instrument changes', () => {
     const updateCalls = vi.mocked(prisma.smartUploadSession.update).mock.calls;
     const finalUpdate = updateCalls.find((c) => (c[0] as any).data?.parseStatus === 'PARSED');
     expect(finalUpdate).toBeDefined();
-    expect((finalUpdate![0] as any).data.parsedParts).toHaveLength(12);
+    const parsedParts = parseSmartUploadJsonArray((finalUpdate![0] as any).data.parsedParts);
+    expect(parsedParts).toHaveLength(12);
   });
 
   it('detects and fills gap pages for dense multi-part PDF', async () => {

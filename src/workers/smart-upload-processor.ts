@@ -56,7 +56,7 @@ import { buildLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse } from '@/
 import type { VisionResponse, LabeledDocument } from '@/lib/llm/types';
 import { getProviderMeta } from '@/lib/llm/providers';
 import { logger } from '@/lib/logger';
-import { deepCloneJSON } from '@/lib/json';
+import { serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 import {
   buildHeaderLabelPrompt,
   buildPdfVisionPrompt,
@@ -1209,7 +1209,7 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
           await prisma.smartUploadSession.update({
             where: { uploadSessionId: sessionId },
             data: {
-              extractedMetadata: { ...extraction, notes: failureNote } as any,
+              extractedMetadata: serializeSmartUploadJsonField({ ...extraction, notes: failureNote }),
               confidenceScore: Math.min(extraction.confidenceScore, 10),
               routingDecision: 'no_parse_second_pass',
               parseStatus: 'NOT_PARSED',
@@ -1219,7 +1219,7 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
               llmVisionModel: llmConfig.visionModel,
               llmPromptVersion: llmConfig.promptVersion || PROMPT_VERSION,
               firstPassRaw: visionResult.content,
-              strategyHistory: JSON.stringify(strategyHistory) as any,
+              strategyHistory: serializeSmartUploadJsonField(strategyHistory),
             },
           });
 
@@ -1438,19 +1438,19 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
       await prisma.smartUploadSession.update({
         where: { uploadSessionId: sessionId },
         data: {
-          extractedMetadata: JSON.parse(JSON.stringify(extraction)) as any,
+          extractedMetadata: serializeSmartUploadJsonField(extraction),
           confidenceScore: extraction.confidenceScore,
           routingDecision: 'no_parse_second_pass',
           parseStatus: 'NOT_PARSED',
           secondPassStatus: 'QUEUED',
           requiresHumanReview: true,
-          cuttingInstructions: JSON.parse(JSON.stringify(instructionValidation.instructions)) as any,
+          cuttingInstructions: serializeSmartUploadJsonField(instructionValidation.instructions),
           llmProvider: llmConfig.provider,
           llmVisionModel: llmConfig.visionModel,
           llmVerifyModel: llmConfig.verificationModel,
           llmPromptVersion: llmConfig.promptVersion || PROMPT_VERSION,
           ...(firstPassRaw ? { firstPassRaw } : {}),
-          strategyHistory: JSON.parse(JSON.stringify(strategyHistory)) as any,
+          strategyHistory: serializeSmartUploadJsonField(strategyHistory),
         },
       });
 
@@ -1482,22 +1482,22 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
       await prisma.smartUploadSession.update({
         where: { uploadSessionId: sessionId },
         data: {
-          extractedMetadata: deepCloneJSON(extraction) as any,
+          extractedMetadata: serializeSmartUploadJsonField(extraction),
           confidenceScore: extraction.confidenceScore,
           routingDecision: 'no_parse_second_pass',
           parseStatus: 'NOT_PARSED',
           secondPassStatus: 'QUEUED',
-          cuttingInstructions: deepCloneJSON(normalizedInstructionsOne) as any,
+          cuttingInstructions: serializeSmartUploadJsonField(normalizedInstructionsOne),
           llmProvider: llmConfig.provider,
           llmVisionModel: llmConfig.visionModel,
           llmVerifyModel: llmConfig.verificationModel,
-          llmModelParams: deepCloneJSON({
+          llmModelParams: serializeSmartUploadJsonField({
             vision: llmConfig.visionModelParams,
             verification: llmConfig.verificationModelParams,
-          }) as any,
+          }),
           llmPromptVersion: llmConfig.promptVersion || PROMPT_VERSION,
           firstPassRaw: firstPassRaw ?? null,
-          strategyHistory: deepCloneJSON(strategyHistory) as any,
+          strategyHistory: serializeSmartUploadJsonField(strategyHistory),
         },
       });
 
@@ -1825,7 +1825,7 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
         where: { uploadSessionId: sessionId },
         data: {
           llmCallCount: budget.snapshot().llmCallCount,
-          strategyHistory: deepCloneJSON(strategyHistory) as any,
+          strategyHistory: serializeSmartUploadJsonField(strategyHistory),
         },
       });
     } catch {
@@ -1835,14 +1835,14 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
     await prisma.smartUploadSession.update({
       where: { uploadSessionId: sessionId },
       data: {
-        extractedMetadata: deepCloneJSON(extraction) as any,
+        extractedMetadata: serializeSmartUploadJsonField(extraction),
         confidenceScore: extraction.confidenceScore,
         finalConfidence,
         routingDecision,
         parseStatus: 'PARSED',
-        parsedParts: deepCloneJSON(parsedParts) as any,
-        cuttingInstructions: deepCloneJSON(extraction.cuttingInstructions ?? normalizedInstructionsOne) as any,
-        tempFiles: deepCloneJSON(tempFiles) as any,
+        parsedParts: serializeSmartUploadJsonField(parsedParts),
+        cuttingInstructions: serializeSmartUploadJsonField(extraction.cuttingInstructions ?? normalizedInstructionsOne),
+        tempFiles: serializeSmartUploadJsonField(tempFiles),
         autoApproved: shouldAutoCommit,
         status: shouldAutoCommit ? 'AUTO_COMMITTING' : 'REQUIRES_REVIEW',
         requiresHumanReview: qualityGateFailed || undefined,
@@ -1850,10 +1850,10 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
         llmProvider: llmConfig.provider,
         llmVisionModel: llmConfig.visionModel,
         llmVerifyModel: llmConfig.verificationModel,
-        llmModelParams: deepCloneJSON({
+        llmModelParams: serializeSmartUploadJsonField({
           vision: llmConfig.visionModelParams,
           verification: llmConfig.verificationModelParams,
-        }) as any,
+        }),
         llmPromptVersion: llmConfig.promptVersion || PROMPT_VERSION,
         ...(firstPassRaw ? { firstPassRaw } : {}),
         ocrEngineUsed: ocrProvenance.ocrEngine || ocrProvenance.textLayerEngine || llmConfig.ocrEngine || null,

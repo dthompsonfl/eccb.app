@@ -23,6 +23,7 @@ import { getSectionForLabel } from './canonical-instruments';
 import { isForbiddenLabel } from './quality-gates';
 import { normalizeInstrumentLabel } from './part-naming';
 import { computePartIdentityFingerprint, computeWorkFingerprintV2 } from './duplicate-detection';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField, serializeSmartUploadJsonField } from './persistence';
 
 // =============================================================================
 // Types
@@ -285,10 +286,10 @@ export async function commitSmartUploadSessionToLibrary(
   }
 
   // ── Prepare metadata ─────────────────────────────────────────────
-  const extractedMetadata = uploadSession.extractedMetadata as ExtractedMetadata | null;
-  const parsedParts = (uploadSession.parsedParts as ParsedPartRecord[] | null) || [];
+  const extractedMetadata = parseSmartUploadJsonField<ExtractedMetadata | null>(uploadSession.extractedMetadata, null);
+  const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(uploadSession.parsedParts);
   const hasPreSplitParts = parsedParts.length > 0;
-  const cuttingInstructions = uploadSession.cuttingInstructions as ExtractedMetadata['cuttingInstructions'] | null;
+  const cuttingInstructions = parseSmartUploadJsonArray<NonNullable<ExtractedMetadata['cuttingInstructions']>[number]>(uploadSession.cuttingInstructions);
 
   // Normalize metadata using the normalizer pipeline when we have extracted data
   const normalized = extractedMetadata
@@ -433,7 +434,7 @@ export async function commitSmartUploadSessionToLibrary(
               mimeType: uploadSession.mimeType,
               storageKey: uploadSession.storageKey,
               uploadedBy: approvedBy,
-              extractedMetadata: JSON.stringify(extractedMetadata),
+              extractedMetadata: serializeSmartUploadJsonField(extractedMetadata),
               originalUploadId: uploadSession.uploadSessionId,
               contentHash: uploadSession.sourceSha256 ?? null,
               version: (existingFile.version ?? 1) + 1,
@@ -450,7 +451,7 @@ export async function commitSmartUploadSessionToLibrary(
               mimeType: uploadSession.mimeType,
               storageKey: uploadSession.storageKey,
               uploadedBy: approvedBy,
-              extractedMetadata: JSON.stringify(extractedMetadata),
+              extractedMetadata: serializeSmartUploadJsonField(extractedMetadata),
               source: 'SMART_UPLOAD',
               originalUploadId: uploadSession.uploadSessionId,
               contentHash: uploadSession.sourceSha256 ?? null,
@@ -467,7 +468,7 @@ export async function commitSmartUploadSessionToLibrary(
             mimeType: uploadSession.mimeType,
             storageKey: uploadSession.storageKey,
             uploadedBy: approvedBy,
-            extractedMetadata: JSON.stringify(extractedMetadata),
+            extractedMetadata: serializeSmartUploadJsonField(extractedMetadata),
             source: 'SMART_UPLOAD',
             originalUploadId: uploadSession.uploadSessionId,
             contentHash: uploadSession.sourceSha256 ?? null,
@@ -813,7 +814,7 @@ export async function commitSmartUploadSessionToLibrary(
   }
 
   // 3. Cleanup orphaned temp files (best-effort, non-fatal)
-  const tempFiles = (uploadSession.tempFiles as string[] | null) ?? [];
+  const tempFiles = parseSmartUploadJsonArray<string>(uploadSession.tempFiles);
   const toDelete = tempFiles.filter((key) => !finalMusicFileKeys.includes(key));
   for (const key of toDelete) {
     try {

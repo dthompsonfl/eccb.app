@@ -330,13 +330,26 @@ function UploadReviewClient({
   const [isPartFullscreen, setIsPartFullscreen] = useState(false);
   const [triggeringSecondPass, setTriggeringSecondPass] = useState<Set<string>>(new Set());
   const [savingDraft, setSavingDraft] = useState(false);
+  const [focusedSessionId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('sessionId');
+  });
   const [sseConnected, setSseConnected] = useState(false);
 
   // Fetch sessions from API
   const fetchSessions = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/uploads/review?status=REQUIRES_REVIEW');
+      const params = new URLSearchParams();
+      if (focusedSessionId) {
+        params.set('sessionId', focusedSessionId);
+      } else {
+        params.set('status', 'REQUIRES_REVIEW');
+      }
+
+      const response = await fetch(`/api/admin/uploads/review?${params.toString()}`, {
+        cache: 'no-store',
+      });
 
       if (!response.ok) {
         return;
@@ -355,7 +368,7 @@ function UploadReviewClient({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [focusedSessionId]);
 
   // Auto-fetch sessions when the component mounts
   useEffect(() => {
@@ -868,9 +881,11 @@ function UploadReviewClient({
       {/* Sessions Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Pending Uploads</CardTitle>
+          <CardTitle>{focusedSessionId ? 'Focused Upload Session' : 'Pending Uploads'}</CardTitle>
           <CardDescription>
-            Review extracted metadata and approve or reject uploads.
+            {focusedSessionId
+              ? 'Review the upload session opened from Smart Upload. Refresh to see processing updates.'
+              : 'Review extracted metadata and approve or reject uploads.'}
           </CardDescription>
         </CardHeader>
         <CardContent>

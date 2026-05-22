@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { deleteFile } from '@/lib/services/storage';
 import { logger } from '@/lib/logger';
+import { parseSmartUploadJsonArray, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 
 /**
  * Delete all temporary files associated with a SmartUploadSession.
@@ -26,23 +27,6 @@ function safeErrorDetails(err: unknown) {
   return { errorMessage: e.message, errorName: e.name, errorStack: e.stack };
 }
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v) => typeof v === 'string') as string[];
-}
-
-function asParsedPartsArray(
-  value: unknown
-): Array<{ storageKey?: string }> {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((v) => v && typeof v === 'object')
-    .map((v) => v as { storageKey?: unknown })
-    .map((v) => ({
-      storageKey: typeof v.storageKey === 'string' ? v.storageKey : undefined,
-    }));
-}
-
 /**
  * Delete all temporary files associated with a SmartUploadSession.
  *
@@ -62,7 +46,7 @@ export async function cleanupSmartUploadTempFiles(sessionId: string): Promise<vo
   }
 
   // Step 2: Parse tempFiles JSON array from the session
-  const tempFiles = asStringArray(session.tempFiles);
+  const tempFiles = parseSmartUploadJsonArray<string>(session.tempFiles);
 
   if (tempFiles.length === 0) {
     logger.info('No temp files to clean up', { sessionId });
@@ -70,7 +54,7 @@ export async function cleanupSmartUploadTempFiles(sessionId: string): Promise<vo
   }
 
   // Step 3: Parse parsedParts JSON array from the session
-  const parsedParts = asParsedPartsArray(session.parsedParts);
+  const parsedParts = parseSmartUploadJsonArray<{ storageKey?: string }>(session.parsedParts);
 
   // Step 4: Get storageKeys from parsedParts (these are the split part files)
   const committedStorageKeys = new Set<string>();
@@ -152,7 +136,7 @@ export async function cleanupSmartUploadTempFiles(sessionId: string): Promise<vo
   try {
     await prisma.smartUploadSession.update({
       where: { uploadSessionId: sessionId },
-      data: { tempFiles: JSON.stringify([]) },
+      data: { tempFiles: serializeSmartUploadJsonField([]) },
     });
   } catch (err) {
     const details = safeErrorDetails(err);

@@ -9,6 +9,7 @@ import { QUEUE_NAMES } from '@/lib/jobs/definitions';
 import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
 import { downloadFile } from '@/lib/services/storage';
 import { extractOcrFallbackMetadata, type OcrFallbackOptions } from '@/lib/services/ocr-fallback';
+import { parseSmartUploadJsonField, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 
 /**
  * OCR Worker
@@ -207,8 +208,7 @@ function mergeExtractedMetadata(
   ocr: { title: string; composer?: string; confidence: number; isImageScanned: boolean; needsManualReview: boolean },
   overwrite: boolean
 ): Record<string, unknown> {
-  const base: Record<string, unknown> =
-    existing && typeof existing === 'object' && !Array.isArray(existing) ? (existing as Record<string, unknown>) : {};
+  const base = parseSmartUploadJsonField<Record<string, unknown>>(existing, {});
 
   const existingTitle = typeof base.title === 'string' ? base.title : undefined;
   const existingComposer = typeof base.composer === 'string' ? base.composer : undefined;
@@ -293,9 +293,7 @@ async function processOcrJob(job: Job<OcrProcessJobData>): Promise<void> {
   await prisma.smartUploadSession.update({
     where: { uploadSessionId: sessionId },
     data: {
-      // Prisma JSON types are strict; cast to `any` since we know the
-      // object is JSON-serializable and validated elsewhere.
-      extractedMetadata: updatedExtracted as any,
+      extractedMetadata: serializeSmartUploadJsonField(updatedExtracted),
       confidenceScore: Math.round(ocrMeta.confidence),
       // Mark provenance: not an LLM run
       llmProvider: session.llmProvider || 'ocr-fallback',

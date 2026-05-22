@@ -10,6 +10,7 @@ import { logger } from '@/lib/logger';
 import type { DownloadResult } from '@/lib/services/storage';
 
 import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonArray } from '@/lib/smart-upload/persistence';
 // =============================================================================
 // GET /api/admin/uploads/review/[id]/part-preview
 //
@@ -88,15 +89,9 @@ export async function GET(
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    // Parse parsedParts JSON and verify the part storage key belongs to this session
-    let parsedParts: ParsedPart[] = [];
-    if (uploadSession.parsedParts) {
-      try {
-        parsedParts = JSON.parse(uploadSession.parsedParts) as ParsedPart[];
-      } catch {
-        logger.warn('Failed to parse parsedParts JSON', { sessionId: id });
-      }
-    }
+    // Parse parsedParts JSON and verify the part storage key belongs to this session.
+    // The field is stored as LongText JSON, not a Prisma Json column.
+    const parsedParts = parseSmartUploadJsonArray<ParsedPart>(uploadSession.parsedParts);
 
     const partExists = parsedParts.some((part) => part.storageKey === partStorageKey);
     if (!partExists) {

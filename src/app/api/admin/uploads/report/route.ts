@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
 
 import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 export async function GET(_request: NextRequest) {
   try {
     await requirePermission(MUSIC_VIEW_ALL);
@@ -32,7 +33,12 @@ export async function GET(_request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ sessions });
+    return NextResponse.json({
+      sessions: sessions.map((session) => ({
+        ...session,
+        extractedMetadata: parseSmartUploadJsonField(session.extractedMetadata, null),
+      })),
+    });
   } catch (error) {
     logger.error('Failed to fetch smart upload report', { error });
     return NextResponse.json({ error: 'Failed to fetch report' }, { status: 500 });

@@ -9,6 +9,7 @@ import { commitSmartUploadSessionToLibrary } from '@/lib/smart-upload/commit';
 import type { ExtractedMetadata } from '@/types/smart-upload';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
     const skipped: { id: string; reason: string }[] = [];
 
     for (const uploadSession of uploadSessions) {
-      const extractedMetadata = uploadSession.extractedMetadata as ExtractedMetadata | null;
+      const extractedMetadata = parseSmartUploadJsonField<ExtractedMetadata | null>(uploadSession.extractedMetadata, null);
 
       // Skip sessions with no usable title
       if (!extractedMetadata?.title?.trim()) {

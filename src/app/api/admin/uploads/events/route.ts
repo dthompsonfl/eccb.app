@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
 
-import { MUSIC_UPLOAD } from '@/lib/auth/permission-constants';
+import { MUSIC_UPLOAD, MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 /**
  * GET /api/admin/uploads/events
  *
@@ -39,8 +39,11 @@ export async function GET(request: NextRequest) {
     });
   }
   
-  const hasPermission = await checkUserPermission(session.user.id, MUSIC_UPLOAD);
-  if (!hasPermission) {
+  const [canUploadMusic, canViewMusic] = await Promise.all([
+    checkUserPermission(session.user.id, MUSIC_UPLOAD),
+    checkUserPermission(session.user.id, MUSIC_VIEW_ALL),
+  ]);
+  if (!canUploadMusic && !canViewMusic) {
     const errorStream = new ReadableStream({
       start(controller) {
         controller.enqueue(

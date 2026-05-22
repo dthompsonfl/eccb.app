@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { Prisma, SmartUploadStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { requirePermission } from '@/lib/auth/permissions';
@@ -12,6 +13,7 @@ import type {
 } from '@/types/smart-upload';
 
 import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 // =============================================================================
 // Types
 // =============================================================================
@@ -89,14 +91,31 @@ export async function GET(request: NextRequest) {
     // Get search params
     const searchParams = request.nextUrl.searchParams;
     const status = searchParams.get('status') || 'REQUIRES_REVIEW';
+    const sessionId = searchParams.get('sessionId');
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '50', 10)));
     const skip = (page - 1) * limit;
 
-    // Build where clause — default to exception sessions (PENDING_REVIEW)
-    const where = {
-      status: status as 'PROCESSING' | 'AUTO_COMMITTING' | 'AUTO_COMMITTED' | 'REQUIRES_REVIEW' | 'MANUALLY_APPROVED' | 'REJECTED' | 'FAILED' | 'PENDING_REVIEW' | 'APPROVED',
-    };
+    // Build where clause. A direct session lookup is used by Smart Upload result links
+    // so the review UI can open the freshly-created session even while it is still
+    // PROCESSING or after it has moved to a terminal state.
+    const allowedStatuses = new Set<SmartUploadStatus>([
+      'PROCESSING',
+      'AUTO_COMMITTING',
+      'AUTO_COMMITTED',
+      'REQUIRES_REVIEW',
+      'MANUALLY_APPROVED',
+      'REJECTED',
+      'FAILED',
+      'PENDING_REVIEW',
+      'APPROVED',
+    ]);
+    const normalizedStatus: SmartUploadStatus = allowedStatuses.has(status as SmartUploadStatus)
+      ? (status as SmartUploadStatus)
+      : 'REQUIRES_REVIEW';
+    const where: Prisma.SmartUploadSessionWhereInput = sessionId
+      ? { uploadSessionId: sessionId }
+      : { status: normalizedStatus };
 
     // Fetch sessions with pagination
     const [sessions, totalCount] = await Promise.all([
@@ -111,8 +130,8 @@ export async function GET(request: NextRequest) {
 
     // Transform sessions to include extracted metadata and new fields
     const transformedSessions = sessions.map((s) => {
-      const metadata = s.extractedMetadata as ExtractedMetadata | null;
-      const parsedParts = s.parsedParts as ParsedPartRecord[] | null;
+      const metadata = parseSmartUploadJsonField<ExtractedMetadata | null>(s.extractedMetadata, null);
+      const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(s.parsedParts);
       const parseStatus = s.parseStatus as ParseStatus | null;
       const secondPassStatus = s.secondPassStatus as SecondPassStatus | null;
       const exceptionKind = deriveExceptionKind(
@@ -136,11 +155,11 @@ export async function GET(request: NextRequest) {
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         extractedMetadata: metadata,
-        parsedParts: parsedParts,
+        parsedParts,
         parseStatus,
         secondPassStatus,
         autoApproved: s.autoApproved,
-        cuttingInstructions: s.cuttingInstructions as CuttingInstruction[] | null,
+        cuttingInstructions: parseSmartUploadJsonArray<CuttingInstruction>(s.cuttingInstructions),
         requiresHumanReview: s.requiresHumanReview,
         routingDecision: s.routingDecision,
         exceptionQueue: {
@@ -161,7 +180,7 @@ export async function GET(request: NextRequest) {
             ocrEngineUsed: s.ocrEngineUsed ?? metadata?.ocrProvenance?.ocrEngine ?? metadata?.ocrProvenance?.textLayerEngine ?? null,
             ocrTextChars: s.ocrTextChars,
             llmFallbackReasons: metadata?.ocrProvenance?.llmFallbackReasons ?? [],
-            strategyHistoryCount: Array.isArray(s.strategyHistory) ? s.strategyHistory.length : 0,
+            strategyHistoryCount: parseSmartUploadJsonArray<unknown>(s.strategyHistory).length,
           },
         },
       };
