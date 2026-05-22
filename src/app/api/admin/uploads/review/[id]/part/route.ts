@@ -7,6 +7,7 @@ import { logger } from '@/lib/logger';
 import type { DownloadResult } from '@/lib/services/storage';
 import type { ParsedPartRecord } from '@/types/smart-upload';
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -17,7 +18,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const hasPerm = await checkUserPermission(session.user.id, 'music:read');
+    const hasPerm = await checkUserPermission(session.user.id, MUSIC_VIEW_ALL);
     if (!hasPerm) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }

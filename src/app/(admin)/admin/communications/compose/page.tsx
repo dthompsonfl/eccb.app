@@ -2,8 +2,9 @@ import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { ComposeEmailForm } from './compose-form';
 
+import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
 export default async function ComposeEmailPage() {
-  await requirePermission('communications:write');
+  await requirePermission(MESSAGE_SEND_ALL);
 
   // Get sections for the recipient selector
   const sections = await prisma.section.findMany({

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import http from 'http';
-import { initializeQueues, closeQueues, addJob, getAllQueueStats } from '@/lib/jobs/queue';
+import { initializeQueues, closeQueues, addJob, getAllQueueStats, areQueuesInitialized } from '@/lib/jobs/queue';
 import { startEmailWorker, stopEmailWorker, isEmailWorkerRunning } from './email-worker';
 import {
   startSchedulerWorker,
@@ -169,7 +169,12 @@ function startHealthServer(): void {
     if (req.url === '/health') {
       try {
         const stats = await getAllQueueStats();
-        const workersHealthy = isEmailWorkerRunning() && isSchedulerWorkerRunning() && isSmartUploadProcessorWorkerRunning();
+        const workersHealthy =
+          areQueuesInitialized() &&
+          isEmailWorkerRunning() &&
+          isSchedulerWorkerRunning() &&
+          isSmartUploadProcessorWorkerRunning() &&
+          isOcrWorkerRunning();
 
         const health = {
           status: workersHealthy ? 'healthy' : 'unhealthy',
@@ -196,7 +201,12 @@ function startHealthServer(): void {
       }
     } else if (req.url === '/ready') {
       // Readiness probe - check if workers are ready to accept jobs
-      const ready = isEmailWorkerRunning() && isSchedulerWorkerRunning() && isSmartUploadProcessorWorkerRunning() && isOcrWorkerRunning();
+      const ready =
+        areQueuesInitialized() &&
+        isEmailWorkerRunning() &&
+        isSchedulerWorkerRunning() &&
+        isSmartUploadProcessorWorkerRunning() &&
+        isOcrWorkerRunning();
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ready, ocr: isOcrWorkerRunning(), sockets: isSocketWorkerRunning() }));
     } else {

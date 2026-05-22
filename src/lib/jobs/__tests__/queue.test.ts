@@ -73,6 +73,8 @@ import {
   getAllQueueStats,
   getDeadLetterJobs,
   initializeQueues,
+  closeQueues,
+  areQueuesInitialized,
   createWorker,
   QUEUE_NAMES,
 } from '../queue';
@@ -91,12 +93,24 @@ describe('Job Queue System', () => {
       expect(() => initializeQueues()).not.toThrow();
     });
 
+    it('should reset initialization state when queues are closed', async () => {
+      initializeQueues();
+      expect(areQueuesInitialized()).toBe(true);
+
+      await closeQueues();
+      expect(areQueuesInitialized()).toBe(false);
+
+      expect(() => initializeQueues()).not.toThrow();
+      expect(areQueuesInitialized()).toBe(true);
+    });
+
     it('should have correct queue names', () => {
       expect(QUEUE_NAMES.EMAIL).toBe('eccb-email');
       expect(QUEUE_NAMES.NOTIFICATION).toBe('eccb-notification');
       expect(QUEUE_NAMES.SCHEDULED).toBe('eccb-scheduled');
       expect(QUEUE_NAMES.CLEANUP).toBe('eccb-cleanup');
       expect(QUEUE_NAMES.DEAD_LETTER).toBe('eccb-dead-letter');
+      expect(QUEUE_NAMES.OCR).toBe('eccb-ocr');
     });
   });
 
@@ -185,6 +199,15 @@ describe('Job Queue System', () => {
       expect(stats?.delayed).toBe(1);
     });
 
+    it('should return OCR queue statistics', async () => {
+      initializeQueues();
+
+      const stats = await getQueueStats('OCR');
+
+      expect(stats).toBeDefined();
+      expect(stats?.name).toBe('eccb-ocr');
+    });
+
     it('should return statistics for all queues', async () => {
       initializeQueues();
 
@@ -192,6 +215,7 @@ describe('Job Queue System', () => {
 
       expect(allStats).toBeDefined();
       expect(allStats.length).toBeGreaterThan(0);
+      expect(allStats.some((stat) => stat.name === 'eccb-ocr')).toBe(true);
     });
   });
 

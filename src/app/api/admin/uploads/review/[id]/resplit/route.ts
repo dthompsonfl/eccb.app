@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { requirePermission } from '@/lib/auth/permissions';
-import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 import { validateCSRF } from '@/lib/csrf';
 import { z } from 'zod';
@@ -13,6 +12,7 @@ import { buildPartFilename, buildPartStorageSlug, normalizeInstrumentLabel } fro
 import { uploadFile } from '@/lib/services/storage';
 import type { CuttingInstruction, ParsedPartRecord } from '@/types/smart-upload';
 
+import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Validation Schema
 // =============================================================================

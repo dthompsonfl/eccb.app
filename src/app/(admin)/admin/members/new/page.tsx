@@ -6,8 +6,9 @@ import { ArrowLeft } from 'lucide-react';
 import { MemberForm } from '@/components/admin/members/member-form';
 import { createMember } from '../actions';
 
+import { MEMBER_CREATE } from '@/lib/auth/permission-constants';
 export default async function NewMemberPage() {
-  await requirePermission('members:create');
+  await requirePermission(MEMBER_CREATE);
 
   const [sections, instruments, usersWithoutMember] = await Promise.all([
     prisma.section.findMany({

@@ -45,6 +45,7 @@ import {
   Lock,
 } from 'lucide-react';
 
+import { MEMBER_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface SearchParams {
   search?: string;
   status?: string;
@@ -64,7 +65,7 @@ export default async function AdminMembersPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requirePermission('members:read');
+  await requirePermission(MEMBER_VIEW_ALL);
   const params = await searchParams;
 
   // Get the current session to check for section leader scoping

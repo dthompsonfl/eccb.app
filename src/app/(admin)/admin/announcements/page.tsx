@@ -35,8 +35,9 @@ import {
 } from 'lucide-react';
 import { DeleteAnnouncementButton } from './delete-button';
 
+import { CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 export default async function AdminAnnouncementsPage() {
-  await requirePermission('content:read');
+  await requirePermission(CMS_VIEW_ALL);
 
   const announcements = await prisma.announcement.findMany({
     include: {

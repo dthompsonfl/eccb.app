@@ -7,12 +7,13 @@ import { ArrowLeft } from 'lucide-react';
 import { MemberForm } from '@/components/admin/members/member-form';
 import { updateMember } from '../../actions';
 
+import { MEMBER_EDIT_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EditMemberPage({ params }: PageProps) {
-  await requirePermission('members:update');
+  await requirePermission(MEMBER_EDIT_ALL);
   const { id } = await params;
 
   const [member, sections, instruments] = await Promise.all([

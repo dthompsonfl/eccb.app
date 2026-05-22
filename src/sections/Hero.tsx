@@ -2,26 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
-import { Music, ChevronRight, Play, Volume2 } from 'lucide-react';
+import { ChevronRight, Play, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import Image from 'next/image';
 
 
 const instruments = [
-  { id: 1, name: 'Bass Guitar', image: '/instrument-bass.jpg' },
-  { id: 2, name: 'Acoustic Guitar', image: '/instrument-acoustic.jpg' },
-  { id: 3, name: 'Electric Guitar', image: '/instrument-electric.jpg' },
-];
-
-const musicalNotes = [
-  { id: 1, size: 32, left: '8%', delay: 0, className: 'musical-note-1' },
-  { id: 2, size: 24, left: '22%', delay: 3, className: 'musical-note-2' },
-  { id: 3, size: 40, left: '68%', delay: 6, className: 'musical-note-3' },
-  { id: 4, size: 28, left: '85%', delay: 9, className: 'musical-note-1' },
-  { id: 5, size: 36, left: '12%', delay: 12, className: 'musical-note-2' },
-  { id: 6, size: 22, left: '92%', delay: 2, className: 'musical-note-3' },
-  { id: 7, size: 30, left: '38%', delay: 7, className: 'musical-note-1' },
-  { id: 8, size: 26, left: '58%', delay: 5, className: 'musical-note-2' },
+  { id: 1, name: 'Bass Guitar', image: '/instrument-bass.png' },
+  { id: 2, name: 'Acoustic Guitar', image: '/instrument-acoustic.png' },
+  { id: 3, name: 'Electric Guitar', image: '/instrument-electric.png' },
 ];
 
 const particles = [
@@ -129,24 +117,11 @@ export default function Hero() {
       ref={heroRef}
       className="relative min-h-screen w-full overflow-hidden"
     >
-      {/* Background Image with Enhanced Ken Burns */}
-      <div className="absolute inset-0 z-0">
-        <div className="absolute inset-0 ken-burns-enhanced">
-          <Image
-            src="/homepage-hero-bg.webp"
-            alt="Musicians by the lake"
-            fill
-            className="object-cover scale-110"
-            priority
-          />
-        </div>
-        {/* Multi-layer overlay for depth */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/50 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
-        
+      {/* Solid Color Background */}
+      <div className="absolute inset-0 z-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
         {/* Animated gradient overlay */}
-        <div className="absolute inset-0 gradient-pulse opacity-30">
-          <div className="absolute inset-0 bg-gradient-to-br from-teal-600/40 via-transparent to-purple-900/30" />
+        <div className="absolute inset-0 gradient-pulse opacity-20">
+          <div className="absolute inset-0 bg-gradient-to-br from-teal-600/30 via-transparent to-purple-900/20" />
         </div>
 
         {/* Particle effects */}
@@ -165,21 +140,6 @@ export default function Hero() {
             />
           ))}
         </div>
-      </div>
-
-      {/* Floating Musical Notes */}
-      <div className="absolute inset-0 z-10 pointer-events-none overflow-hidden">
-        {musicalNotes.map((note) => (
-          <Music
-            key={note.id}
-            className={`${note.className} text-teal-300/50`}
-            style={{
-              left: note.left,
-              fontSize: note.size,
-              filter: 'drop-shadow(0 0 8px rgba(94,234,212,0.3))',
-            }}
-          />
-        ))}
       </div>
 
       {/* Decorative circles */}

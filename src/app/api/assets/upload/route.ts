@@ -6,11 +6,11 @@ import { uploadFile, validateFileMagicBytes } from '@/lib/services/storage';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
-import { CMS_EDIT } from '@/lib/auth/permission-constants';
 import { env } from '@/lib/env';
 import { z } from 'zod';
 import { virusScanner } from '@/lib/services/virus-scanner';
 
+import { CMS_EDIT } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Constants
 // =============================================================================

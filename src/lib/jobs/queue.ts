@@ -81,6 +81,8 @@ interface QueueInstances {
   cleanup: Queue | null;
   deadLetter: Queue | null;
   smartUpload: Queue | null;
+  ocr: Queue | null;
+  [key: string]: Queue | null;
 }
 
 const queues: QueueInstances = {
@@ -90,6 +92,7 @@ const queues: QueueInstances = {
   cleanup: null,
   deadLetter: null,
   smartUpload: null,
+  ocr: null,
 };
 
 const queueEvents: Map<string, QueueEvents> = new Map();
@@ -102,7 +105,6 @@ let _queuesInitialized = false;
 
 export function initializeQueues(): void {
   if (_queuesInitialized) return;
-  _queuesInitialized = true;
 
   const connection = getRedisConnection();
   const bullConnection = connection as unknown as ConnectionOptions;
@@ -131,7 +133,17 @@ export function initializeQueues(): void {
   queues.smartUpload = new Queue(QUEUE_NAMES.SMART_UPLOAD, { connection: bullConnection });
   queueEvents.set(QUEUE_NAMES.SMART_UPLOAD, new QueueEvents(QUEUE_NAMES.SMART_UPLOAD, { connection: bullConnection }));
 
+  // OCR queue
+  queues.ocr = new Queue(QUEUE_NAMES.OCR, { connection: bullConnection });
+  queueEvents.set(QUEUE_NAMES.OCR, new QueueEvents(QUEUE_NAMES.OCR, { connection: bullConnection }));
+
+  _queuesInitialized = true;
+
   logger.info('All job queues initialized');
+}
+
+export function areQueuesInitialized(): boolean {
+  return _queuesInitialized;
 }
 
 /**
@@ -151,6 +163,8 @@ export function getQueue(name: keyof typeof QUEUE_NAMES): Queue | null {
       return queues.deadLetter;
     case 'SMART_UPLOAD':
       return queues.smartUpload;
+    case 'OCR':
+      return queues.ocr;
     default:
       return null;
   }

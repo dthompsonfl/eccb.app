@@ -1,0 +1,246 @@
+
+> eccb-platform@0.1.0 build
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Environments: .env
+- Experiments (use with caution):
+  · cpus: 4
+  · optimizePackageImports
+  · proxyClientMaxBodySize: "50mb"
+  · serverActions
+  ✓ taint
+  ✓ viewTransition
+  · webVitalsAttribution
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 4.8s
+  Running TypeScript ...
+  Collecting page data using 4 workers ...
+(node:134965) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+    at urlParse (node:url:136:13)
+    at s.parseURL (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:1989)
+    at EventEmitter.parseOptions (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:84917)
+    at new S (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:76896)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:88452)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+    at getOrInstantiateModuleFromParent (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:763:12)
+    at Context.esmImport [as i] (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:228:20)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/[root-of-the-server]__bafd8821._.js:1:14669)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+(node:134972) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+    at urlParse (node:url:136:13)
+    at s.parseURL (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:1989)
+    at EventEmitter.parseOptions (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:84917)
+    at new S (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:76896)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:88452)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+    at getOrInstantiateModuleFromParent (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:763:12)
+    at Context.esmImport [as i] (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:228:20)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/[root-of-the-server]__bafd8821._.js:1:14669)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+(node:134958) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+    at urlParse (node:url:136:13)
+    at s.parseURL (/home/dylan/eccb.app/.next/server/chunks/_60f73137._.js:139:1989)
+    at EventEmitter.parseOptions (/home/dylan/eccb.app/.next/server/chunks/_60f73137._.js:139:80007)
+    at new S (/home/dylan/eccb.app/.next/server/chunks/_60f73137._.js:139:71986)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/_60f73137._.js:139:83542)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+    at getOrInstantiateModuleFromParent (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:763:12)
+    at Context.esmImport [as i] (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:228:20)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/[root-of-the-server]__aab148d2._.js:1:15641)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+(node:134951) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+    at urlParse (node:url:136:13)
+    at s.parseURL (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:1989)
+    at EventEmitter.parseOptions (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:84917)
+    at new S (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:76896)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/_4e685754._.js:139:88452)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+    at getOrInstantiateModuleFromParent (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:763:12)
+    at Context.esmImport [as i] (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:228:20)
+    at module evaluation (/home/dylan/eccb.app/.next/server/chunks/[root-of-the-server]__bafd8821._.js:1:14669)
+    at instantiateModule (/home/dylan/eccb.app/.next/server/chunks/[turbopack]_runtime.js:740:9)
+  Generating static pages using 4 workers (0/103) ...
+  Generating static pages using 4 workers (25/103) 
+  Generating static pages using 4 workers (51/103) 
+  Generating static pages using 4 workers (77/103) 
+✓ Generating static pages using 4 workers (103/103) in 771.8ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ○ /_not-found
+├ ƒ /[...slug]
+├ ○ /about
+├ ƒ /admin
+├ ƒ /admin/announcements
+├ ƒ /admin/announcements/[id]
+├ ƒ /admin/announcements/new
+├ ƒ /admin/assets
+├ ƒ /admin/attendance
+├ ƒ /admin/audit
+├ ƒ /admin/communications
+├ ƒ /admin/communications/compose
+├ ƒ /admin/communications/templates
+├ ƒ /admin/communications/templates/[id]
+├ ƒ /admin/communications/templates/[id]/edit
+├ ƒ /admin/communications/templates/new
+├ ƒ /admin/events
+├ ƒ /admin/events/[id]
+├ ƒ /admin/events/[id]/attendance
+├ ƒ /admin/events/[id]/edit
+├ ƒ /admin/events/[id]/music
+├ ƒ /admin/events/new
+├ ƒ /admin/members
+├ ƒ /admin/members/[id]
+├ ƒ /admin/members/[id]/edit
+├ ƒ /admin/members/new
+├ ƒ /admin/monitoring
+├ ƒ /admin/music
+├ ƒ /admin/music/[id]
+├ ƒ /admin/music/[id]/edit
+├ ƒ /admin/music/librarian
+├ ƒ /admin/music/new
+├ ƒ /admin/pages
+├ ƒ /admin/pages/[id]
+├ ƒ /admin/pages/new
+├ ƒ /admin/reports
+├ ƒ /admin/reports/attendance
+├ ƒ /admin/roles
+├ ƒ /admin/roles/permissions
+├ ƒ /admin/settings
+├ ƒ /admin/uploads
+├ ƒ /admin/uploads/report
+├ ƒ /admin/uploads/review
+├ ƒ /admin/uploads/settings
+├ ƒ /admin/users
+├ ƒ /admin/users/[id]
+├ ƒ /admin/users/new
+├ ƒ /api/admin/attendance/export
+├ ƒ /api/admin/audit/export
+├ ƒ /api/admin/jobs
+├ ƒ /api/admin/members/export
+├ ƒ /api/admin/monitoring
+├ ƒ /api/admin/music/[id]/archive
+├ ƒ /api/admin/music/[id]/delete
+├ ƒ /api/admin/music/[id]/restore
+├ ƒ /api/admin/music/bulk-archive
+├ ƒ /api/admin/music/bulk-delete
+├ ƒ /api/admin/music/bulk-restore
+├ ƒ /api/admin/music/events
+├ ƒ /api/admin/music/export
+├ ƒ /api/admin/stand/status
+├ ƒ /api/admin/uploads/api-keys
+├ ƒ /api/admin/uploads/events
+├ ƒ /api/admin/uploads/model-params
+├ ƒ /api/admin/uploads/models
+├ ƒ /api/admin/uploads/providers/discover
+├ ƒ /api/admin/uploads/report
+├ ƒ /api/admin/uploads/review
+├ ƒ /api/admin/uploads/review/[id]/approve
+├ ƒ /api/admin/uploads/review/[id]/draft
+├ ƒ /api/admin/uploads/review/[id]/original
+├ ƒ /api/admin/uploads/review/[id]/part
+├ ƒ /api/admin/uploads/review/[id]/part-preview
+├ ƒ /api/admin/uploads/review/[id]/preview
+├ ƒ /api/admin/uploads/review/[id]/reject
+├ ƒ /api/admin/uploads/review/[id]/resplit
+├ ƒ /api/admin/uploads/review/bulk-approve
+├ ƒ /api/admin/uploads/review/bulk-reject
+├ ƒ /api/admin/uploads/second-pass
+├ ƒ /api/admin/uploads/settings
+├ ƒ /api/admin/uploads/settings/reset-prompts
+├ ƒ /api/admin/uploads/settings/test
+├ ƒ /api/admin/uploads/status/[sessionId]
+├ ƒ /api/admin/users/ban
+├ ƒ /api/admin/users/delete
+├ ƒ /api/admin/users/impersonate
+├ ƒ /api/admin/users/password-reset
+├ ƒ /api/admin/users/sessions/revoke-all
+├ ƒ /api/admin/users/unban
+├ ƒ /api/assets
+├ ƒ /api/assets/[id]
+├ ƒ /api/assets/upload
+├ ƒ /api/attendance/bulk
+├ ƒ /api/attendance/event/[eventId]
+├ ƒ /api/attendance/event/[eventId]/member/[memberId]
+├ ƒ /api/attendance/member/[memberId]
+├ ƒ /api/auth/[...all]
+├ ƒ /api/email/test
+├ ƒ /api/events/rsvp
+├ ƒ /api/files/[...key]
+├ ƒ /api/files/download-url
+├ ƒ /api/files/download/[...key]
+├ ƒ /api/files/smart-upload
+├ ƒ /api/files/upload
+├ ƒ /api/health
+├ ƒ /api/me/permissions
+├ ƒ /api/members
+├ ƒ /api/sections
+├ ƒ /api/setup
+├ ƒ /api/setup/repair
+├ ƒ /api/setup/status
+├ ƒ /api/setup/verify
+├ ƒ /api/stand/annotations
+├ ƒ /api/stand/annotations/[id]
+├ ƒ /api/stand/audio
+├ ƒ /api/stand/audio-files/[...key]
+├ ƒ /api/stand/audio/[id]
+├ ƒ /api/stand/bookmarks
+├ ƒ /api/stand/config
+├ ƒ /api/stand/files/[...key]
+├ ƒ /api/stand/metadata
+├ ƒ /api/stand/navigation-links
+├ ƒ /api/stand/navigation-links/[id]
+├ ƒ /api/stand/omr
+├ ƒ /api/stand/practice-logs
+├ ƒ /api/stand/practice-logs/[id]
+├ ƒ /api/stand/preferences
+├ ƒ /api/stand/roster
+├ ƒ /api/stand/setlists
+├ ƒ /api/stand/settings
+├ ƒ /api/stand/sync
+├ ○ /contact
+├ ƒ /dashboard
+├ ƒ /directors
+├ ƒ /events
+├ ƒ /events/[id]
+├ ○ /forbidden
+├ ○ /forgot-password
+├ ○ /gallery
+├ ○ /login
+├ ƒ /member
+├ ƒ /member/attendance
+├ ƒ /member/calendar
+├ ƒ /member/events
+├ ƒ /member/events/[id]
+├ ƒ /member/music
+├ ƒ /member/music/[id]
+├ ƒ /member/notifications
+├ ƒ /member/practice
+├ ƒ /member/practice/[assignmentId]
+├ ƒ /member/profile
+├ ƒ /member/profile/edit
+├ ƒ /member/sections/[sectionId]
+├ ƒ /member/settings
+├ ƒ /member/stand
+├ ƒ /member/stand/[eventId]
+├ ƒ /member/stand/library/[pieceId]
+├ ƒ /members
+├ ƒ /music/upload
+├ ƒ /news
+├ ○ /offline
+├ ƒ /policies
+├ ○ /reset-password
+├ ƒ /setup
+├ ○ /signup
+├ ƒ /sponsors
+└ ○ /verify-email
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

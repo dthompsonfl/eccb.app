@@ -17,15 +17,15 @@ git clone https://github.com/your-org/eccb.app.git
 cd eccb.app
 
 # 2. Install dependencies
-npm ci
+pnpm install --frozen-lockfile
 
 # 3. Configure environment
-cp .env.example .env
+cp env.example .env
 nano .env  # Edit with production values
 
 # 4. Build and start
-npm run build
-npm start
+pnpm run build
+pnpm run start
 ```
 
 For detailed setup, follow the sections below.
@@ -101,7 +101,7 @@ cd /var/www/eccb
 git clone https://github.com/your-org/eccb.app.git .
 
 # Install dependencies
-npm ci
+pnpm install --frozen-lockfile
 
 # Create storage directory
 mkdir -p storage
@@ -110,22 +110,23 @@ chmod 755 storage
 
 ### 5. Environment Configuration
 
-For a guided setup experience, run the interactive configuration script:
+Create a production `.env`, edit it with real values, then validate it:
 
 ```bash
-# Interactive setup (recommended)
-npm run setup
+cp env.example .env
+# Edit .env with production values from your secret store
+pnpm run setup
 ```
 
-The interactive wizard prompts for every environment variable (database, auth, storage, email, etc.), auto-generates secrets when left blank, conditionally asks for S3/SMTP/VAPID/ClamAV details, and creates a timestamped `.env` backup before writing. It validates important values (secret lengths, required production fields) and is safe to re-run.
+`pnpm run setup` validates required environment variables and regenerates the Prisma client. It does not generate production secrets. Generate secrets with a password manager or `openssl rand -base64 32`, store them outside version control, and rotate any value that was ever committed.
 
-Note: `npm run build` executes `scripts/setup-admin.sh` via the `prebuild` lifecycle — that script validates required variables and writes a masked summary to `./build/env-variables-check.txt`. In non-CI production builds the validation is strict and will abort the build if required variables (for example `SUPER_ADMIN_PASSWORD`) are missing.
+Note: run `pnpm run setup` before production builds to validate required variables and regenerate Prisma. Production deployments must provide `SUPER_ADMIN_PASSWORD` for seeding and must never use placeholder secrets from `env.example`.
 
 Alternatively, for manual configuration:
 
 ```bash
 # Copy example environment file
-cp .env.example .env
+cp env.example .env
 
 # Edit with production values
 nano .env
@@ -153,7 +154,7 @@ NEXT_PUBLIC_APP_URL="https://your-domain.com"
 SUPER_ADMIN_EMAIL="admin@your-domain.com"
 SUPER_ADMIN_PASSWORD="your-secure-admin-password"
 
-> Note: `npm run db:seed` requires `SUPER_ADMIN_PASSWORD` to be set and will fail if it is missing. This ensures root credentials are explicitly chosen during deployment.
+> Note: `pnpm run db:seed` requires `SUPER_ADMIN_PASSWORD` to be set and will fail if it is missing. This ensures root credentials are explicitly chosen during deployment.
 
 # Storage
 STORAGE_DRIVER="LOCAL"
@@ -181,14 +182,14 @@ npx prisma migrate deploy
 npx prisma generate
 
 # Seed database (first deployment only)
-npm run db:seed
+pnpm run db:seed
 ```
 
 ### 7. Build Application
 
 ```bash
 # Production build
-npm run build
+pnpm run build
 ```
 
 ### 8. Systemd Service
@@ -520,13 +521,13 @@ cd /var/www/eccb
 git pull origin main
 
 # Install/update dependencies
-npm ci
+pnpm install --frozen-lockfile
 
 # Run database migrations
 npx prisma migrate deploy
 
 # Rebuild application
-npm run build
+pnpm run build
 
 # Restart service
 sudo systemctl restart eccb

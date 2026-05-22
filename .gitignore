@@ -57,7 +57,7 @@ e2e-results.json
 
 # local artifacts & caches
 /dev.db
+/prisma/dev.db
 /logs/
 /outbox/
 /storage/
-

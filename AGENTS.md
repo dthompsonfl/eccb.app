@@ -45,12 +45,12 @@ Agents **MUST** consult these files for specific domain knowledge:
 ## Build Commands
 
 ```bash
-npm run dev          # Start dev server with HMR
-npm run build        # Type-check + production build
-npm run start        # Start production server
-npm run lint         # Run ESLint
-npm run test         # Run Vitest unit tests
-npm run db:generate  # Generate Prisma client
+pnpm run dev          # Start dev server with HMR
+pnpm run build        # Type-check + production build
+pnpm run start        # Start production server
+pnpm run lint         # Run ESLint
+pnpm run test         # Run Vitest unit tests
+pnpm run db:generate  # Generate Prisma client
 ```
 
 ## Code Style Guidelines
@@ -112,7 +112,7 @@ npm run db:generate  # Generate Prisma client
 
 ### Linting
 -   ESLint config extends: `recommended`, `reactHooks`, `reactRefresh`, `typescript-eslint`.
--   Fix auto-fixable issues: `npm run lint -- --fix`
+-   Fix auto-fixable issues: `pnpm run lint -- --fix`
 
 ### Git Workflow
 -   Commit messages: imperative mood, max 72 chars

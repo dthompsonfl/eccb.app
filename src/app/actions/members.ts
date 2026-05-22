@@ -1,10 +1,11 @@
 'use server';
 
+import { MEMBER_CREATE } from '@/lib/auth/permission-constants';
+
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/permissions';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
-import { MEMBER_CREATE } from '@/lib/auth/permission-constants';
 
 const memberSchema = z.object({
   firstName: z.string().min(1),

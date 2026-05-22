@@ -142,6 +142,7 @@ export interface OcrProcessJobData {
 
 let worker: Worker<OcrProcessJobData> | null = null;
 let redis: Redis | null = null;
+let workerStarting = false;
 
 // =============================================================================
 // Utilities
@@ -330,7 +331,8 @@ async function processOcrJob(job: Job<OcrProcessJobData>): Promise<void> {
  * Start OCR worker (rate-limited).
  */
 export function startOcrWorker(): void {
-  if (worker) return;
+  if (worker || workerStarting) return;
+  workerStarting = true;
 
   // Dedicated Redis connection for this worker.
   // We avoid importing internal helpers to keep this module isolated and production-ready.
@@ -384,6 +386,7 @@ export function startOcrWorker(): void {
       ocrEngine: cfg.ocrEngine,
       ocrMode: cfg.ocrMode,
     });
+    workerStarting = false;
   }).catch((err) => {
     logger.error('OCR worker: failed to load config, using fallback rate limit', { err });
     // Fallback to conservative rate limit if config load fails
@@ -396,6 +399,9 @@ export function startOcrWorker(): void {
         duration: 60_000,
       },
     });
+    workerStarting = false;
+  }).finally(() => {
+    workerStarting = false;
   });
 }
 
@@ -408,6 +414,7 @@ export async function stopOcrWorker(): Promise<void> {
 
   worker = null;
   redis = null;
+  workerStarting = false;
 
   try {
     if (w) {

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { verifyEmailConnection } from '@/lib/email';
 import { requirePermission } from '@/lib/auth/guards';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 export async function POST() {
   try {
     // Check authentication and permission

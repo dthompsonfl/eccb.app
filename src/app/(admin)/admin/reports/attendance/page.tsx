@@ -24,6 +24,7 @@ import {
 import { AttendanceReportClient } from './attendance-report-client';
 import { getSectionAttendanceStats } from '@/lib/services/attendance-report.service';
 
+import { ATTENDANCE_VIEW_ALL } from '@/lib/auth/permission-constants';
 export const metadata = {
   title: 'Attendance Reports | Admin',
   description: 'View and export attendance reports',
@@ -39,7 +40,7 @@ export default async function AttendanceReportsPage({
     eventType?: string;
   }>;
 }) {
-  await requirePermission('attendance:read');
+  await requirePermission(ATTENDANCE_VIEW_ALL);
 
   const params = await searchParams;
   const now = new Date();
