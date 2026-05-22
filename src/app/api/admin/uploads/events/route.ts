@@ -3,8 +3,8 @@ import { initializeQueues, getQueueEvents } from '@/lib/jobs/queue';
 import { logger } from '@/lib/logger';
 import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
-import { MUSIC_UPLOAD } from '@/lib/auth/permission-constants';
 
+import { MUSIC_UPLOAD } from '@/lib/auth/permission-constants';
 /**
  * GET /api/admin/uploads/events
  *

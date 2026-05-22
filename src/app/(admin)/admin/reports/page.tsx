@@ -22,8 +22,9 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
+import { REPORT_VIEW } from '@/lib/auth/permission-constants';
 export default async function AdminReportsPage() {
-  await requirePermission('reports:read');
+  await requirePermission(REPORT_VIEW);
 
   const now = new Date();
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);

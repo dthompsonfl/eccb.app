@@ -3,10 +3,10 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { requirePermission } from '@/lib/auth/permissions';
-import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
 
+import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
 const bulkArchiveSchema = z.object({
   ids: z.array(z.string()).min(1),
   archived: z.boolean(),

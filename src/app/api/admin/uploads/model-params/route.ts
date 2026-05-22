@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Types
 // =============================================================================

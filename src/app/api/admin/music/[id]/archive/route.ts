@@ -3,9 +3,9 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { requirePermission } from '@/lib/auth/permissions';
-import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 
+import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
 /**
  * POST /api/admin/music/[id]/archive
  * Archive or unarchive a music piece

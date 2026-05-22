@@ -7,12 +7,13 @@ import { ArrowLeft } from 'lucide-react';
 import { EventForm } from '@/components/admin/events/event-form';
 import { updateEvent } from '../../actions';
 
+import { EVENT_EDIT } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EditEventPage({ params }: PageProps) {
-  await requirePermission('events:edit');
+  await requirePermission(EVENT_EDIT);
   const { id } = await params;
 
   const [event, venues] = await Promise.all([

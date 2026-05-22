@@ -1,16 +1,13 @@
 'use server';
 
+import { MEMBER_CREATE, MEMBER_DELETE, MEMBER_EDIT_ALL, MEMBER_VIEW_ALL } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission, canAccessMember, getMemberSectionFilter } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
 import { MemberStatus } from '@prisma/client';
-import {
-  MEMBER_CREATE,
-  MEMBER_EDIT_ALL,
-  MEMBER_DELETE,
-} from '@/lib/auth/permission-constants';
 
 const memberSchema = z.object({
   firstName: z.string().min(1, 'First name is required'),
@@ -553,7 +550,7 @@ export interface MemberExportFilters {
 }
 
 export async function exportMembersToCSV(filters: MemberExportFilters = {}) {
-  await requirePermission('members:read');
+  await requirePermission(MEMBER_VIEW_ALL);
 
   const sectionFilter = await getMemberSectionFilter();
 

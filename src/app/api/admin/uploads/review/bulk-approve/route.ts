@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { requirePermission } from '@/lib/auth/permissions';
-import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
 import { validateCSRF } from '@/lib/csrf';
 import { commitSmartUploadSessionToLibrary } from '@/lib/smart-upload/commit';
 import type { ExtractedMetadata } from '@/types/smart-upload';
 
+import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Validation Schema
 // =============================================================================

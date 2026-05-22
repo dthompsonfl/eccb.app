@@ -32,6 +32,7 @@ import {
 import { getTemplatesAction, initializeDefaultTemplatesAction } from './actions';
 import { EmailTemplateType } from '@prisma/client';
 
+import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
 const templateTypeLabels: Record<EmailTemplateType, string> = {
   WELCOME: 'Welcome',
   PASSWORD_RESET: 'Password Reset',
@@ -51,7 +52,7 @@ const templateTypeColors: Record<EmailTemplateType, 'default' | 'secondary' | 'd
 };
 
 export default async function EmailTemplatesPage() {
-  await requirePermission('message:send:all');
+  await requirePermission(MESSAGE_SEND_ALL);
 
   const templates = await getTemplatesAction();
 

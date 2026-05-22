@@ -1,10 +1,11 @@
 'use server';
 
+import { EVENT_CREATE } from '@/lib/auth/permission-constants';
+
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/permissions';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
-import { EVENT_CREATE } from '@/lib/auth/permission-constants';
 
 const eventSchema = z.object({
   title: z.string().min(1),

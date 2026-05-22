@@ -8,8 +8,9 @@ import { EmailSettingsForm } from '@/components/admin/settings/email-settings-fo
 import { SecuritySettingsForm } from '@/components/admin/settings/security-settings-form';
 import { MusicStandSettingsForm } from '@/components/admin/settings/music-stand-settings-form';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 export default async function AdminSettingsPage() {
-  await requirePermission('settings:read');
+  await requirePermission(SYSTEM_CONFIG);
 
   // Get current settings
   const settings = await prisma.systemSetting.findMany();

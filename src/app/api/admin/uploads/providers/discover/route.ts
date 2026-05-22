@@ -1,3 +1,4 @@
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 /**
  * POST /api/admin/uploads/providers/discover
  *
@@ -179,7 +180,7 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    await requirePermission('system:settings');
+    await requirePermission(SYSTEM_CONFIG);
 
     // Read existing API keys and per-step provider settings from DB
     const existingRows = await prisma.systemSetting.findMany({

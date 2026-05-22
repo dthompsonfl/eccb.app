@@ -1,5 +1,7 @@
 'use server';
 
+import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { requirePermission } from '@/lib/auth/guards';
@@ -18,7 +20,6 @@ import {
   UpdateTemplateData,
 } from '@/lib/services/email-template.service';
 import { TemplateVariable } from '@/lib/email-template-utils';
-import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
 
 // ====================================
 // Validation Schemas

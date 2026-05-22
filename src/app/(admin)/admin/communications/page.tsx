@@ -31,8 +31,9 @@ import {
   Calendar,
 } from 'lucide-react';
 
+import { ANNOUNCEMENT_VIEW_ALL } from '@/lib/auth/permission-constants';
 export default async function AdminCommunicationsPage() {
-  await requirePermission('communications:read');
+  await requirePermission(ANNOUNCEMENT_VIEW_ALL);
 
   // Get recent email logs
   const emailLogs = await prisma.emailLog.findMany({

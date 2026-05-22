@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { EmailTemplateForm } from '@/components/admin/communications/email-template-form';
 import { createTemplateAction } from '../actions';
 
+import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
 export default async function NewEmailTemplatePage() {
-  await requirePermission('message:send:all');
+  await requirePermission(MESSAGE_SEND_ALL);
 
   async function handleSubmit(data: {
     name: string;

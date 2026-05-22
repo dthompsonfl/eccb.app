@@ -7,12 +7,13 @@ import { Button } from '@/components/ui/button';
 import { EmailTemplateForm } from '@/components/admin/communications/email-template-form';
 import { getTemplateByIdAction, updateTemplateAction } from '../../actions';
 
+import { MESSAGE_SEND_ALL } from '@/lib/auth/permission-constants';
 interface EditTemplatePageProps {
   params: Promise<{ id: string }>;
 }
 
 export default async function EditTemplatePage({ params }: EditTemplatePageProps) {
-  await requirePermission('message:send:all');
+  await requirePermission(MESSAGE_SEND_ALL);
   const { id } = await params;
 
   const template = await getTemplateByIdAction(id);

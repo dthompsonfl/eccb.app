@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth/guards';
 import { requirePermission } from '@/lib/auth/permissions';
-import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 import { logger } from '@/lib/logger';
 import type {
   ParsedPartRecord,
@@ -12,6 +11,7 @@ import type {
   SecondPassStatus,
 } from '@/types/smart-upload';
 
+import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Types
 // =============================================================================

@@ -1,89 +1,66 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # ====================================
-# Security Audit Script
-# Runs npm audit and reports vulnerabilities
+# ECCB Security Audit
+# Package-manager aware dependency audit for CI and release gates.
 # ====================================
 
-set -e
+set -euo pipefail
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Configuration
-AUDIT_LEVEL="${AUDIT_LEVEL:-moderate}"  # low, moderate, high, critical
-OUTPUT_FORMAT="${OUTPUT_FORMAT:-text}"   # text, json
+AUDIT_LEVEL="${AUDIT_LEVEL:-moderate}"
+OUTPUT_FORMAT="${OUTPUT_FORMAT:-text}"
 EXIT_ON_VULN="${EXIT_ON_VULN:-true}"
+
+cd "$(dirname "$0")/.."
+
+if [[ -f pnpm-lock.yaml ]]; then
+  PACKAGE_MANAGER="pnpm"
+elif [[ -f package-lock.json ]]; then
+  PACKAGE_MANAGER="npm"
+else
+  echo -e "${RED}Error: no supported lockfile found. Expected pnpm-lock.yaml or package-lock.json.${NC}"
+  exit 1
+fi
+
+if ! command -v "$PACKAGE_MANAGER" >/dev/null 2>&1; then
+  echo -e "${RED}Error: ${PACKAGE_MANAGER} is not installed or not available on PATH.${NC}"
+  exit 1
+fi
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}  ECCB Security Audit                  ${NC}"
 echo -e "${BLUE}========================================${NC}"
-
-# Check if npm is available
-if ! command -v npm &> /dev/null; then
-    echo -e "${RED}Error: npm is not installed${NC}"
-    exit 1
-fi
-
-# Change to project root
-cd "$(dirname "$0")/.."
-
-echo -e "\n${YELLOW}Running npm audit...${NC}"
+echo -e "Package manager: ${PACKAGE_MANAGER}"
 echo -e "Audit level: ${AUDIT_LEVEL}"
 echo -e "Output format: ${OUTPUT_FORMAT}"
 echo ""
 
-# Run npm audit
-if [ "$OUTPUT_FORMAT" == "json" ]; then
-    AUDIT_OUTPUT=$(npm audit --audit-level="$AUDIT_LEVEL" --json 2>&1 || true)
+if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+  AUDIT_OUTPUT=$("$PACKAGE_MANAGER" audit --audit-level="$AUDIT_LEVEL" --json 2>&1 || true)
 else
-    AUDIT_OUTPUT=$(npm audit --audit-level="$AUDIT_LEVEL" 2>&1 || true)
+  AUDIT_OUTPUT=$("$PACKAGE_MANAGER" audit --audit-level="$AUDIT_LEVEL" 2>&1 || true)
 fi
 
-# Check for vulnerabilities
-if echo "$AUDIT_OUTPUT" | grep -q "found 0 vulnerabilities"; then
-    echo -e "${GREEN}✓ No vulnerabilities found!${NC}"
-    echo ""
-    echo -e "${GREEN}All dependencies are secure.${NC}"
-    exit 0
-else
-    echo "$AUDIT_OUTPUT"
-    echo ""
-    
-    # Count vulnerabilities by severity
-    CRITICAL=$(echo "$AUDIT_OUTPUT" | grep -c "critical" || echo "0")
-    HIGH=$(echo "$AUDIT_OUTPUT" | grep -c "high" || echo "0")
-    MODERATE=$(echo "$AUDIT_OUTPUT" | grep -c "moderate" || echo "0")
-    LOW=$(echo "$AUDIT_OUTPUT" | grep -c "low" || echo "0")
-    
-    echo -e "${YELLOW}========================================${NC}"
-    echo -e "${YELLOW}  Vulnerability Summary                ${NC}"
-    echo -e "${YELLOW}========================================${NC}"
-    [ "$CRITICAL" -gt 0 ] && echo -e "${RED}  Critical: $CRITICAL${NC}"
-    [ "$HIGH" -gt 0 ] && echo -e "${RED}  High: $HIGH${NC}"
-    [ "$MODERATE" -gt 0 ] && echo -e "${YELLOW}  Moderate: $MODERATE${NC}"
-    [ "$LOW" -gt 0 ] && echo -e "${BLUE}  Low: $LOW${NC}"
-    echo ""
-    
-    # Provide remediation suggestions
-    echo -e "${YELLOW}Remediation:${NC}"
-    echo "  1. Run 'npm audit fix' to attempt automatic fixes"
-    echo "  2. Run 'npm audit fix --force' for breaking changes (use with caution)"
-    echo "  3. Review and update dependencies manually"
-    echo "  4. Check for alternative packages if vulnerabilities persist"
-    echo ""
-    
-    # Suggest running npm audit fix
-    echo -e "${YELLOW}To attempt automatic fixes, run:${NC}"
-    echo "  npm run security:fix"
-    echo ""
-    
-    if [ "$EXIT_ON_VULN" == "true" ]; then
-        echo -e "${RED}Security audit failed. Please address vulnerabilities before deploying.${NC}"
-        exit 1
-    fi
+if echo "$AUDIT_OUTPUT" | grep -qiE "found 0 vulnerabilities|No known vulnerabilities found"; then
+  echo -e "${GREEN}No vulnerabilities found at or above ${AUDIT_LEVEL}.${NC}"
+  exit 0
+fi
+
+echo "$AUDIT_OUTPUT"
+echo ""
+echo -e "${YELLOW}Remediation:${NC}"
+echo "  1. Review the vulnerable advisory and affected dependency path."
+echo "  2. Prefer a targeted package upgrade over force-upgrading the dependency graph."
+echo "  3. Re-run: pnpm run security:audit"
+echo ""
+
+if [[ "$EXIT_ON_VULN" == "true" ]]; then
+  echo -e "${RED}Security audit failed. Address vulnerabilities before release.${NC}"
+  exit 1
 fi

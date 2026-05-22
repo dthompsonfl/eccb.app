@@ -1,10 +1,11 @@
 'use server';
 
+import { MUSIC_CREATE, MUSIC_DELETE, MUSIC_EDIT } from '@/lib/auth/permission-constants';
+
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/permissions';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
-import { MUSIC_CREATE, MUSIC_EDIT, MUSIC_DELETE } from '@/lib/auth/permission-constants';
 
 const musicPieceSchema = z.object({
   title: z.string().min(1, 'Title is required'),

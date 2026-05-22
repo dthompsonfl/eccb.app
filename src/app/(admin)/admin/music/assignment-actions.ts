@@ -1,11 +1,12 @@
 'use server';
 
+import { MUSIC_ASSIGN, MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission, getSession } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { AssignmentStatus } from '@prisma/client';
-import { MUSIC_ASSIGN } from '@/lib/auth/permission-constants';
 import {
   invalidateMusicAssignmentCache,
   invalidateMusicDashboardCache,
@@ -407,7 +408,7 @@ export async function getAssignmentHistory(options: {
   assignmentId?: string;
   limit?: number;
 }) {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
 
   try {
     const where: Record<string, unknown> = {};
@@ -445,7 +446,7 @@ export async function getAssignmentHistory(options: {
  * Get librarian dashboard statistics
  */
 export async function getLibrarianDashboardStats() {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
 
   try {
     const now = new Date();
@@ -568,7 +569,7 @@ export async function getAssignmentsForLibrarian(filters?: {
   overdue?: boolean;
   search?: string;
 }) {
-  await requirePermission('music:read');
+  await requirePermission(MUSIC_VIEW_ALL);
 
   try {
     const where: Record<string, unknown> = {};

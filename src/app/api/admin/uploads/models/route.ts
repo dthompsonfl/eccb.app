@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
-import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 import { prisma } from '@/lib/db';
 import { LLM_PROVIDERS, type LLMProviderValue } from '@/lib/llm/providers';
 import { getPrimaryApiKey } from '@/lib/llm/api-key-service';
 import { validateOutboundEndpoint } from '@/lib/network/safe-endpoint';
 
+import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
 /**
  * Resolve the effective endpoint URL for a provider.
  * If `clientEndpoint` is provided, use it; otherwise fall back to DB or provider default.
