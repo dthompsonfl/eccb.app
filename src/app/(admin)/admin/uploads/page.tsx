@@ -43,6 +43,24 @@ interface UploadResult {
   parseStatus: string;
   secondPassStatus: string;
   partsCount: number;
+  reviewPath: string;
+}
+
+interface UploadStatusResponse {
+  session?: {
+    uploadSessionId?: string;
+    fileName?: string;
+    confidenceScore?: number | null;
+    routingDecision?: string | null;
+    parseStatus?: string | null;
+    secondPassStatus?: string | null;
+    extractedMetadata?: {
+      title?: string;
+      composer?: string;
+      instrument?: string;
+    } | null;
+    parsedParts?: Array<unknown> | null;
+  };
 }
 
 interface UploadItem {
@@ -145,6 +163,88 @@ function getRoutingDecisionInfo(routingDecision: string): {
     default:
       return null;
   }
+}
+
+async function fetchUploadStatusResult(
+  sessionId: string,
+  fallback: Partial<UploadResult> & { fileName: string },
+): Promise<UploadResult> {
+  const reviewPath = `/admin/uploads/review?sessionId=${encodeURIComponent(sessionId)}`;
+
+  try {
+    const response = await fetch(`/api/admin/uploads/status/${encodeURIComponent(sessionId)}`, {
+      cache: 'no-store',
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as UploadStatusResponse;
+      const session = data.session;
+      const metadata = session?.extractedMetadata;
+      return {
+        sessionId,
+        fileName: session?.fileName ?? fallback.fileName,
+        confidenceScore: session?.confidenceScore ?? fallback.confidenceScore ?? 0,
+        title: metadata?.title || fallback.title || session?.fileName || fallback.fileName,
+        composer: metadata?.composer || fallback.composer,
+        instrument: metadata?.instrument || fallback.instrument,
+        routingDecision: session?.routingDecision ?? fallback.routingDecision ?? '',
+        parseStatus: session?.parseStatus ?? fallback.parseStatus ?? '',
+        secondPassStatus: session?.secondPassStatus ?? fallback.secondPassStatus ?? '',
+        partsCount: Array.isArray(session?.parsedParts)
+          ? session.parsedParts.length
+          : fallback.partsCount ?? 0,
+        reviewPath,
+      };
+    }
+  } catch {
+    // Fall through to fallback result. Upload completion should not be hidden just
+    // because the status refresh failed.
+  }
+
+  return {
+    sessionId,
+    fileName: fallback.fileName,
+    confidenceScore: fallback.confidenceScore ?? 0,
+    title: fallback.title || fallback.fileName,
+    composer: fallback.composer,
+    instrument: fallback.instrument,
+    routingDecision: fallback.routingDecision ?? '',
+    parseStatus: fallback.parseStatus ?? '',
+    secondPassStatus: fallback.secondPassStatus ?? '',
+    partsCount: fallback.partsCount ?? 0,
+    reviewPath,
+  };
+}
+
+function uploadNeedsStatusPolling(result: UploadResult): boolean {
+  return (
+    result.secondPassStatus === 'QUEUED' ||
+    result.secondPassStatus === 'IN_PROGRESS' ||
+    result.parseStatus === 'PARSING'
+  );
+}
+
+async function waitForUploadStatusResult(
+  sessionId: string,
+  fallback: Partial<UploadResult> & { fileName: string },
+  options: {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+    onPoll?: (result: UploadResult) => void;
+  } = {},
+): Promise<UploadResult> {
+  const timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+  const pollIntervalMs = options.pollIntervalMs ?? 2500;
+  const deadline = Date.now() + timeoutMs;
+  let latest = await fetchUploadStatusResult(sessionId, fallback);
+
+  while (uploadNeedsStatusPolling(latest) && Date.now() < deadline) {
+    options.onPoll?.(latest);
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    latest = await fetchUploadStatusResult(sessionId, latest);
+  }
+
+  return latest;
 }
 
 // =============================================================================
@@ -280,14 +380,14 @@ async function processUpload(
   }
 
   if (!body.success || !body.session) {
-  onProgress(id, {
-    phase: 'error',
-    progress: 0,
-    error: body.error ?? 'Unexpected response format.',
-    conflict: undefined,
-  });
-  return;
-}
+    onProgress(id, {
+      phase: 'error',
+      progress: 0,
+      error: body.error ?? 'Unexpected response format.',
+      conflict: undefined,
+    });
+    return;
+  }
 
   const sessionId = body.session.id;
   onProgress(id, { phase: 'extracting', progress: 30, conflict: undefined });
@@ -321,40 +421,35 @@ async function processUpload(
           secondPassStatus?: string;
         };
 
-        // If pass-1 queued a second pass, don't close the SSE — keep listening.
-        // The UI will stay in "verifying" state until the second pass completes.
-        if (
+        const fallbackResult = {
+          fileName: result.fileName ?? body.session!.fileName,
+          confidenceScore: result.confidenceScore ?? body.session!.confidenceScore ?? 0,
+          title: result.fileName ?? body.session!.fileName,
+          routingDecision: result.routingDecision ?? body.session!.routingDecision ?? '',
+          parseStatus: result.parseStatus ?? body.session!.parseStatus ?? '',
+          secondPassStatus: result.secondPassStatus ?? body.session!.secondPassStatus ?? '',
+          partsCount: result.partsCreated ?? 0,
+        };
+
+        const shouldPollAfterSseCompletion =
           result.status === 'queued_for_second_pass' ||
-          result.secondPassStatus === 'QUEUED'
-        ) {
-          onProgress(id, {
-            phase: 'verifying',
-            progress: 60,
-          });
-          // Reset the safety timeout for the second pass (another 5 min)
-          timeout = setTimeout(() => {
-            cleanup();
-            onProgress(id, { phase: 'error', progress: 0, error: 'Processing timed out after 5 minutes.' });
-            resolve();
-          }, 5 * 60 * 1000);
-          return; // keep SSE open
+          result.secondPassStatus === 'QUEUED' ||
+          result.secondPassStatus === 'IN_PROGRESS' ||
+          result.parseStatus === 'PARSING';
+
+        if (shouldPollAfterSseCompletion) {
+          onProgress(id, { phase: 'verifying', progress: 80 });
         }
 
-        onProgress(id, {
-          phase: 'done',
-          progress: 100,
-          result: {
-            sessionId,
-            fileName: result.fileName ?? body.session!.fileName,
-            confidenceScore: result.confidenceScore ?? body.session!.confidenceScore ?? 0,
-            title: result.fileName ?? body.session!.fileName,
-            routingDecision: result.routingDecision ?? body.session!.routingDecision ?? '',
-            parseStatus: result.parseStatus ?? body.session!.parseStatus ?? '',
-            secondPassStatus: result.secondPassStatus ?? body.session!.secondPassStatus ?? '',
-            partsCount: result.partsCreated ?? 0,
-          },
-        });
-        resolve();
+        void waitForUploadStatusResult(sessionId, fallbackResult, {
+          onPoll: () => onProgress(id, { phase: 'verifying', progress: 90 }),
+        }).then((uploadResult) => {
+          onProgress(id, {
+            phase: 'done',
+            progress: 100,
+            result: uploadResult,
+          });
+        }).finally(resolve);
       },
       (err) => {
         clearTimeout(timeout);
@@ -818,10 +913,10 @@ function UploadItemRow({
               <p>{item.result.partsCount} parts detected</p>
             )}
             <Link
-              href="/admin/uploads/review"
+              href={item.result.reviewPath}
               className="text-primary underline-offset-2 hover:underline"
             >
-              Review →
+              Review this upload →
             </Link>
           </div>
         )}

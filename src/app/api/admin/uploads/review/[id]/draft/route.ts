@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { ExtractedMetadata } from '@/types/smart-upload';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -97,7 +98,7 @@ export async function POST(
     }
 
     // Merge metadata changes with existing extracted metadata
-    const currentMetadata = existingSession.extractedMetadata as ExtractedMetadata | null;
+    const currentMetadata = parseSmartUploadJsonField<ExtractedMetadata | null>(existingSession.extractedMetadata, null);
     const mergedMetadata: ExtractedMetadata = currentMetadata
       ? {
           ...currentMetadata,
@@ -128,13 +129,13 @@ export async function POST(
 
     // Prepare update data
     const updateData: Parameters<typeof prisma.smartUploadSession.update>[0]['data'] = {
-      extractedMetadata: mergedMetadata as any,
+      extractedMetadata: serializeSmartUploadJsonField(mergedMetadata),
       updatedAt: new Date(),
     };
 
     // Update cutting instructions if provided
     if (validatedData.cuttingInstructions) {
-      updateData.cuttingInstructions = validatedData.cuttingInstructions as any;
+      updateData.cuttingInstructions = serializeSmartUploadJsonField(validatedData.cuttingInstructions);
     }
 
     // Persist draft changes
@@ -215,7 +216,7 @@ export async function GET(
       return NextResponse.json({ error: 'Upload session not found' }, { status: 404 });
     }
 
-    const metadata = uploadSession.extractedMetadata as ExtractedMetadata | null;
+    const metadata = parseSmartUploadJsonField<ExtractedMetadata | null>(uploadSession.extractedMetadata, null);
 
     return NextResponse.json({
       success: true,
@@ -240,7 +241,7 @@ export async function GET(
               notes: metadata.notes,
             }
           : null,
-        cuttingInstructions: uploadSession.cuttingInstructions,
+        cuttingInstructions: parseSmartUploadJsonArray(uploadSession.cuttingInstructions),
       },
     });
   } catch (error) {

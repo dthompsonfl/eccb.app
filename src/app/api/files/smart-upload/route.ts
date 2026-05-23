@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { queueSmartUploadProcess } from '@/lib/jobs/smart-upload';
 import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
 import { computeSha256 } from '@/lib/smart-upload/duplicate-detection';
+import { serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 import type {
   RoutingDecision,
   ParseStatus,
@@ -237,7 +238,7 @@ export async function POST(request: NextRequest) {
         mimeType: 'application/pdf',
         storageKey,
         sourceSha256,
-        extractedMetadata: JSON.stringify({
+        extractedMetadata: serializeSmartUploadJsonField({
           title: file.name.replace(/\.pdf$/i, ''),
           confidenceScore: 0,
           sourceSha256,

@@ -4,6 +4,8 @@ import { requirePermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
 
 import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
+import type { CuttingInstruction, ExtractedMetadata, ParsedPartRecord } from '@/types/smart-upload';
 function deriveWorkflowStage(
   parseStatus: string | null,
   secondPassStatus: string | null,
@@ -56,6 +58,7 @@ export async function GET(
         fileName: true,
         storageKey: true,
         fileSize: true,
+        sourceSha256: true,
         extractedMetadata: true,
         parsedParts: true,
         cuttingInstructions: true,
@@ -73,12 +76,23 @@ export async function GET(
       );
     }
 
+    const extractedMetadata = parseSmartUploadJsonField<ExtractedMetadata | null>(session.extractedMetadata, null);
+    const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(session.parsedParts);
+    const cuttingInstructions = parseSmartUploadJsonArray<CuttingInstruction>(session.cuttingInstructions);
+
+    const responseSession = {
+      ...session,
+      extractedMetadata,
+      parsedParts,
+      cuttingInstructions,
+    };
+
     const progressStep =
       session.commitStatus === 'COMPLETE'
         ? 'commit_complete'
-        : session.secondPassStatus === 'QUEUED' || session.secondPassStatus === 'RUNNING'
+        : session.secondPassStatus === 'QUEUED' || session.secondPassStatus === 'IN_PROGRESS'
           ? 'second_pass'
-          : session.parseStatus === 'PARSE_COMPLETED'
+          : session.parseStatus === 'PARSED'
             ? 'parse_complete'
             : 'processing';
 
@@ -97,15 +111,15 @@ export async function GET(
       progressStep,
       reviewReasons: session.requiresHumanReview ? ['requires_human_review'] : [],
       duplicateFlags: {
-        sourceSha256Present: Boolean((session.extractedMetadata as Record<string, unknown> | null)?.sourceSha256),
+        sourceSha256Present: Boolean(session.sourceSha256),
       },
       preview: {
         originalAvailable: Boolean(session.storageKey),
-        partPreviewAvailable: Array.isArray(session.parsedParts) && session.parsedParts.length > 0,
+        partPreviewAvailable: parsedParts.length > 0,
       },
     };
 
-    return NextResponse.json({ session, workflow });
+    return NextResponse.json({ session: responseSession, workflow });
   } catch (error) {
     logger.error('Error fetching upload status', { error });
     return NextResponse.json(

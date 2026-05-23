@@ -13,6 +13,7 @@ import { uploadFile } from '@/lib/services/storage';
 import type { CuttingInstruction, ParsedPartRecord } from '@/types/smart-upload';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonArray, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -134,7 +135,7 @@ export async function POST(
     }
 
     // Delete old temp files (best-effort)
-    const oldTempFiles = (uploadSession.tempFiles as string[] | null) ?? [];
+    const oldTempFiles = parseSmartUploadJsonArray<string>(uploadSession.tempFiles);
     const { deleteFile } = await import('@/lib/services/storage');
     for (const key of oldTempFiles) {
       try {
@@ -195,9 +196,9 @@ export async function POST(
     await prisma.smartUploadSession.update({
       where: { uploadSessionId: id },
       data: {
-        cuttingInstructions: validatedData.cuttingInstructions as any,
-        parsedParts: parsedParts as any,
-        tempFiles: tempFiles as any,
+        cuttingInstructions: serializeSmartUploadJsonField(validatedData.cuttingInstructions),
+        parsedParts: serializeSmartUploadJsonField(parsedParts),
+        tempFiles: serializeSmartUploadJsonField(tempFiles),
         updatedAt: new Date(),
         parseStatus: 'PARSED',
         // Clear auto-approved flag since manual resplit was done

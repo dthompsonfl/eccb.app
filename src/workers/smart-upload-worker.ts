@@ -39,6 +39,7 @@ import type {
   SecondPassStatus,
 } from '@/types/smart-upload';
 import type { SmartUploadSecondPassJobData } from '@/lib/jobs/definitions';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField, serializeSmartUploadSessionData } from '@/lib/smart-upload/persistence';
 
 // =============================================================================
 // Constants
@@ -362,7 +363,7 @@ async function finalizeSmartUploadSession(
   // based on deterministic (text-layer) segmentation. When the second pass LLM
   // produces cutting instructions, the LLM's confidence supersedes the first-pass
   // deterministic confidence — the segmentation quality is now LLM-driven.
-  const firstPassMeta = smartSession.extractedMetadata as ExtractedMetadata | null;
+  const firstPassMeta = parseSmartUploadJsonField<ExtractedMetadata | null>(smartSession.extractedMetadata, null);
   const firstPassSegConf = firstPassMeta?.segmentationConfidence;
   const hasSecondPassInstructions = (finalMetadata.cuttingInstructions?.length ?? 0) > 0;
 
@@ -486,6 +487,7 @@ async function finalizeSmartUploadSession(
   finalMetadata.enforceOcrSplitting = llmConfig.enforceOcrSplitting;
   finalMetadata.ocrCuttingInstructions = selection.ocrInstructions;
   finalMetadata.llmCuttingInstructions = selection.llmInstructions;
+  updateData.extractedMetadata = finalMetadata;
 
   if (selection.source !== 'ocr') {
     finalMetadata.notes = finalMetadata.notes
@@ -659,12 +661,20 @@ async function finalizeSmartUploadSession(
   const isHighConfidence = finalConfidence >= llmConfig.autoApproveThreshold;
   const isAutonomousThreshold = finalConfidence >= llmConfig.autonomousApprovalThreshold;
 
+  finalMetadata.confidenceScore = finalConfidence;
+  updateData.extractedMetadata = finalMetadata;
+  updateData.confidenceScore = finalConfidence;
+  updateData.finalConfidence = finalConfidence;
+
   if (isHighConfidence && routingDecision === 'auto_parse_second_pass' && isParsed && !updateData.requiresHumanReview) {
     updateData.autoApproved = true;
     logger.info('Session auto-approved after processing (legacy threshold)', { sessionId, finalConfidence });
   }
 
-  await prisma.smartUploadSession.update({ where: { uploadSessionId: sessionId }, data: updateData });
+  await prisma.smartUploadSession.update({
+    where: { uploadSessionId: sessionId },
+    data: serializeSmartUploadSessionData(updateData),
+  });
 
   // Trigger fully-autonomous auto-commit if configured
   if (
@@ -823,14 +833,16 @@ async function processSecondPass(job: Job<SmartUploadSecondPassJobData>): Promis
       await progress('rendering', 35, 'PDF rendered to images');
     }
 
-    // FIX: Treat fields as JSON directly, NOT strings (Bug #2 fix)
-    const metadata = smartSession.extractedMetadata as ExtractedMetadata | null;
+    // Smart Upload stores structured payloads as JSON strings in LongText columns.
+    // Always deserialize before second-pass logic; otherwise review state will not update
+    // and verifier prompts will see raw JSON text instead of typed metadata.
+    const metadata = parseSmartUploadJsonField<ExtractedMetadata | null>(smartSession.extractedMetadata, null);
     if (!metadata) {
       throw new Error('Missing extracted metadata');
     }
 
-    const parsedParts = smartSession.parsedParts as ParsedPartRecord[] | null;
-    const cuttingInstructions = smartSession.cuttingInstructions as CuttingInstruction[] | null;
+    const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(smartSession.parsedParts);
+    const cuttingInstructions = parseSmartUploadJsonArray<CuttingInstruction>(smartSession.cuttingInstructions);
 
     let verificationPrompt: string = '';
 

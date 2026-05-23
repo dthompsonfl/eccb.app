@@ -8,6 +8,7 @@ import type { DownloadResult } from '@/lib/services/storage';
 import type { ParsedPartRecord } from '@/types/smart-upload';
 
 import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
+import { parseSmartUploadJsonArray } from '@/lib/smart-upload/persistence';
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -44,7 +45,7 @@ export async function GET(
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    const parsedParts = (uploadSession.parsedParts as ParsedPartRecord[] | null) ?? [];
+    const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(uploadSession.parsedParts);
     const part = parsedParts.find((entry) => entry.storageKey === partStorageKey);
     if (!part) {
       return NextResponse.json({ error: 'Part not found in session' }, { status: 404 });

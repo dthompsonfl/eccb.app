@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'node:stream';
 import { labelPages } from '@/lib/services/page-labeler';
 import { getAuthoritativePdfPageCount } from '@/lib/services/pdf-source';
+import { parseSmartUploadJsonArray, parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
 
 // ---------------------------------------------------------------------------
 // Mocks — must be defined before dynamic imports
@@ -148,7 +149,6 @@ vi.mock('@/lib/logger', () => ({
 // Imports (after mocks)
 // ---------------------------------------------------------------------------
 import { prisma } from '@/lib/db';
-import { deepCloneJSON } from '@/lib/json';
 import { downloadFile, uploadFile } from '@/lib/services/storage';
 import { callVisionModel } from '@/lib/llm';
 import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
@@ -362,7 +362,7 @@ describe('processSmartUpload — integration', () => {
     const data = (finalUpdate![0] as any).data;
     expect(data.parseStatus).toBe('PARSED');
 
-    const parsedParts = deepCloneJSON(data.parsedParts) as any[];
+    const parsedParts = parseSmartUploadJsonArray(data.parsedParts);
     expect(parsedParts).toHaveLength(3);
 
     // Each split part was uploaded to storage
@@ -464,9 +464,10 @@ describe('processSmartUpload — integration', () => {
     const updateCalls = vi.mocked(prisma.smartUploadSession.update).mock.calls;
     const lastUpdate = updateCalls[updateCalls.length - 1];
     const sessionData = (lastUpdate[0] as any).data;
+    const metadata = parseSmartUploadJsonField<Record<string, any>>(sessionData.extractedMetadata, {});
 
-    expect(['ocr', 'hybrid', 'llm']).toContain(sessionData.extractedMetadata?.cuttingInstructionsSource);
-    expect(sessionData.extractedMetadata?.ocrCuttingInstructions?.[0]?.partName).toBe('OCR Part');
+    expect(['ocr', 'hybrid', 'llm']).toContain(metadata.cuttingInstructionsSource);
+    expect(metadata.ocrCuttingInstructions?.[0]?.partName).toBe('OCR Part');
   });
 
   it('honors enforceOcrSplitting by sticking with OCR splits even when LLM confidence is higher', async () => {
@@ -513,9 +514,10 @@ describe('processSmartUpload — integration', () => {
     const loginCalls = vi.mocked(prisma.smartUploadSession.update).mock.calls;
     const lastUpdate = loginCalls[loginCalls.length - 1];
     const sessionData = (lastUpdate[0] as any).data;
+    const metadata = parseSmartUploadJsonField<Record<string, any>>(sessionData.extractedMetadata, {});
 
-    expect(sessionData.extractedMetadata?.cuttingInstructionsSource).toBe('ocr');
-    expect(sessionData.extractedMetadata?.ocrCuttingInstructions?.[0]?.partName).toBe('OCR Part');
+    expect(metadata.cuttingInstructionsSource).toBe('ocr');
+    expect(metadata.ocrCuttingInstructions?.[0]?.partName).toBe('OCR Part');
   });
 
   // -----------------------------------------------------------------------
