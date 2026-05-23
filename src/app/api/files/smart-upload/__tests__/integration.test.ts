@@ -92,7 +92,7 @@ vi.mock('@/lib/smart-upload/duplicate-detection', () => ({
   computePartIdentityFingerprint: vi.fn().mockReturnValue('mock-part-hash'),
 }));
 
-vi.mock('@/lib/llm/config-loader', () => ({
+vi.mock('@/lib/smart-upload/runtime-config', () => ({
   loadSmartUploadRuntimeConfig: mockLoadSmartUploadRuntimeConfig,
   runtimeToAdapterConfig: vi.fn().mockReturnValue({
     llm_provider: 'openai',
@@ -105,6 +105,20 @@ vi.mock('@/lib/llm/config-loader', () => ({
     model: 'gpt-4o',
     systemPrompt: 'System prompt',
   }),
+  loadSmartUploadSettingsSnapshot: vi.fn().mockResolvedValue({
+    source: 'SystemSetting',
+    schema: 'smart-upload-runtime-config/v1',
+    keys: {},
+    hash: 'test-settings-hash',
+    capturedAt: '2026-01-01T00:00:00.000Z',
+  }),
+  buildSmartUploadSettingsSnapshotSummary: vi.fn().mockReturnValue({
+    source: 'SystemSetting',
+    schema: 'smart-upload-runtime-config/v1',
+    hash: 'test-settings-hash',
+    capturedAt: '2026-01-01T00:00:00.000Z',
+  }),
+
 }));
 
 vi.mock('@/lib/smart-upload/llm-cache', () => ({

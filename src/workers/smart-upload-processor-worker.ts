@@ -19,7 +19,7 @@ import { processSecondPass } from './smart-upload-worker';
 import { commitSmartUploadSessionToLibrary } from '@/lib/smart-upload/commit';
 import { cleanupSmartUploadTempFiles } from '@/lib/services/smart-upload-cleanup';
 import { SMART_UPLOAD_JOB_NAMES } from '@/lib/jobs/smart-upload';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
 import { recordMetricSuccess, recordMetricError } from '@/lib/smart-upload/metrics';
 import { SmartUploadErrorCode } from '@/lib/smart-upload/error-codes';
 import { logger } from '@/lib/logger';

@@ -40,7 +40,7 @@ vi.mock('next/headers', () => ({
 }));
 
 // All LLM config is DB-driven — mock the config loader, never env vars
-vi.mock('@/lib/llm/config-loader', () => ({
+vi.mock('@/lib/smart-upload/runtime-config', () => ({
   loadSmartUploadRuntimeConfig: vi.fn(),
 }));
 
@@ -50,7 +50,7 @@ global.fetch = vi.fn();
 import { auth } from '@/lib/auth/config';
 import { getUserRoles } from '@/lib/auth/permissions';
 import { prisma } from '@/lib/db';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
 const mockAuth = auth as unknown as { api: { getSession: ReturnType<typeof vi.fn> } };
 const mockGetUserRoles = getUserRoles as ReturnType<typeof vi.fn>;
 const mockLoadConfig = loadSmartUploadRuntimeConfig as ReturnType<typeof vi.fn>;

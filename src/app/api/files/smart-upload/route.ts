@@ -1,27 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth/guards';
-import { checkUserPermission } from '@/lib/auth/permissions';
-import { uploadFile, validateFileMagicBytes } from '@/lib/services/storage';
-import { applyRateLimit } from '@/lib/rate-limit';
-import { validateCSRF } from '@/lib/csrf';
-import { logger } from '@/lib/logger';
-import { queueSmartUploadProcess } from '@/lib/jobs/smart-upload';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
-import { computeSha256 } from '@/lib/smart-upload/duplicate-detection';
-import { serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { getSession } from "@/lib/auth/guards";
+import { checkUserPermission } from "@/lib/auth/permissions";
+import { uploadFile, validateFileMagicBytes } from "@/lib/services/storage";
+import { applyRateLimit } from "@/lib/rate-limit";
+import { validateCSRF } from "@/lib/csrf";
+import { logger } from "@/lib/logger";
+import { queueSmartUploadProcess } from "@/lib/jobs/smart-upload";
+import { computeSha256 } from "@/lib/smart-upload/duplicate-detection";
+import { serializeSmartUploadJsonField } from "@/lib/smart-upload/persistence";
+import {
+  loadSmartUploadRuntimeConfig,
+  loadSmartUploadSettingsSnapshot,
+  buildSmartUploadSettingsSnapshotSummary,
+} from "@/lib/smart-upload/runtime-config";
 import type {
   RoutingDecision,
   ParseStatus,
   SecondPassStatus,
-} from '@/types/smart-upload';
+} from "@/types/smart-upload";
 
-import { MUSIC_UPLOAD } from '@/lib/auth/permission-constants';
+import { MUSIC_UPLOAD } from "@/lib/auth/permission-constants";
 // =============================================================================
 // Constants (defaults — overridden by DB config at runtime)
 // =============================================================================
 
-const DEFAULT_ALLOWED_MIME_TYPES = ['application/pdf'];
+const DEFAULT_ALLOWED_MIME_TYPES = ["application/pdf"];
 const DEFAULT_MAX_FILE_SIZE_MB = 50;
 
 // =============================================================================
@@ -33,8 +37,8 @@ function generateStorageKey(sessionId: string, extension: string): string {
 }
 
 function getExtension(filename: string): string {
-  const lastDot = filename.lastIndexOf('.');
-  if (lastDot === -1) return '.pdf';
+  const lastDot = filename.lastIndexOf(".");
+  if (lastDot === -1) return ".pdf";
   return filename.slice(lastDot).toLowerCase();
 }
 
@@ -43,7 +47,7 @@ function getExtension(filename: string): string {
 // =============================================================================
 
 export async function POST(request: NextRequest) {
-  const rateLimitResponse = await applyRateLimit(request, 'smart-upload');
+  const rateLimitResponse = await applyRateLimit(request, "smart-upload");
   if (rateLimitResponse) {
     return rateLimitResponse;
   }
@@ -51,74 +55,83 @@ export async function POST(request: NextRequest) {
   const csrfResult = validateCSRF(request);
   if (!csrfResult.valid) {
     return NextResponse.json(
-      { error: 'CSRF validation failed', reason: csrfResult.reason },
-      { status: 403 }
+      { error: "CSRF validation failed", reason: csrfResult.reason },
+      { status: 403 },
     );
   }
 
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const hasPermission = await checkUserPermission(session.user.id, MUSIC_UPLOAD);
+  const hasPermission = await checkUserPermission(
+    session.user.id,
+    MUSIC_UPLOAD,
+  );
   if (!hasPermission) {
-    logger.warn('Smart upload denied: missing permission', { userId: session.user.id });
-    return NextResponse.json({ error: 'Forbidden: Music upload permission required' }, { status: 403 });
+    logger.warn("Smart upload denied: missing permission", {
+      userId: session.user.id,
+    });
+    return NextResponse.json(
+      { error: "Forbidden: Music upload permission required" },
+      { status: 403 },
+    );
   }
 
   try {
-    // Load DB-configured limits (fall back to defaults if DB unavailable)
-    let maxFileSizeMb = DEFAULT_MAX_FILE_SIZE_MB;
-    let allowedMimeTypes: string[] = DEFAULT_ALLOWED_MIME_TYPES;
-    try {
-      const cfg = await loadSmartUploadRuntimeConfig();
-      maxFileSizeMb = cfg.maxFileSizeMb ?? DEFAULT_MAX_FILE_SIZE_MB;
-      if (cfg.allowedMimeTypes && cfg.allowedMimeTypes.length > 0) {
-        allowedMimeTypes = cfg.allowedMimeTypes;
-      }
-    } catch {
-      logger.warn('Could not load smart upload config from DB; using defaults for upload limits');
-    }
+    // Load Smart Upload runtime settings through the canonical facade.
+    // Upload limits intentionally fail closed when the settings source is unavailable;
+    // using hardcoded defaults here would make the settings page non-authoritative.
+    const cfg = await loadSmartUploadRuntimeConfig();
+    const settingsSnapshot = await loadSmartUploadSettingsSnapshot();
+    const settingsSnapshotSummary =
+      buildSmartUploadSettingsSnapshotSummary(settingsSnapshot);
+    const maxFileSizeMb = cfg.maxFileSizeMb ?? DEFAULT_MAX_FILE_SIZE_MB;
+    const allowedMimeTypes = cfg.allowedMimeTypes?.length
+      ? cfg.allowedMimeTypes
+      : DEFAULT_ALLOWED_MIME_TYPES;
     const maxFileSizeBytes = maxFileSizeMb * 1024 * 1024;
 
     const formData = await request.formData();
-    const file = formData.get('file') as File | null;
+    const file = formData.get("file") as File | null;
 
     if (!file) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+      return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
     if (file.size > maxFileSizeBytes) {
       return NextResponse.json(
         { error: `File too large. Maximum size is ${maxFileSizeMb}MB` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!allowedMimeTypes.includes(file.type)) {
       return NextResponse.json(
-        { error: `Invalid file type. Allowed types: ${allowedMimeTypes.join(', ')}` },
-        { status: 400 }
+        {
+          error: `Invalid file type. Allowed types: ${allowedMimeTypes.join(", ")}`,
+        },
+        { status: 400 },
       );
     }
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const isValidPdf = validateFileMagicBytes(buffer, 'application/pdf');
+    const isValidPdf = validateFileMagicBytes(buffer, "application/pdf");
     if (!isValidPdf) {
-      logger.warn('Smart upload rejected: invalid PDF magic bytes', {
+      logger.warn("Smart upload rejected: invalid PDF magic bytes", {
         userId: session.user.id,
         filename: file.name,
       });
       return NextResponse.json(
-        { error: 'File content does not match PDF format' },
-        { status: 400 }
+        { error: "File content does not match PDF format" },
+        { status: 400 },
       );
     }
 
-    logger.info('Processing smart upload', {
+    logger.info("Processing smart upload", {
       userId: session.user.id,
       filename: file.name,
       size: file.size,
@@ -137,8 +150,13 @@ export async function POST(request: NextRequest) {
     const [existingSession, existingMusicFile] = await Promise.all([
       prisma.smartUploadSession.findFirst({
         where: { sourceSha256 },
-        select: { uploadSessionId: true, status: true, createdAt: true, fileName: true },
-        orderBy: { createdAt: 'desc' },
+        select: {
+          uploadSessionId: true,
+          status: true,
+          createdAt: true,
+          fileName: true,
+        },
+        orderBy: { createdAt: "desc" },
       }),
       prisma.musicFile.findFirst({
         where: {
@@ -147,17 +165,22 @@ export async function POST(request: NextRequest) {
           // More reliable: join through SmartUploadSession via originalUploadId.
           originalUploadId: {
             in: await prisma.smartUploadSession
-              .findMany({ where: { sourceSha256 }, select: { uploadSessionId: true } })
-              .then((sessions) => sessions.map((s) => s.uploadSessionId)),
+              .findMany({
+                where: { sourceSha256 },
+                select: { uploadSessionId: true },
+              })
+              .then((sessions: Array<{ uploadSessionId: string }>) =>
+                sessions.map((s) => s.uploadSessionId),
+              ),
           },
-          fileType: { not: 'PART' },
+          fileType: { not: "PART" },
         },
         select: { id: true, pieceId: true, piece: { select: { title: true } } },
       }),
     ]);
 
     if (existingMusicFile) {
-      logger.info('Smart upload duplicate detected (already committed)', {
+      logger.info("Smart upload duplicate detected (already committed)", {
         userId: session.user.id,
         filename: file.name,
         sourceSha256,
@@ -167,9 +190,9 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           duplicate: true,
-          conflictType: 'committed_duplicate',
-          code: 'SMART_UPLOAD_DUPLICATE_COMMITTED',
-          reason: 'exact_duplicate',
+          conflictType: "committed_duplicate",
+          code: "SMART_UPLOAD_DUPLICATE_COMMITTED",
+          reason: "exact_duplicate",
           existingPiece: {
             id: existingMusicFile.pieceId,
             title: existingMusicFile.piece?.title,
@@ -177,16 +200,16 @@ export async function POST(request: NextRequest) {
           },
           actions: {
             viewPiecePath: `/admin/music/library/${existingMusicFile.pieceId}`,
-            reviewQueuePath: '/admin/uploads/review',
+            reviewQueuePath: "/admin/uploads/review",
           },
-          message: `This file has already been imported as "${existingMusicFile.piece?.title ?? 'Unknown'}". Importing it again would create a duplicate.`,
+          message: `This file has already been imported as "${existingMusicFile.piece?.title ?? "Unknown"}". Importing it again would create a duplicate.`,
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
-    if (existingSession && existingSession.status !== 'REJECTED') {
-      logger.info('Smart upload duplicate detected (existing session)', {
+    if (existingSession && existingSession.status !== "REJECTED") {
+      logger.info("Smart upload duplicate detected (existing session)", {
         userId: session.user.id,
         filename: file.name,
         sourceSha256,
@@ -197,9 +220,14 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           duplicate: true,
-          conflictType: 'existing_session',
-          code: 'SMART_UPLOAD_DUPLICATE_SESSION',
-          reason: (existingSession.status === 'AUTO_COMMITTED' || existingSession.status === 'MANUALLY_APPROVED' || existingSession.status === 'APPROVED') ? 'approved_session' : 'pending_session',
+          conflictType: "existing_session",
+          code: "SMART_UPLOAD_DUPLICATE_SESSION",
+          reason:
+            existingSession.status === "AUTO_COMMITTED" ||
+            existingSession.status === "MANUALLY_APPROVED" ||
+            existingSession.status === "APPROVED"
+              ? "approved_session"
+              : "pending_session",
           existingSession: {
             id: existingSession.uploadSessionId,
             status: existingSession.status,
@@ -210,17 +238,17 @@ export async function POST(request: NextRequest) {
           },
           actions: {
             resumeSessionPath: `/admin/uploads/review?sessionId=${existingSession.uploadSessionId}`,
-            reviewQueuePath: '/admin/uploads/review',
+            reviewQueuePath: "/admin/uploads/review",
           },
-          message: `This exact file was already uploaded on ${existingSession.createdAt.toISOString().slice(0, 10)} and is ${(existingSession.status === 'REQUIRES_REVIEW' || existingSession.status === 'PENDING_REVIEW') ? 'pending review' : 'already processed'}. Re-use the existing session rather than uploading again.`,
+          message: `This exact file was already uploaded on ${existingSession.createdAt.toISOString().slice(0, 10)} and is ${existingSession.status === "REQUIRES_REVIEW" || existingSession.status === "PENDING_REVIEW" ? "pending review" : "already processed"}. Re-use the existing session rather than uploading again.`,
         },
-        { status: 409 }
+        { status: 409 },
       );
     }
 
     // Upload file to storage
     await uploadFile(storageKey, buffer, {
-      contentType: 'application/pdf',
+      contentType: "application/pdf",
       metadata: {
         originalFilename: file.name,
         uploadedBy: session.user.id,
@@ -235,25 +263,28 @@ export async function POST(request: NextRequest) {
         uploadSessionId: sessionId,
         fileName: file.name,
         fileSize: file.size,
-        mimeType: 'application/pdf',
+        mimeType: "application/pdf",
         storageKey,
         sourceSha256,
         extractedMetadata: serializeSmartUploadJsonField({
-          title: file.name.replace(/\.pdf$/i, ''),
+          title: file.name.replace(/\.pdf$/i, ""),
           confidenceScore: 0,
           sourceSha256,
         }),
         confidenceScore: 0,
-        status: 'PROCESSING',
+        status: "PROCESSING",
         uploadedBy: session.user.id,
-        parseStatus: 'NOT_PARSED' as ParseStatus,
-        secondPassStatus: 'NOT_NEEDED' as SecondPassStatus,
+        parseStatus: "NOT_PARSED" as ParseStatus,
+        secondPassStatus: "NOT_NEEDED" as SecondPassStatus,
         autoApproved: false,
         llmCallCount: 0,
+        llmModelParams: serializeSmartUploadJsonField({
+          smartUploadSettings: settingsSnapshotSummary,
+        }),
       },
     });
 
-    logger.info('Smart upload session created, queueing for processing', {
+    logger.info("Smart upload session created, queueing for processing", {
       sessionId: smartUploadSession.uploadSessionId,
       userId: session.user.id,
       sourceSha256,
@@ -263,11 +294,15 @@ export async function POST(request: NextRequest) {
     // Handle enqueue failures explicitly instead of fire-and-forget
     let enqueueSucceeded = true;
     try {
-      await queueSmartUploadProcess(smartUploadSession.uploadSessionId, smartUploadSession.id);
+      await queueSmartUploadProcess(
+        smartUploadSession.uploadSessionId,
+        smartUploadSession.id,
+      );
     } catch (enqueueErr) {
       enqueueSucceeded = false;
-      logger.error('Failed to queue smart upload for processing', {
-        error: enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
+      logger.error("Failed to queue smart upload for processing", {
+        error:
+          enqueueErr instanceof Error ? enqueueErr.message : String(enqueueErr),
         sessionId,
       });
 
@@ -277,8 +312,11 @@ export async function POST(request: NextRequest) {
         await prisma.smartUploadSession.update({
           where: { uploadSessionId: sessionId },
           data: {
-            parseStatus: 'PARSE_FAILED',
-            routingDecision: 'QUEUE_ENQUEUE_FAILED',
+            status: "FAILED",
+            parseStatus: "PARSE_FAILED",
+            secondPassStatus: "FAILED",
+            requiresHumanReview: true,
+            routingDecision: "QUEUE_ENQUEUE_FAILED",
           },
         });
       } catch {
@@ -286,31 +324,35 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
-      success: enqueueSucceeded,
-      session: {
-        id: smartUploadSession.uploadSessionId,
-        fileName: smartUploadSession.fileName,
-        confidenceScore: smartUploadSession.confidenceScore,
-        status: smartUploadSession.status,
-        createdAt: smartUploadSession.createdAt,
-        parseStatus: enqueueSucceeded ? smartUploadSession.parseStatus : 'PARSE_FAILED',
-        secondPassStatus: smartUploadSession.secondPassStatus,
-        autoApproved: smartUploadSession.autoApproved,
-        routingDecision: enqueueSucceeded ? null : ('QUEUE_ENQUEUE_FAILED' as RoutingDecision),
-      },
-      enqueued: enqueueSucceeded,
-      message: enqueueSucceeded
-        ? 'Upload accepted and queued for background processing.'
-        : 'Upload saved but background processing failed to start. Please retry or contact support.',
-    }, { status: enqueueSucceeded ? 202 : 503 });
-  } catch (error) {
-    logger.error('Smart upload failed', { error, userId: session?.user?.id });
-
     return NextResponse.json(
-      { error: 'Smart upload failed' },
-      { status: 500 }
+      {
+        success: enqueueSucceeded,
+        session: {
+          id: smartUploadSession.uploadSessionId,
+          fileName: smartUploadSession.fileName,
+          confidenceScore: smartUploadSession.confidenceScore,
+          status: enqueueSucceeded ? smartUploadSession.status : "FAILED",
+          createdAt: smartUploadSession.createdAt,
+          parseStatus: enqueueSucceeded
+            ? smartUploadSession.parseStatus
+            : "PARSE_FAILED",
+          secondPassStatus: smartUploadSession.secondPassStatus,
+          autoApproved: smartUploadSession.autoApproved,
+          routingDecision: enqueueSucceeded
+            ? null
+            : ("QUEUE_ENQUEUE_FAILED" as RoutingDecision),
+        },
+        enqueued: enqueueSucceeded,
+        message: enqueueSucceeded
+          ? "Upload accepted and queued for background processing."
+          : "Upload saved but background processing failed to start. The session is visible in Music Review as failed and requires operator action.",
+      },
+      { status: enqueueSucceeded ? 202 : 503 },
     );
+  } catch (error) {
+    logger.error("Smart upload failed", { error, userId: session?.user?.id });
+
+    return NextResponse.json({ error: "Smart upload failed" }, { status: 500 });
   }
 }
 
@@ -318,9 +360,9 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Max-Age': '86400',
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
     },
   });
 }

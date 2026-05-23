@@ -1,24 +1,38 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
-import { requirePermission } from '@/lib/auth/permissions';
-import { logger } from '@/lib/logger';
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { requirePermission } from "@/lib/auth/permissions";
+import { logger } from "@/lib/logger";
 
-import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
-import { parseSmartUploadJsonArray, parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
-import type { CuttingInstruction, ExtractedMetadata, ParsedPartRecord } from '@/types/smart-upload';
+import { MUSIC_VIEW_ALL } from "@/lib/auth/permission-constants";
+import {
+  parseSmartUploadJsonArray,
+  parseSmartUploadJsonField,
+} from "@/lib/smart-upload/persistence";
+import { isReviewActionableWorkflowStatus } from "@/lib/smart-upload/state";
+import type {
+  CuttingInstruction,
+  ExtractedMetadata,
+  ParsedPartRecord,
+} from "@/types/smart-upload";
 function deriveWorkflowStage(
   parseStatus: string | null,
   secondPassStatus: string | null,
-  status: string
+  status: string,
 ): string {
-  if (status === 'AUTO_COMMITTED' || status === 'MANUALLY_APPROVED' || status === 'APPROVED') return 'approved';
-  if (status === 'REJECTED') return 'rejected';
-  if (parseStatus === 'PARSE_FAILED') return 'parse_failed';
-  if (secondPassStatus === 'FAILED') return 'second_pass_failed';
-  if (secondPassStatus === 'IN_PROGRESS' || secondPassStatus === 'QUEUED') return 'second_pass';
-  if (parseStatus === 'PARSING') return 'parsing';
-  if (parseStatus === 'PARSED') return 'parsed_pending_review';
-  return 'queued';
+  if (
+    status === "AUTO_COMMITTED" ||
+    status === "MANUALLY_APPROVED" ||
+    status === "APPROVED"
+  )
+    return "approved";
+  if (status === "REJECTED") return "rejected";
+  if (parseStatus === "PARSE_FAILED") return "parse_failed";
+  if (secondPassStatus === "FAILED") return "second_pass_failed";
+  if (secondPassStatus === "IN_PROGRESS" || secondPassStatus === "QUEUED")
+    return "second_pass";
+  if (parseStatus === "PARSING") return "parsing";
+  if (parseStatus === "PARSED") return "parsed_pending_review";
+  return "queued";
 }
 
 /**
@@ -31,12 +45,12 @@ function deriveWorkflowStage(
  */
 export async function GET(
   _request: NextRequest,
-  { params }: { params: Promise<{ sessionId: string }> }
+  { params }: { params: Promise<{ sessionId: string }> },
 ) {
   try {
     await requirePermission(MUSIC_VIEW_ALL);
   } catch {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   try {
@@ -70,15 +84,20 @@ export async function GET(
     });
 
     if (!session) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const extractedMetadata = parseSmartUploadJsonField<ExtractedMetadata | null>(session.extractedMetadata, null);
-    const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(session.parsedParts);
-    const cuttingInstructions = parseSmartUploadJsonArray<CuttingInstruction>(session.cuttingInstructions);
+    const extractedMetadata =
+      parseSmartUploadJsonField<ExtractedMetadata | null>(
+        session.extractedMetadata,
+        null,
+      );
+    const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(
+      session.parsedParts,
+    );
+    const cuttingInstructions = parseSmartUploadJsonArray<CuttingInstruction>(
+      session.cuttingInstructions,
+    );
 
     const responseSession = {
       ...session,
@@ -88,30 +107,49 @@ export async function GET(
     };
 
     const progressStep =
-      session.commitStatus === 'COMPLETE'
-        ? 'commit_complete'
-        : session.secondPassStatus === 'QUEUED' || session.secondPassStatus === 'IN_PROGRESS'
-          ? 'second_pass'
-          : session.parseStatus === 'PARSED'
-            ? 'parse_complete'
-            : 'processing';
+      session.commitStatus === "COMPLETE"
+        ? "commit_complete"
+        : session.secondPassStatus === "QUEUED" ||
+            session.secondPassStatus === "IN_PROGRESS"
+          ? "second_pass"
+          : session.parseStatus === "PARSED"
+            ? "parse_complete"
+            : "processing";
 
     const workflow = {
-      stage: deriveWorkflowStage(session.parseStatus, session.secondPassStatus, session.status),
+      stage: deriveWorkflowStage(
+        session.parseStatus,
+        session.secondPassStatus,
+        session.status,
+      ),
       requiresHumanReview: Boolean(session.requiresHumanReview),
-      parseFailed: session.parseStatus === 'PARSE_FAILED',
-      secondPassFailed: session.secondPassStatus === 'FAILED',
-      completed: session.status === 'AUTO_COMMITTED' || session.status === 'MANUALLY_APPROVED' || session.status === 'APPROVED' || session.status === 'REJECTED' || session.status === 'FAILED',
+      parseFailed: session.parseStatus === "PARSE_FAILED",
+      secondPassFailed: session.secondPassStatus === "FAILED",
+      completed:
+        session.status === "AUTO_COMMITTED" ||
+        session.status === "MANUALLY_APPROVED" ||
+        session.status === "APPROVED" ||
+        session.status === "REJECTED" ||
+        session.status === "FAILED",
       parseStatus: session.parseStatus,
-      ocrStatus: session.ocrTextChars && session.ocrTextChars > 0 ? 'COMPLETED' : 'NOT_USED',
+      ocrStatus:
+        session.ocrTextChars && session.ocrTextChars > 0
+          ? "COMPLETED"
+          : "NOT_USED",
       secondPassStatus: session.secondPassStatus,
       commitStatus: session.commitStatus,
-      failureCode: session.commitError ? 'COMMIT_FAILED' : null,
-      failureStage: session.commitError ? 'commit' : null,
+      failureCode: session.commitError ? "COMMIT_FAILED" : null,
+      failureStage: session.commitError ? "commit" : null,
       progressStep,
-      reviewReasons: session.requiresHumanReview ? ['requires_human_review'] : [],
+      reviewReasons: session.requiresHumanReview
+        ? ["requires_human_review"]
+        : [],
       duplicateFlags: {
         sourceSha256Present: Boolean(session.sourceSha256),
+      },
+      review: {
+        visible: isReviewActionableWorkflowStatus(session.status),
+        url: `/admin/uploads/review?sessionId=${session.uploadSessionId}`,
       },
       preview: {
         originalAvailable: Boolean(session.storageKey),
@@ -121,10 +159,10 @@ export async function GET(
 
     return NextResponse.json({ session: responseSession, workflow });
   } catch (error) {
-    logger.error('Error fetching upload status', { error });
+    logger.error("Error fetching upload status", { error });
     return NextResponse.json(
-      { error: 'Failed to fetch upload status' },
-      { status: 500 }
+      { error: "Failed to fetch upload status" },
+      { status: 500 },
     );
   }
 }
