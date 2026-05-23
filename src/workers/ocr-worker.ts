@@ -6,7 +6,7 @@ import Redis from 'ioredis';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { QUEUE_NAMES } from '@/lib/jobs/definitions';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
 import { downloadFile } from '@/lib/services/storage';
 import { extractOcrFallbackMetadata, type OcrFallbackOptions } from '@/lib/services/ocr-fallback';
 import { parseSmartUploadJsonField, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';

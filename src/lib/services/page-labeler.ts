@@ -14,7 +14,7 @@
  */
 
 import { logger } from '@/lib/logger';
-import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
 import { SessionBudget } from '@/lib/smart-upload/budgets';
 import { parseJsonLenient } from '@/lib/smart-upload/json';
 import { buildHeaderLabelPrompt } from '@/lib/smart-upload/prompts';

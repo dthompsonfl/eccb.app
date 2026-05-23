@@ -47,7 +47,7 @@ vi.mock('@/lib/llm', () => ({
   callVisionModel: vi.fn(),
 }));
 
-vi.mock('@/lib/llm/config-loader', () => ({
+vi.mock('@/lib/smart-upload/runtime-config', () => ({
   loadSmartUploadRuntimeConfig: vi.fn(),
   runtimeToAdapterConfig: vi.fn().mockReturnValue({}),
   buildAdapterConfigForStep: vi.fn().mockResolvedValue({
@@ -58,6 +58,20 @@ vi.mock('@/lib/llm/config-loader', () => ({
     temperature: 0.1,
     maxTokens: 4096,
   }),
+  loadSmartUploadSettingsSnapshot: vi.fn().mockResolvedValue({
+    source: 'SystemSetting',
+    schema: 'smart-upload-runtime-config/v1',
+    keys: {},
+    hash: 'test-settings-hash',
+    capturedAt: '2026-01-01T00:00:00.000Z',
+  }),
+  buildSmartUploadSettingsSnapshotSummary: vi.fn().mockReturnValue({
+    source: 'SystemSetting',
+    schema: 'smart-upload-runtime-config/v1',
+    hash: 'test-settings-hash',
+    capturedAt: '2026-01-01T00:00:00.000Z',
+  }),
+
 }));
 
 vi.mock('@/lib/llm/providers', () => ({
@@ -151,7 +165,7 @@ vi.mock('@/lib/logger', () => ({
 import { prisma } from '@/lib/db';
 import { downloadFile, uploadFile } from '@/lib/services/storage';
 import { callVisionModel } from '@/lib/llm';
-import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { buildAdapterConfigForStep, loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
 import { splitPdfByCuttingInstructions, validatePdfBuffer } from '@/lib/services/pdf-splitter';
 import {
   queueSmartUploadSecondPass,

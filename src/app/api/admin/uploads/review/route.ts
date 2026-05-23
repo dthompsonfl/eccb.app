@@ -1,19 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server';
-import type { Prisma, SmartUploadStatus } from '@prisma/client';
-import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth/guards';
-import { requirePermission } from '@/lib/auth/permissions';
-import { logger } from '@/lib/logger';
+import { NextRequest, NextResponse } from "next/server";
+import type { Prisma, SmartUploadSession, SmartUploadStatus } from "@prisma/client";
+import { prisma } from "@/lib/db";
+import { getSession } from "@/lib/auth/guards";
+import { requirePermission } from "@/lib/auth/permissions";
+import { logger } from "@/lib/logger";
 import type {
   ParsedPartRecord,
   CuttingInstruction,
   ExtractedMetadata,
   ParseStatus,
   SecondPassStatus,
-} from '@/types/smart-upload';
+} from "@/types/smart-upload";
 
-import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
-import { parseSmartUploadJsonArray, parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
+import { MUSIC_VIEW_ALL } from "@/lib/auth/permission-constants";
+import {
+  parseSmartUploadJsonArray,
+  parseSmartUploadJsonField,
+} from "@/lib/smart-upload/persistence";
+import {
+  getReviewStatusesForFilter,
+  REVIEW_ALL_WORKFLOW_STATUSES,
+  REVIEW_APPROVED_WORKFLOW_STATUSES,
+  REVIEW_FAILED_WORKFLOW_STATUSES,
+  REVIEW_NEEDS_REVIEW_WORKFLOW_STATUSES,
+  REVIEW_PROCESSING_WORKFLOW_STATUSES,
+  REVIEW_REJECTED_WORKFLOW_STATUSES,
+} from "@/lib/smart-upload/state";
 // =============================================================================
 // Types
 // =============================================================================
@@ -32,7 +44,10 @@ function buildOriginalLinks(sessionId: string): ExceptionQueueLinks {
   };
 }
 
-function buildPartLinks(sessionId: string, storageKey: string): ExceptionQueueLinks {
+function buildPartLinks(
+  sessionId: string,
+  storageKey: string,
+): ExceptionQueueLinks {
   const encodedStorageKey = encodeURIComponent(storageKey);
   return {
     previewPath: `/api/admin/uploads/review/${sessionId}/part-preview?partStorageKey=${encodedStorageKey}&page=0`,
@@ -45,31 +60,34 @@ function deriveExceptionKind(
   parseStatus: ParseStatus | null,
   secondPassStatus: SecondPassStatus | null,
   requiresHumanReview: boolean | null,
-  confidenceScore: number | null
+  confidenceScore: number | null,
 ): string {
-  if (parseStatus === 'PARSE_FAILED') return 'parse_failure';
-  if (secondPassStatus === 'FAILED') return 'second_pass_failure';
-  if (requiresHumanReview) return 'human_review_required';
-  if ((confidenceScore ?? 0) < 85) return 'low_confidence';
-  return 'review_pending';
+  if (parseStatus === "PARSE_FAILED") return "parse_failure";
+  if (secondPassStatus === "FAILED") return "second_pass_failure";
+  if (requiresHumanReview) return "human_review_required";
+  if ((confidenceScore ?? 0) < 85) return "low_confidence";
+  return "review_pending";
 }
 
 function deriveExceptionSummary(
   kind: string,
   confidenceScore: number | null,
-  metadata: ExtractedMetadata | null
+  metadata: ExtractedMetadata | null,
 ): string {
   switch (kind) {
-    case 'parse_failure':
-      return 'PDF parsing or segmentation failed before a safe split could be produced.';
-    case 'second_pass_failure':
-      return 'Second-pass verification failed; manual review is required before commit.';
-    case 'human_review_required':
-      return metadata?.notes || 'Processing detected ambiguity or uncovered ranges that require reviewer intervention.';
-    case 'low_confidence':
+    case "parse_failure":
+      return "PDF parsing or segmentation failed before a safe split could be produced.";
+    case "second_pass_failure":
+      return "Second-pass verification failed; manual review is required before commit.";
+    case "human_review_required":
+      return (
+        metadata?.notes ||
+        "Processing detected ambiguity or uncovered ranges that require reviewer intervention."
+      );
+    case "low_confidence":
       return `Confidence is ${confidenceScore ?? 0}%; reviewer confirmation is required before commit.`;
     default:
-      return 'Awaiting reviewer confirmation before commit.';
+      return "Awaiting reviewer confirmation before commit.";
   }
 }
 
@@ -82,7 +100,7 @@ export async function GET(request: NextRequest) {
     // Check authentication
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Check permission using canonical constant
@@ -90,38 +108,30 @@ export async function GET(request: NextRequest) {
 
     // Get search params
     const searchParams = request.nextUrl.searchParams;
-    const status = searchParams.get('status') || 'REQUIRES_REVIEW';
-    const sessionId = searchParams.get('sessionId');
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '50', 10)));
+    const statusFilter = searchParams.get("status") || "ACTIONABLE";
+    const sessionId = searchParams.get("sessionId");
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(searchParams.get("limit") || "50", 10)),
+    );
     const skip = (page - 1) * limit;
 
     // Build where clause. A direct session lookup is used by Smart Upload result links
     // so the review UI can open the freshly-created session even while it is still
     // PROCESSING or after it has moved to a terminal state.
-    const allowedStatuses = new Set<SmartUploadStatus>([
-      'PROCESSING',
-      'AUTO_COMMITTING',
-      'AUTO_COMMITTED',
-      'REQUIRES_REVIEW',
-      'MANUALLY_APPROVED',
-      'REJECTED',
-      'FAILED',
-      'PENDING_REVIEW',
-      'APPROVED',
-    ]);
-    const normalizedStatus: SmartUploadStatus = allowedStatuses.has(status as SmartUploadStatus)
-      ? (status as SmartUploadStatus)
-      : 'REQUIRES_REVIEW';
+    const reviewStatuses = getReviewStatusesForFilter(
+      statusFilter,
+    ) as readonly SmartUploadStatus[];
     const where: Prisma.SmartUploadSessionWhereInput = sessionId
       ? { uploadSessionId: sessionId }
-      : { status: normalizedStatus };
+      : { status: { in: [...reviewStatuses] } };
 
     // Fetch sessions with pagination
     const [sessions, totalCount] = await Promise.all([
       prisma.smartUploadSession.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
         skip,
         take: limit,
       }),
@@ -129,16 +139,21 @@ export async function GET(request: NextRequest) {
     ]);
 
     // Transform sessions to include extracted metadata and new fields
-    const transformedSessions = sessions.map((s) => {
-      const metadata = parseSmartUploadJsonField<ExtractedMetadata | null>(s.extractedMetadata, null);
-      const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(s.parsedParts);
+    const transformedSessions = sessions.map((s: SmartUploadSession) => {
+      const metadata = parseSmartUploadJsonField<ExtractedMetadata | null>(
+        s.extractedMetadata,
+        null,
+      );
+      const parsedParts = parseSmartUploadJsonArray<ParsedPartRecord>(
+        s.parsedParts,
+      );
       const parseStatus = s.parseStatus as ParseStatus | null;
       const secondPassStatus = s.secondPassStatus as SecondPassStatus | null;
       const exceptionKind = deriveExceptionKind(
         parseStatus,
         secondPassStatus,
         s.requiresHumanReview,
-        s.confidenceScore
+        s.confidenceScore,
       );
 
       return {
@@ -159,12 +174,18 @@ export async function GET(request: NextRequest) {
         parseStatus,
         secondPassStatus,
         autoApproved: s.autoApproved,
-        cuttingInstructions: parseSmartUploadJsonArray<CuttingInstruction>(s.cuttingInstructions),
+        cuttingInstructions: parseSmartUploadJsonArray<CuttingInstruction>(
+          s.cuttingInstructions,
+        ),
         requiresHumanReview: s.requiresHumanReview,
         routingDecision: s.routingDecision,
         exceptionQueue: {
           kind: exceptionKind,
-          summary: deriveExceptionSummary(exceptionKind, s.confidenceScore, metadata),
+          summary: deriveExceptionSummary(
+            exceptionKind,
+            s.confidenceScore,
+            metadata,
+          ),
           original: {
             fileName: s.fileName,
             storageKey: s.storageKey,
@@ -175,12 +196,22 @@ export async function GET(request: NextRequest) {
             links: buildPartLinks(s.uploadSessionId, part.storageKey),
           })),
           provenance: {
-            sourceSha256: metadata && 'sourceSha256' in metadata ? (metadata as Record<string, unknown>).sourceSha256 : null,
+            sourceSha256:
+              metadata && "sourceSha256" in metadata
+                ? (metadata as Record<string, unknown>).sourceSha256
+                : null,
             rawOcrTextAvailable: Boolean(s.rawOcrText),
-            ocrEngineUsed: s.ocrEngineUsed ?? metadata?.ocrProvenance?.ocrEngine ?? metadata?.ocrProvenance?.textLayerEngine ?? null,
+            ocrEngineUsed:
+              s.ocrEngineUsed ??
+              metadata?.ocrProvenance?.ocrEngine ??
+              metadata?.ocrProvenance?.textLayerEngine ??
+              null,
             ocrTextChars: s.ocrTextChars,
-            llmFallbackReasons: metadata?.ocrProvenance?.llmFallbackReasons ?? [],
-            strategyHistoryCount: parseSmartUploadJsonArray<unknown>(s.strategyHistory).length,
+            llmFallbackReasons:
+              metadata?.ocrProvenance?.llmFallbackReasons ?? [],
+            strategyHistoryCount: parseSmartUploadJsonArray<unknown>(
+              s.strategyHistory,
+            ).length,
           },
         },
       };
@@ -188,21 +219,31 @@ export async function GET(request: NextRequest) {
 
     // Get counts by status (optimized into a single query)
     const statusCounts = await prisma.smartUploadSession.groupBy({
-      by: ['status'],
-      where: { status: { in: ['REQUIRES_REVIEW', 'MANUALLY_APPROVED', 'AUTO_COMMITTED', 'REJECTED', 'FAILED', 'PROCESSING', 'AUTO_COMMITTING', 'PENDING_REVIEW', 'APPROVED'] } },
+      by: ["status"],
+      where: {
+        status: {
+          in: [
+            ...(REVIEW_ALL_WORKFLOW_STATUSES as readonly SmartUploadStatus[]),
+          ],
+        },
+      },
       _count: { _all: true },
     });
 
-    // Map grouped counts to individual variables
-    const pendingCount = (statusCounts.find(c => c.status === 'REQUIRES_REVIEW')?._count._all ?? 0)
-      + (statusCounts.find(c => c.status === 'PENDING_REVIEW')?._count._all ?? 0);
-    const approvedCount = (statusCounts.find(c => c.status === 'MANUALLY_APPROVED')?._count._all ?? 0)
-      + (statusCounts.find(c => c.status === 'AUTO_COMMITTED')?._count._all ?? 0)
-      + (statusCounts.find(c => c.status === 'APPROVED')?._count._all ?? 0);
-    const rejectedCount = statusCounts.find(c => c.status === 'REJECTED')?._count._all ?? 0;
-    const processingCount = (statusCounts.find(c => c.status === 'PROCESSING')?._count._all ?? 0)
-      + (statusCounts.find(c => c.status === 'AUTO_COMMITTING')?._count._all ?? 0);
-    const failedCount = statusCounts.find(c => c.status === 'FAILED')?._count._all ?? 0;
+    const countFor = (statuses: readonly string[]) =>
+      statuses.reduce((sum: number, currentStatus: string) => {
+        return (
+          sum +
+          (statusCounts.find((c: { status: string; _count: { _all: number } }) => c.status === currentStatus)?._count._all ??
+            0)
+        );
+      }, 0);
+
+    const pendingCount = countFor(REVIEW_NEEDS_REVIEW_WORKFLOW_STATUSES);
+    const approvedCount = countFor(REVIEW_APPROVED_WORKFLOW_STATUSES);
+    const rejectedCount = countFor(REVIEW_REJECTED_WORKFLOW_STATUSES);
+    const processingCount = countFor(REVIEW_PROCESSING_WORKFLOW_STATUSES);
+    const failedCount = countFor(REVIEW_FAILED_WORKFLOW_STATUSES);
 
     return NextResponse.json({
       sessions: transformedSessions,
@@ -212,19 +253,24 @@ export async function GET(request: NextRequest) {
         totalCount,
         totalPages: Math.ceil(totalCount / limit),
       },
+      filter: {
+        requested: statusFilter,
+        statuses: reviewStatuses,
+      },
       stats: {
         pending: pendingCount,
         approved: approvedCount,
         rejected: rejectedCount,
         processing: processingCount,
         failed: failedCount,
+        actionable: processingCount + pendingCount + failedCount,
       },
     });
   } catch (error) {
-    logger.error('Failed to fetch upload sessions', { error });
+    logger.error("Failed to fetch upload sessions", { error });
     return NextResponse.json(
-      { error: 'Failed to fetch upload sessions' },
-      { status: 500 }
+      { error: "Failed to fetch upload sessions" },
+      { status: 500 },
     );
   }
 }
@@ -237,9 +283,9 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Max-Age': '86400',
+      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Max-Age": "86400",
     },
   });
 }

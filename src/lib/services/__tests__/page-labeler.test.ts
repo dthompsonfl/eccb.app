@@ -20,13 +20,19 @@ vi.mock('@/lib/logger', () => ({
   },
 }));
 
-vi.mock('@/lib/llm/config-loader', () => ({
-  loadLLMConfig: vi.fn().mockResolvedValue({
+vi.mock('@/lib/smart-upload/runtime-config', () => ({
+  loadSmartUploadRuntimeConfig: vi.fn().mockResolvedValue({
     headerLabelProvider: 'openai',
     headerLabelModel: 'gpt-4o',
     headerLabelModelParams: { temperature: 0.2 },
     headerLabelPrompt: 'You are a music expert.',
     headerLabelUserPrompt: 'What instrument part is on {{pageLabels}}?',
+  }),
+  buildAdapterConfigForStep: vi.fn().mockResolvedValue({
+    provider: 'openai',
+    model: 'gpt-4o',
+    apiKey: 'test-key',
+    endpointUrl: 'https://api.openai.com/v1',
   }),
 }));
 

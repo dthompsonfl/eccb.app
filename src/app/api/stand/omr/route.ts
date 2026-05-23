@@ -4,7 +4,7 @@ import { headers } from 'next/headers';
 import { prisma } from '@/lib/db';
 import { getUserRoles } from '@/lib/auth/permissions';
 import { applyRateLimit } from '@/lib/rate-limit';
-import { loadSmartUploadRuntimeConfig } from '@/lib/llm/config-loader';
+import { loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
 import { z } from 'zod';
 
 // Zod schema for OMR request validation

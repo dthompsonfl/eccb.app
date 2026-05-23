@@ -52,7 +52,7 @@ vi.mock('@/lib/smart-upload/duplicate-detection', () => ({
   computeSha256: vi.fn().mockReturnValue('a'.repeat(64)),
 }));
 
-vi.mock('@/lib/llm/config-loader', () => ({
+vi.mock('@/lib/smart-upload/runtime-config', () => ({
   loadSmartUploadRuntimeConfig: vi.fn().mockResolvedValue({
     provider: 'openai',
     visionModel: 'gpt-4o',
@@ -68,6 +68,20 @@ vi.mock('@/lib/llm/config-loader', () => ({
     // Include '' here so validation passes and we can test deeper logic.
     allowedMimeTypes: ['application/pdf'],
   }),
+  loadSmartUploadSettingsSnapshot: vi.fn().mockResolvedValue({
+    source: 'SystemSetting',
+    schema: 'smart-upload-runtime-config/v1',
+    keys: {},
+    hash: 'test-settings-hash',
+    capturedAt: '2026-01-01T00:00:00.000Z',
+  }),
+  buildSmartUploadSettingsSnapshotSummary: vi.fn().mockReturnValue({
+    source: 'SystemSetting',
+    schema: 'smart-upload-runtime-config/v1',
+    hash: 'test-settings-hash',
+    capturedAt: '2026-01-01T00:00:00.000Z',
+  }),
+
 }));
 
 vi.mock('@/lib/jobs/smart-upload', () => ({
