@@ -465,17 +465,15 @@ export async function commitSmartUploadSessionToLibrary(
         if (existingPiece) {
           // Piece already in library — update only fields that are currently null
           // to avoid overwriting manually curated metadata.
-          const nullUpdates = (
-            Object.keys(pieceData) as Array<keyof typeof pieceData>
-          ).reduce<Partial<typeof pieceData>>((acc, key) => {
-            if (
-              (existingPiece as Partial<typeof pieceData>)[key] == null &&
-              pieceData[key] != null
-            ) {
-              acc[key] = pieceData[key];
+          const nullUpdates = (() => {
+            const result: Record<string, unknown> = {};
+            for (const k of Object.keys(pieceData) as Array<keyof typeof pieceData>) {
+              if ((existingPiece as Partial<typeof pieceData>)[k] == null && pieceData[k] != null) {
+                result[k] = pieceData[k];
+              }
             }
-            return acc;
-          }, {});
+            return result as Partial<typeof pieceData>;
+          })();
           musicPiece =
             Object.keys(nullUpdates).length > 0
               ? await tx.musicPiece.update({
