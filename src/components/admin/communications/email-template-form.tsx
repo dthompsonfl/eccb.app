@@ -39,7 +39,8 @@ import {
 } from 'lucide-react';
 import { EmailTemplateType, EmailTemplate } from '@prisma/client';
 import { extractTemplateVariables } from '@/lib/email-template-utils';
-import DOMPurify from 'dompurify';
+import { SafeHtml } from '@/components/ui/safe-html';
+import { sanitizeHtml } from '@/lib/safe-html';
 
 const templateTypes = [
   { value: 'WELCOME', label: 'Welcome Email' },
@@ -150,7 +151,7 @@ export function EmailTemplateForm({ template, onSubmit, isSubmitting }: EmailTem
     });
 
     // Sanitize HTML
-    setPreviewHtml(DOMPurify.sanitize(html));
+    setPreviewHtml(html);
     setPreviewSubject(subject);
     setPreviewText(text);
   }, [watchedBody, watchedSubject, watchedTextBody, previewVars]);
@@ -454,12 +455,11 @@ export function EmailTemplateForm({ template, onSubmit, isSubmitting }: EmailTem
               <div className="space-y-2">
                 <Label className="text-sm font-medium">HTML Preview</Label>
                 <ScrollArea className="h-[300px] rounded-md border">
-                  <div 
+                  <SafeHtml
                     className="p-4 prose prose-sm max-w-none"
-                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(previewHtml) }}
+                    html={previewHtml}
                   />
-      </ScrollArea>
-
+                </ScrollArea>
               </div>
               {previewText && (
                 <div className="space-y-2">

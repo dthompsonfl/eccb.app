@@ -1,13 +1,12 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Calendar } from 'lucide-react';
-import DOMPurify from 'dompurify';
-import { JSDOM } from 'jsdom';
 import { CmsService } from '@/lib/services/cms.service';
 import { formatDate } from '@/lib/date';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SafeHtml } from '@/components/ui/safe-html';
 import { normalizePageContent } from '@/lib/cms/page-content';
 
 export const dynamic = 'force-dynamic';
@@ -83,13 +82,10 @@ export default async function DynamicPage({ params }: PageProps) {
     }
 
     if (normalized.html) {
-      const window = new JSDOM('').window;
-      const purify = DOMPurify(window);
-      const cleanHtml = purify.sanitize(normalized.html);
       return (
-        <div
+        <SafeHtml
           className="prose prose-neutral dark:prose-invert max-w-none"
-          dangerouslySetInnerHTML={{ __html: cleanHtml }}
+          html={normalized.html}
         />
       );
     }
