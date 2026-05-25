@@ -155,8 +155,8 @@ export function AnnotationLayer() {
         ctx.globalAlpha = 0.4;
       } else if (type === Tool.ERASER) {
         ctx.globalCompositeOperation = 'destination-out';
+        ctx.globalAlpha = 1;
       } else if (type === Tool.WHITEOUT) {
-        // P0 FIX: Whiteout paints opaque white (not transparent erase)
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1;
       } else {
@@ -370,7 +370,7 @@ export function AnnotationLayer() {
         id: generateId(),
         type: currentTool,
         points: currentPointsRef.current,
-        color: toolColor,
+        color: currentTool === Tool.WHITEOUT ? '#ffffff' : toolColor,
         baseWidth: strokeWidth,
         opacity: currentTool === Tool.HIGHLIGHTER ? 0.4 : 1,
       };
