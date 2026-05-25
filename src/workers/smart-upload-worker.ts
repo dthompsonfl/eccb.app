@@ -1094,33 +1094,4 @@ Include a "corrections" field explaining any corrections made from the first pas
   }
 }
 
-// =============================================================================
-// Worker Management
-// =============================================================================
-
-// NOTE: The separate BullMQ worker that used to live here has been removed.
-// All Smart Upload jobs are now handled by a single unified worker in
-// smart-upload-processor-worker.ts. This prevents jobs from being silently
-// lost when two workers consume the same queue and "skip" unowned jobs.
-//
-// The following legacy exports are kept for API compatibility in case any
-// module still imports them, but they are intentional no-ops.
-
-/** @deprecated Use startSmartUploadProcessorWorker() instead */
-export function startSmartUploadWorker(): void {
-  logger.warn(
-    'startSmartUploadWorker() is deprecated — secondPass jobs are now handled by the unified worker in smart-upload-processor-worker.ts'
-  );
-}
-
-/** @deprecated Use stopSmartUploadProcessorWorker() instead */
-export async function stopSmartUploadWorker(): Promise<void> {
-  // no-op: unified worker handles shutdown
-}
-
-/** @deprecated Use isSmartUploadProcessorWorkerRunning() instead */
-export function isSmartUploadWorkerRunning(): boolean {
-  return false;
-}
-
 export { processSecondPass };
