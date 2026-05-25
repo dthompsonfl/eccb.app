@@ -222,195 +222,263 @@ function parseMimeTypes(raw: string | undefined): string[] {
  * Use bootstrapLLMApiKeysFromEnv() at startup to seed DB from env if needed.
  * Call once per job/request; cache the result if calling multiple times.
  */
+let cachedConfigPromise: Promise<LLMRuntimeConfig> | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 60 * 1000; // 60s memory cache
+
+/**
+ * Clear the LLM config cache to force a fresh DB read.
+ * Call this when LLM-related system settings or API keys are updated.
+ */
+export function clearLLMConfigCache() {
+  cachedConfigPromise = null;
+  cacheTimestamp = 0;
+}
+
+/**
+ * Load LLM configuration from the database ONLY.
+ * Runtime env vars are NOT read for provider/model/endpoint selection.
+ * Use bootstrapLLMApiKeysFromEnv() at startup to seed DB from env if needed.
+ * Call once per job/request; cache the result if calling multiple times.
+ */
 export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
-  let db: Record<string, string> = {};
-
-  try {
-    const rows = await prisma.systemSetting.findMany({
-      where: { key: { in: [...DB_KEYS] } },
-      select: { key: true, value: true },
-    });
-    db = rows.reduce<Record<string, string>>((acc, r) => {
-      if (r.value !== null && r.value !== undefined) acc[r.key] = r.value;
-      return acc;
-    }, {});
-  } catch (err) {
-    // If DB unavailable, we cannot proceed - throw error
-    // Workers should have DB connectivity; admin can configure via UI
-    logger.error('loadLLMConfig: DB unavailable, cannot load config', { err });
-    throw new Error('LLM config DB unavailable');
+  const now = Date.now();
+  if (cachedConfigPromise && now - cacheTimestamp < CACHE_TTL_MS) {
+    return cachedConfigPromise;
   }
 
-  // ── Provider resolution (DB-only, with backward-compat legacy key) ────────
-  // Priority: explicit per-step provider → default_provider → legacy llm_provider → 'ollama'
-  const defaultProvider = (
-    db['llm_default_provider'] ||
-    db['llm_provider'] ||
-    'ollama'
-  ) as LLMProviderValue;
+  cacheTimestamp = now;
+  cachedConfigPromise = (async () => {
+    let db: Record<string, string> = {};
 
-  // Per-step provider overrides (new OCR-first architecture)
-  const visionProvider = (db['llm_vision_provider'] || defaultProvider) as LLMProviderValue;
-  const verificationProvider = (db['llm_verification_provider'] || defaultProvider) as LLMProviderValue;
-  const headerLabelProvider = (db['llm_header_label_provider'] || defaultProvider) as LLMProviderValue;
-  const adjudicatorProvider = (db['llm_adjudicator_provider'] || defaultProvider) as LLMProviderValue;
+    try {
+      const rows = await prisma.systemSetting.findMany({
+        where: { key: { in: [...DB_KEYS] } },
+        select: { key: true, value: true },
+      });
+      db = rows.reduce<Record<string, string>>((acc, r) => {
+        if (r.value !== null && r.value !== undefined) acc[r.key] = r.value;
+        return acc;
+      }, {});
+    } catch (err) {
+      // Clear cache on error so next attempt tries again
+      clearLLMConfigCache();
+      // If DB unavailable, we cannot proceed - throw error
+      // Workers should have DB connectivity; admin can configure via UI
+      logger.error('loadLLMConfig: DB unavailable, cannot load config', { err });
+      throw new Error('LLM config DB unavailable');
+    }
 
-  // ── Endpoint resolution (DB-only) ─────────────────────────────────────────
-  // Priority: explicit DB value → provider default endpoint
-  let endpointUrl = db['llm_endpoint_url'] || '';
+    // ── Provider resolution (DB-only, with backward-compat legacy key) ────────
+    // Priority: explicit per-step provider → default_provider → legacy llm_provider → 'ollama'
+    const defaultProvider = (db['llm_default_provider'] ||
+      db['llm_provider'] ||
+      'ollama') as LLMProviderValue;
 
-  if (!endpointUrl) {
-    // Fall back to provider default endpoints (no runtime env fallback)
-    endpointUrl = getDefaultEndpointForProvider(defaultProvider);
-  }
+    // Per-step provider overrides (new OCR-first architecture)
+    const visionProvider = (db['llm_vision_provider'] ||
+      defaultProvider) as LLMProviderValue;
+    const verificationProvider = (db['llm_verification_provider'] ||
+      defaultProvider) as LLMProviderValue;
+    const headerLabelProvider = (db['llm_header_label_provider'] ||
+      defaultProvider) as LLMProviderValue;
+    const adjudicatorProvider = (db['llm_adjudicator_provider'] ||
+      defaultProvider) as LLMProviderValue;
 
-  // ── Models (DB-only, with backward-compat legacy keys) ───────────────────
-  const visionModel = db['llm_vision_model'] || 'llama3.2-vision';
-  const verificationModel = db['llm_verification_model'] || 'qwen2.5:7b';
-  const headerLabelModel = db['llm_header_label_model'] || verificationModel;
+    // ── Endpoint resolution (DB-only) ─────────────────────────────────────────
+    // Priority: explicit DB value → provider default endpoint
+    let endpointUrl = db['llm_endpoint_url'] || '';
 
-  // ── Model params — prefer new keys, fall back to legacy prefixed keys ────
-  const visionModelParams = parseJsonParam(
-    db['vision_model_params'] || db['llm_vision_model_params']
-  );
-  const verificationModelParams = parseJsonParam(
-    db['verification_model_params'] || db['llm_verification_model_params']
-  );
-  const headerLabelModelParams = parseJsonParam(
-    db['llm_header_label_model_params']
-  );
-  const adjudicatorModelParams = parseJsonParam(
-    db['llm_adjudicator_model_params']
-  );
+    if (!endpointUrl) {
+      // Fall back to provider default endpoints (no runtime env fallback)
+      endpointUrl = getDefaultEndpointForProvider(defaultProvider);
+    }
 
-  // ── OCR-first settings (DB-only, no env fallback) ──────────────────────────
-  const enableOcrFirst = (db['smart_upload_enable_ocr_first'] ?? 'true') === 'true';
-  const textLayerThresholdPct = Number(db['smart_upload_text_layer_threshold_pct'] ?? 40);
-  const ocrMode = (db['smart_upload_ocr_mode'] || 'both') as 'header' | 'full' | 'both';
-  const ocrMaxPages = Number(db['smart_upload_ocr_max_pages'] ?? 3);
-  const textProbePages = Number(db['smart_upload_text_probe_pages'] ?? 10);
-  const storeRawOcrText = (db['smart_upload_store_raw_ocr_text'] ?? 'false') === 'true';
-  const ocrEngine = (db['smart_upload_ocr_engine'] || 'tesseract') as 'tesseract' | 'ocrmypdf' | 'vision_api' | 'native';
-  const ocrRateLimitRpm = Number(db['smart_upload_ocr_rate_limit_rpm'] ?? 6);
-  const llmMaxPages = Number(db['smart_upload_llm_max_pages'] ?? 10);
-  const llmMaxHeaderBatches = Number(db['smart_upload_llm_max_header_batches'] ?? 2);
-  const secondPassMaxImages = Math.max(0, parseInt(db['smart_upload_second_pass_max_images'] ?? '0', 10));
+    // ── Models (DB-only, with backward-compat legacy keys) ───────────────────
+    const visionModel = db['llm_vision_model'] || 'llama3.2-vision';
+    const verificationModel = db['llm_verification_model'] || 'qwen2.5:7b';
+    const headerLabelModel = db['llm_header_label_model'] || verificationModel;
 
-  // ── API keys — encrypted APIKey table is the sole source of truth ────────
-  const PROVIDER_SLUGS: readonly LLMProviderValue[] = [
-    'openai', 'anthropic', 'openrouter', 'gemini',
-    'ollama-cloud', 'mistral', 'groq', 'custom',
-  ] as const;
-  const apiKeys: Record<string, string> = {};
-  for (const slug of PROVIDER_SLUGS) {
-    apiKeys[slug] = await getPrimaryApiKey(slug);
-  }
+    // ── Model params — prefer new keys, fall back to legacy prefixed keys ────
+    const visionModelParams = parseJsonParam(
+      db['vision_model_params'] || db['llm_vision_model_params']
+    );
+    const verificationModelParams = parseJsonParam(
+      db['verification_model_params'] || db['llm_verification_model_params']
+    );
+    const headerLabelModelParams = parseJsonParam(
+      db['llm_header_label_model_params']
+    );
+    const adjudicatorModelParams = parseJsonParam(
+      db['llm_adjudicator_model_params']
+    );
 
-  return {
-    // ── Providers ───────────────────────────────────────────────────────────
-    // Default provider (backward compat)
-    provider: defaultProvider,
-    // Per-step providers (new OCR-first architecture)
-    visionProvider,
-    verificationProvider,
-    headerLabelProvider,
-    adjudicatorProvider,
-    defaultProvider,
-    // ── Endpoint ───────────────────────────────────────────────────────────
-    endpointUrl,
-    // ── Models ─────────────────────────────────────────────────────────────
-    visionModel,
-    verificationModel,
-    headerLabelModel,
-    adjudicatorModel:
-      db['llm_adjudicator_model'] ||
-      (verificationProvider === 'openai' ? 'gpt-4o' :
-       verificationProvider === 'anthropic' ? 'claude-3-5-sonnet-20241022' :
-       verificationModel),
-    // ── Model params ───────────────────────────────────────────────────────
-    visionModelParams,
-    verificationModelParams,
-    headerLabelModelParams,
-    adjudicatorModelParams,
-    // ── API keys — DB is the single source of truth. No env fallback. ──────
-    // Prefer encrypted APIKey table, fall back to SystemSetting for migration.
-    openaiApiKey: apiKeys.openai,
-    anthropicApiKey: apiKeys.anthropic,
-    openrouterApiKey: apiKeys.openrouter,
-    geminiApiKey: apiKeys.gemini,
-    ollamaCloudApiKey: apiKeys['ollama-cloud'],
-    mistralApiKey: apiKeys.mistral,
-    groqApiKey: apiKeys.groq,
-    customApiKey: apiKeys.custom,
-    // ── Threshold / behavior settings ─────────────────────────────────────
-    confidenceThreshold: Number(
-      db['smart_upload_confidence_threshold'] ||
-      db['llm_confidence_threshold'] ||
-      70
-    ),
-    twoPassEnabled: (db['llm_two_pass_enabled'] ?? 'true') === 'true',
-    // ── Prompts ───────────────────────────────────────────────────────────
-    visionSystemPrompt: db['llm_vision_system_prompt'] || undefined,
-    verificationSystemPrompt: db['llm_verification_system_prompt'] || undefined,
-    headerLabelPrompt: db['llm_header_label_prompt'] || undefined,
-    adjudicatorPrompt: db['llm_adjudicator_prompt'] || undefined,
-    // ── Rate limits ───────────────────────────────────────────────────────
-    rateLimit: Number(
-      db['smart_upload_rate_limit_rpm'] ||
-      db['llm_rate_limit_rpm'] ||
-      15
-    ),
-    autoApproveThreshold: Number(
-      db['smart_upload_auto_approve_threshold'] ||
-      db['llm_auto_approve_threshold'] ||
-      90
-    ),
-    skipParseThreshold: Number(
-      db['smart_upload_skip_parse_threshold'] ||
-      db['llm_skip_parse_threshold'] ||
-      60
-    ),
-    // ── Resource limits ───────────────────────────────────────────────────
-    maxPages: Number(db['smart_upload_max_pages'] ?? 20),
-    maxFileSizeMb: Number(db['smart_upload_max_file_size_mb'] ?? 50),
-    maxConcurrent: Number(db['smart_upload_max_concurrent'] ?? 3),
-    // ── MIME types ─────────────────────────────────────────────────────────
-    allowedMimeTypes: parseMimeTypes(db['smart_upload_allowed_mime_types']),
-    // ── Autonomous mode ───────────────────────────────────────────────────
-    enableFullyAutonomousMode: (db['smart_upload_enable_autonomous_mode'] ?? 'false') === 'true',
-    autonomousApprovalThreshold: Number(db['smart_upload_autonomous_approval_threshold'] ?? 95),
-    maxPagesPerPart: Number(db['smart_upload_max_pages_per_part'] ?? 12),
-    sendFullPdfToLlm: (db['smart_upload_send_full_pdf_to_llm'] ?? 'true') === 'true',
-    // ── OCR settings (legacy - superseded by OCR-first settings above) ────────
-    ocrConfidenceThreshold: Number(db['smart_upload_ocr_confidence_threshold'] ?? 60),
-    // ── Budget / cost limits ──────────────────────────────────────────────
-    budgetMaxLlmCalls: Number(db['smart_upload_budget_max_llm_calls_per_session'] ?? 5),
-    budgetMaxInputTokens: Number(db['smart_upload_budget_max_input_tokens_per_session'] ?? 500000),
-    // ── LLM response cache ────────────────────────────────────────────────
-    enableLlmCache: (db['smart_upload_enable_llm_cache'] ?? 'true') === 'true',
-    llmCacheTtlSeconds: Number(db['smart_upload_llm_cache_ttl_seconds'] ?? 86400),
-    // ── Prompt version ─────────────────────────────────────────────────────
-    promptVersion: db['llm_prompt_version'] || PROMPT_VERSION,
-    // ── User prompt templates — DB is the single source of truth ──────────
-    visionUserPrompt: db['llm_vision_user_prompt'] || undefined,
-    visionMetadataOnlyUserPrompt: db['llm_vision_metadata_only_user_prompt'] || undefined,
-    pdfVisionUserPrompt: db['llm_pdf_vision_user_prompt'] || undefined,
-    verificationUserPrompt: db['llm_verification_user_prompt'] || undefined,
-    headerLabelUserPrompt: db['llm_header_label_user_prompt'] || undefined,
-    adjudicatorUserPrompt: db['llm_adjudicator_user_prompt'] || undefined,
-    // ── OCR-first settings (new) ───────────────────────────────────────────
-    enableOcrFirst,
-    textLayerThresholdPct,
-    ocrMode,
-    ocrMaxPages,
-    textProbePages,
-    storeRawOcrText,
-    ocrEngine,
-    ocrRateLimitRpm,
-    llmMaxPages,
-    llmMaxHeaderBatches,
-    secondPassMaxImages,
-  };
+    // ── OCR-first settings (DB-only, no env fallback) ──────────────────────────
+    const enableOcrFirst =
+      (db['smart_upload_enable_ocr_first'] ?? 'true') === 'true';
+    const textLayerThresholdPct = Number(
+      db['smart_upload_text_layer_threshold_pct'] ?? 40
+    );
+    const ocrMode = (db['smart_upload_ocr_mode'] || 'both') as
+      | 'header'
+      | 'full'
+      | 'both';
+    const ocrMaxPages = Number(db['smart_upload_ocr_max_pages'] ?? 3);
+    const textProbePages = Number(db['smart_upload_text_probe_pages'] ?? 10);
+    const storeRawOcrText =
+      (db['smart_upload_store_raw_ocr_text'] ?? 'false') === 'true';
+    const ocrEngine = (db['smart_upload_ocr_engine'] || 'tesseract') as
+      | 'tesseract'
+      | 'ocrmypdf'
+      | 'vision_api'
+      | 'native';
+    const ocrRateLimitRpm = Number(db['smart_upload_ocr_rate_limit_rpm'] ?? 6);
+    const llmMaxPages = Number(db['smart_upload_llm_max_pages'] ?? 10);
+    const llmMaxHeaderBatches = Number(
+      db['smart_upload_llm_max_header_batches'] ?? 2
+    );
+    const secondPassMaxImages = Math.max(
+      0,
+      parseInt(db['smart_upload_second_pass_max_images'] ?? '0', 10)
+    );
+
+    // ── API keys — encrypted APIKey table is the sole source of truth ────────
+    const PROVIDER_SLUGS: readonly LLMProviderValue[] = [
+      'openai',
+      'anthropic',
+      'openrouter',
+      'gemini',
+      'ollama-cloud',
+      'mistral',
+      'groq',
+      'custom',
+    ] as const;
+
+    // Fetch all keys in parallel to reduce DB round-trip latency
+    let apiKeys: Record<string, string> = {};
+    try {
+      const apiKeyResults = await Promise.all(
+        PROVIDER_SLUGS.map((slug) => getPrimaryApiKey(slug))
+      );
+
+      PROVIDER_SLUGS.forEach((slug, i) => {
+        apiKeys[slug] = apiKeyResults[i];
+      });
+    } catch (err) {
+      // Clear cache on error so next attempt tries again
+      clearLLMConfigCache();
+      logger.error('loadLLMConfig: Failed to fetch API keys', { err });
+      throw err;
+    }
+
+    return {
+      // ── Providers ───────────────────────────────────────────────────────────
+      // Default provider (backward compat)
+      provider: defaultProvider,
+      // Per-step providers (new OCR-first architecture)
+      visionProvider,
+      verificationProvider,
+      headerLabelProvider,
+      adjudicatorProvider,
+      defaultProvider,
+      // ── Endpoint ───────────────────────────────────────────────────────────
+      endpointUrl,
+      // ── Models ─────────────────────────────────────────────────────────────
+      visionModel,
+      verificationModel,
+      headerLabelModel,
+      adjudicatorModel:
+        db['llm_adjudicator_model'] ||
+        (verificationProvider === 'openai' ? 'gpt-4o' :
+         verificationProvider === 'anthropic' ? 'claude-3-5-sonnet-20241022' :
+         verificationModel),
+      // ── Model params ───────────────────────────────────────────────────────
+      visionModelParams,
+      verificationModelParams,
+      headerLabelModelParams,
+      adjudicatorModelParams,
+      // ── API keys — DB is the single source of truth. No env fallback. ──────
+      // Prefer encrypted APIKey table, fall back to SystemSetting for migration.
+      openaiApiKey: apiKeys.openai,
+      anthropicApiKey: apiKeys.anthropic,
+      openrouterApiKey: apiKeys.openrouter,
+      geminiApiKey: apiKeys.gemini,
+      ollamaCloudApiKey: apiKeys['ollama-cloud'],
+      mistralApiKey: apiKeys.mistral,
+      groqApiKey: apiKeys.groq,
+      customApiKey: apiKeys.custom,
+      // ── Threshold / behavior settings ─────────────────────────────────────
+      confidenceThreshold: Number(
+        db['smart_upload_confidence_threshold'] ||
+        db['llm_confidence_threshold'] ||
+        70
+      ),
+      twoPassEnabled: (db['llm_two_pass_enabled'] ?? 'true') === 'true',
+      // ── Prompts ───────────────────────────────────────────────────────────
+      visionSystemPrompt: db['llm_vision_system_prompt'] || undefined,
+      verificationSystemPrompt: db['llm_verification_system_prompt'] || undefined,
+      headerLabelPrompt: db['llm_header_label_prompt'] || undefined,
+      adjudicatorPrompt: db['llm_adjudicator_prompt'] || undefined,
+      // ── Rate limits ───────────────────────────────────────────────────────
+      rateLimit: Number(
+        db['smart_upload_rate_limit_rpm'] ||
+        db['llm_rate_limit_rpm'] ||
+        15
+      ),
+      autoApproveThreshold: Number(
+        db['smart_upload_auto_approve_threshold'] ||
+        db['llm_auto_approve_threshold'] ||
+        90
+      ),
+      skipParseThreshold: Number(
+        db['smart_upload_skip_parse_threshold'] ||
+        db['llm_skip_parse_threshold'] ||
+        60
+      ),
+      // ── Resource limits ───────────────────────────────────────────────────
+      maxPages: Number(db['smart_upload_max_pages'] ?? 20),
+      maxFileSizeMb: Number(db['smart_upload_max_file_size_mb'] ?? 50),
+      maxConcurrent: Number(db['smart_upload_max_concurrent'] ?? 3),
+      // ── MIME types ─────────────────────────────────────────────────────────
+      allowedMimeTypes: parseMimeTypes(db['smart_upload_allowed_mime_types']),
+      // ── Autonomous mode ───────────────────────────────────────────────────
+      enableFullyAutonomousMode: (db['smart_upload_enable_autonomous_mode'] ?? 'false') === 'true',
+      autonomousApprovalThreshold: Number(db['smart_upload_autonomous_approval_threshold'] ?? 95),
+      maxPagesPerPart: Number(db['smart_upload_max_pages_per_part'] ?? 12),
+      sendFullPdfToLlm: (db['smart_upload_send_full_pdf_to_llm'] ?? 'true') === 'true',
+      // ── OCR settings (legacy - superseded by OCR-first settings above) ────────
+      ocrConfidenceThreshold: Number(db['smart_upload_ocr_confidence_threshold'] ?? 60),
+      // ── Budget / cost limits ──────────────────────────────────────────────
+      budgetMaxLlmCalls: Number(db['smart_upload_budget_max_llm_calls_per_session'] ?? 5),
+      budgetMaxInputTokens: Number(db['smart_upload_budget_max_input_tokens_per_session'] ?? 500000),
+      // ── LLM response cache ────────────────────────────────────────────────
+      enableLlmCache: (db['smart_upload_enable_llm_cache'] ?? 'true') === 'true',
+      llmCacheTtlSeconds: Number(db['smart_upload_llm_cache_ttl_seconds'] ?? 86400),
+      // ── Prompt version ─────────────────────────────────────────────────────
+      promptVersion: db['llm_prompt_version'] || PROMPT_VERSION,
+      // ── User prompt templates — DB is the single source of truth ──────────
+      visionUserPrompt: db['llm_vision_user_prompt'] || undefined,
+      visionMetadataOnlyUserPrompt: db['llm_vision_metadata_only_user_prompt'] || undefined,
+      pdfVisionUserPrompt: db['llm_pdf_vision_user_prompt'] || undefined,
+      verificationUserPrompt: db['llm_verification_user_prompt'] || undefined,
+      headerLabelUserPrompt: db['llm_header_label_user_prompt'] || undefined,
+      adjudicatorUserPrompt: db['llm_adjudicator_user_prompt'] || undefined,
+      // ── OCR-first settings (new) ───────────────────────────────────────────
+      enableOcrFirst,
+      textLayerThresholdPct,
+      ocrMode,
+      ocrMaxPages,
+      textProbePages,
+      storeRawOcrText,
+      ocrEngine,
+      ocrRateLimitRpm,
+      llmMaxPages,
+      llmMaxHeaderBatches,
+      secondPassMaxImages,
+    };
+  })();
+
+  return cachedConfigPromise;
 }
 
 /**

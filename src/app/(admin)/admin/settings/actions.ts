@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
+import { clearLLMConfigCache } from '@/lib/llm/config-loader';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
@@ -38,6 +39,7 @@ export async function updateSetting(key: string, value: string) {
       newValues: { key, value: value.substring(0, 100) },
     });
 
+    clearLLMConfigCache();
     revalidatePath('/admin/settings');
     return { success: true };
   } catch (error) {
@@ -68,6 +70,7 @@ export async function updateSettings(settings: Record<string, string>) {
       newValues: { keys: Object.keys(settings) },
     });
 
+    clearLLMConfigCache();
     revalidatePath('/admin/settings');
     return { success: true };
   } catch (error) {

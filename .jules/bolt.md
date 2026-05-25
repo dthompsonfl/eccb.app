@@ -8,3 +8,7 @@
 ## 2026-03-09 - N+1 Query Batching in Loops
 **Learning:** When loops execute sequential `findUnique` followed by `update`/`create` operations (e.g. tracking assignments or user states), it exhausts the database connection pool via N+1 queries.
 **Action:** Replace iterative database calls with a single bulk fetch (`findMany({ where: { id: { in: ids } } })`), filter in-memory, and use `validIds.flatMap(...)` to construct an array of `update`/`create` operations to pass into a single `prisma.$transaction(operations)`.
+
+## 2026-03-13 - LLM Configuration Caching and Parallelization
+**Learning:** Frequent database reads of system configuration and sequential fetching of multiple secrets (API keys) introduce significant latency and database pressure, especially in background workers. Caching the configuration promise for a short TTL and parallelizing secret fetches reduces DB hits and total latency.
+**Action:** Implement memory caching for configuration loaders and use `Promise.all` for independent parallel database lookups. Ensure cache invalidation is handled in all relevant update paths.

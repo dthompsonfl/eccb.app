@@ -9,6 +9,7 @@ import { encryptSecret, decryptSecret, hashSecret } from '@/lib/crypto';
 import { logger } from '@/lib/logger';
 import { LLM_PROVIDERS, type LLMProviderValue } from './providers';
 import { randomUUID } from 'crypto';
+import { clearLLMConfigCache } from './config-loader';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -167,6 +168,7 @@ async function setPrimaryKeyId(slug: LLMProviderValue, keyId: string): Promise<v
     update: { value: keyId, updatedBy: 'system' },
     create: { key: primaryKeySettingKey(slug), value: keyId, updatedBy: 'system' },
   });
+  clearLLMConfigCache();
 }
 
 // ─── CRUD Operations ─────────────────────────────────────────
@@ -287,6 +289,10 @@ export async function updateApiKey(
     await setPrimaryKeyId(slug, id);
   }
 
+  // Clear cache when API key is updated even if it's not primary,
+  // as it might be used as fallback or become primary later.
+  clearLLMConfigCache();
+
   const primaryId = await getPrimaryKeyId(slug);
   return toRecord(row, primaryId === id);
 }
@@ -304,6 +310,7 @@ export async function deleteApiKey(id: string): Promise<void> {
   await prisma.aPIKey.delete({ where: { id } });
 
   const slug = existing.AIProvider.providerId as LLMProviderValue;
+  clearLLMConfigCache();
 
   // If the deleted key was primary, promote the next active key
   const primaryId = await getPrimaryKeyId(slug);
