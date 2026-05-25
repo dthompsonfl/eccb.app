@@ -153,17 +153,14 @@ export function AnnotationLayer() {
       if (type === Tool.HIGHLIGHTER) {
         ctx.globalCompositeOperation = 'multiply';
         ctx.globalAlpha = 0.4;
-      } else if (type === Tool.ERASER) {
+      } else if (type === Tool.ERASER || type === Tool.WHITEOUT) {
         ctx.globalCompositeOperation = 'destination-out';
-      } else if (type === Tool.WHITEOUT) {
-        // P0 FIX: Whiteout paints opaque white (not transparent erase)
-        ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = 1;
       } else {
         ctx.globalAlpha = opacity || 1;
       }
 
-      ctx.strokeStyle = type === Tool.WHITEOUT ? '#ffffff' : color;
+      ctx.strokeStyle = color;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
