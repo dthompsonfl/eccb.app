@@ -1018,6 +1018,7 @@ async function processSecondPass(job: Job<SmartUploadSecondPassJobData>): Promis
             provider: adjConfig.provider,
             model: adjConfig.model,
             error: adjError instanceof Error ? adjError.message : String(adjError),
+            recommendation: 'Operator should retry with alternative provider or manually review',
           });
           throw adjError;
         }
@@ -1168,6 +1169,7 @@ Include a "corrections" field explaining any corrections made from the first pas
             provider: adjConfig.provider,
             model: adjConfig.model,
             error: adjError instanceof Error ? adjError.message : String(adjError),
+            recommendation: 'Operator should retry with alternative provider or manually review',
           });
           throw adjError;
         }
