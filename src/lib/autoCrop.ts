@@ -151,13 +151,17 @@ export async function calculateTextCrop(
       const width = item.width || 0;
       const height = item.height || 10; // Default height if not specified
 
-      // PDF coordinates have origin at bottom-left, so we need to convert
-      const pdfY = viewport.height - y;
+      // PDF coordinates have origin at bottom-left (y increases upwards)
+      // Web coordinates have origin at top-left (y increases downwards)
+      const itemMinX = x;
+      const itemMaxX = x + width;
+      const itemMinY = viewport.height - (y + height);
+      const itemMaxY = viewport.height - y;
 
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x + width > maxX) maxX = x + width;
-      if (pdfY - height > maxY) maxY = pdfY - height;
+      if (itemMinX < minX) minX = itemMinX;
+      if (itemMinY < minY) minY = itemMinY;
+      if (itemMaxX > maxX) maxX = itemMaxX;
+      if (itemMaxY > maxY) maxY = itemMaxY;
     }
 
     // Add margin
@@ -169,8 +173,8 @@ export async function calculateTextCrop(
     return {
       x: minX,
       y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
+      width: Math.max(0, maxX - minX),
+      height: Math.max(0, maxY - minY),
     };
   } catch {
     // If text extraction fails, return full page
