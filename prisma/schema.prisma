@@ -325,7 +325,7 @@ model MusicFile {
   uploadedAt          DateTime           @default(now())
   uploadedBy          String?
   contentHash         String?
-  extractedMetadata   String?            @db.LongText
+  extractedMetadata   Json?
   ocrText             String?            @db.Text
   originalUploadId    String?
   source              String?
@@ -373,7 +373,7 @@ model SmartUploadSession {
   fileSize            Int
   mimeType            String
   storageKey          String
-  extractedMetadata   String?                         @db.LongText
+  extractedMetadata   Json?
   confidenceScore     Int?
   status              SmartUploadStatus               @default(PENDING_REVIEW)
   uploadedBy          String
@@ -382,22 +382,22 @@ model SmartUploadSession {
   createdAt           DateTime                        @default(now())
   updatedAt           DateTime                        @updatedAt
   autoApproved        Boolean                         @default(false)
-  cuttingInstructions String?                         @db.LongText
+  cuttingInstructions Json?
   firstPassRaw        String?                         @db.LongText
-  llmModelParams      String?                         @db.LongText
+  llmModelParams      Json?
   llmProvider         String?
   llmVerifyModel      String?
   llmVisionModel      String?
   parseStatus         String?
-  parsedParts         String?                         @db.LongText
+  parsedParts         Json?
   secondPassRaw       String?                         @db.LongText
-  secondPassResult    String?                         @db.LongText
+  secondPassResult    Json?
   secondPassStatus    String?
-  tempFiles           String?                         @db.LongText
+  tempFiles           Json?
   routingDecision     String?
   llmPromptVersion    String?
   adjudicatorRaw      String?                         @db.LongText
-  adjudicatorResult   String?                         @db.LongText
+  adjudicatorResult   Json?
   adjudicatorStatus   String?
   finalConfidence     Int?
   llmAdjudicatorModel String?
@@ -407,7 +407,7 @@ model SmartUploadSession {
   /// SHA-256 of the original uploaded PDF bytes (hex). Used for fast exact-duplicate detection.
   sourceSha256        String?                         @db.Char(64)
   /// JSON array of strategy attempts: [{strategy, confidence, failureReasons, durationMs, timestamp}]
-  strategyHistory     String?                         @db.LongText
+  strategyHistory     Json?
   /// OCR engine used: tesseract, ocrmypdf, vision_api, native
   ocrEngineUsed       String?
   /// OCR mode used: header, full, both

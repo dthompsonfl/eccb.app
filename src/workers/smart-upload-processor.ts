@@ -1187,7 +1187,7 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
           await prisma.smartUploadSession.update({
             where: { uploadSessionId: sessionId },
             data: {
-              extractedMetadata: { ...extraction, notes: failureNote } as any,
+          extractedMetadata: (deepCloneJSON({ ...extraction, notes: failureNote }) as any),
               confidenceScore: Math.min(extraction.confidenceScore, 10),
               routingDecision: 'no_parse_second_pass',
               parseStatus: 'NOT_PARSED',
@@ -1381,13 +1381,13 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
       await prisma.smartUploadSession.update({
         where: { uploadSessionId: sessionId },
         data: {
-          extractedMetadata: JSON.parse(JSON.stringify(extraction)) as any,
+          extractedMetadata: (deepCloneJSON(extraction) as any),
           confidenceScore: extraction.confidenceScore,
           routingDecision: 'no_parse_second_pass',
           parseStatus: 'NOT_PARSED',
           secondPassStatus: 'QUEUED',
           requiresHumanReview: true,
-          cuttingInstructions: JSON.parse(JSON.stringify(instructionValidation.instructions)) as any,
+          cuttingInstructions: (deepCloneJSON(instructionValidation.instructions) as any),
           llmProvider: llmConfig.provider,
           llmVisionModel: llmConfig.visionModel,
           llmVerifyModel: llmConfig.verificationModel,
@@ -1778,24 +1778,24 @@ export async function processSmartUpload(job: Job<SmartUploadProcessData>): Prom
     await prisma.smartUploadSession.update({
       where: { uploadSessionId: sessionId },
       data: {
-        extractedMetadata: deepCloneJSON(extraction) as any,
+        extractedMetadata: (deepCloneJSON(extraction) as any),
         confidenceScore: extraction.confidenceScore,
         finalConfidence,
         routingDecision,
         parseStatus: 'PARSED',
-        parsedParts: deepCloneJSON(parsedParts) as any,
-        cuttingInstructions: deepCloneJSON(extraction.cuttingInstructions ?? normalizedInstructionsOne) as any,
-        tempFiles: deepCloneJSON(tempFiles) as any,
+        parsedParts: (deepCloneJSON(parsedParts) as any),
+        cuttingInstructions: (deepCloneJSON(extraction.cuttingInstructions ?? normalizedInstructionsOne) as any),
+        tempFiles: (deepCloneJSON(tempFiles) as any),
         autoApproved: shouldAutoCommit,
         requiresHumanReview: qualityGateFailed || undefined,
         secondPassStatus: secondPassStatus === 'NOT_NEEDED' ? 'NOT_NEEDED' : secondPassStatus,
         llmProvider: llmConfig.provider,
         llmVisionModel: llmConfig.visionModel,
         llmVerifyModel: llmConfig.verificationModel,
-        llmModelParams: deepCloneJSON({
+        llmModelParams: (deepCloneJSON({
           vision: llmConfig.visionModelParams,
           verification: llmConfig.verificationModelParams,
-        }) as any,
+        }) as any),
         llmPromptVersion: llmConfig.promptVersion || PROMPT_VERSION,
         ...(firstPassRaw ? { firstPassRaw } : {}),
         ocrEngineUsed: ocrProvenance.ocrEngine || ocrProvenance.textLayerEngine || llmConfig.ocrEngine || null,

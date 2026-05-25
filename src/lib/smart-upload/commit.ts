@@ -285,10 +285,10 @@ export async function commitSmartUploadSessionToLibrary(
   }
 
   // ── Prepare metadata ─────────────────────────────────────────────
-  const extractedMetadata = uploadSession.extractedMetadata as ExtractedMetadata | null;
-  const parsedParts = (uploadSession.parsedParts as ParsedPartRecord[] | null) || [];
+  const extractedMetadata = (uploadSession.extractedMetadata as unknown) as ExtractedMetadata | null;
+  const parsedParts = ((uploadSession.parsedParts as unknown) as ParsedPartRecord[] | null) || [];
   const hasPreSplitParts = parsedParts.length > 0;
-  const cuttingInstructions = uploadSession.cuttingInstructions as ExtractedMetadata['cuttingInstructions'] | null;
+  const cuttingInstructions = (uploadSession.cuttingInstructions as unknown) as ExtractedMetadata['cuttingInstructions'] | null;
 
   // Normalize metadata using the normalizer pipeline when we have extracted data
   const normalized = extractedMetadata
@@ -433,7 +433,7 @@ export async function commitSmartUploadSessionToLibrary(
               mimeType: uploadSession.mimeType,
               storageKey: uploadSession.storageKey,
               uploadedBy: approvedBy,
-              extractedMetadata: JSON.stringify(extractedMetadata),
+              extractedMetadata: (extractedMetadata as any),
               originalUploadId: uploadSession.uploadSessionId,
               contentHash: uploadSession.sourceSha256 ?? null,
               version: (existingFile.version ?? 1) + 1,
@@ -450,7 +450,7 @@ export async function commitSmartUploadSessionToLibrary(
               mimeType: uploadSession.mimeType,
               storageKey: uploadSession.storageKey,
               uploadedBy: approvedBy,
-              extractedMetadata: JSON.stringify(extractedMetadata),
+              extractedMetadata: (extractedMetadata as any),
               source: 'SMART_UPLOAD',
               originalUploadId: uploadSession.uploadSessionId,
               contentHash: uploadSession.sourceSha256 ?? null,
@@ -467,7 +467,7 @@ export async function commitSmartUploadSessionToLibrary(
             mimeType: uploadSession.mimeType,
             storageKey: uploadSession.storageKey,
             uploadedBy: approvedBy,
-            extractedMetadata: JSON.stringify(extractedMetadata),
+            extractedMetadata: (extractedMetadata as any),
             source: 'SMART_UPLOAD',
             originalUploadId: uploadSession.uploadSessionId,
             contentHash: uploadSession.sourceSha256 ?? null,

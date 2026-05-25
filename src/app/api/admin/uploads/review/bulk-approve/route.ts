@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     const skipped: { id: string; reason: string }[] = [];
 
     for (const uploadSession of uploadSessions) {
-      const extractedMetadata = uploadSession.extractedMetadata as ExtractedMetadata | null;
+      const extractedMetadata = (uploadSession.extractedMetadata as unknown) as ExtractedMetadata | null;
 
       // Skip sessions with no usable title
       if (!extractedMetadata?.title?.trim()) {

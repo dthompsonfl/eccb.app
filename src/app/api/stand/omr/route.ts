@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
     if (musicFile.extractedMetadata && !validated.forceReprocess) {
       return NextResponse.json({
         success: true,
-        metadata: JSON.parse(musicFile.extractedMetadata),
+        metadata: (musicFile.extractedMetadata as unknown) as OMRMetadata,
         cached: true,
       });
     }
@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
     await prisma.musicFile.update({
       where: { id: validated.musicFileId },
       data: {
-        extractedMetadata: JSON.stringify(metadata),
+        extractedMetadata: (metadata as any),
       },
     });
 
@@ -254,7 +254,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       processed: true,
-      metadata: JSON.parse(musicFile.extractedMetadata),
+      metadata: (musicFile.extractedMetadata as unknown) as OMRMetadata,
     });
   } catch (error) {
     console.error('Error fetching OMR metadata:', error);
@@ -462,7 +462,7 @@ Be conservative - only include fields you can determine with high confidence.`,
     ...parsed,
     processedAt: new Date().toISOString(),
     provider: 'openai',
-  };
+  } as OMRMetadata;
 }
 
 /**

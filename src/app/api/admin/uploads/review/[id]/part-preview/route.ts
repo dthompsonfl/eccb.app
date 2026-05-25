@@ -90,11 +90,7 @@ export async function GET(
     // Parse parsedParts JSON and verify the part storage key belongs to this session
     let parsedParts: ParsedPart[] = [];
     if (uploadSession.parsedParts) {
-      try {
-        parsedParts = JSON.parse(uploadSession.parsedParts) as ParsedPart[];
-      } catch {
-        logger.warn('Failed to parse parsedParts JSON', { sessionId: id });
-      }
+      parsedParts = (uploadSession.parsedParts as unknown) as ParsedPart[];
     }
 
     const partExists = parsedParts.some((part) => part.storageKey === partStorageKey);

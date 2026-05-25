@@ -339,7 +339,7 @@ function shuffleArray<T>(array: T[]): T[] {
 
 async function finalizeSmartUploadSession(
   sessionId: string,
-  smartSession: { parseStatus: string | null; routingDecision: string | null; fileName: string; uploadSessionId: string; extractedMetadata: unknown },
+  smartSession: { parseStatus: string | null; routingDecision: string | null; fileName: string; uploadSessionId: string; extractedMetadata: any },
   updateData: Record<string, unknown>,
   finalMetadata: ExtractedMetadata,
   finalConfidence: number,
@@ -359,7 +359,7 @@ async function finalizeSmartUploadSession(
   // based on deterministic (text-layer) segmentation. When the second pass LLM
   // produces cutting instructions, the LLM's confidence supersedes the first-pass
   // deterministic confidence — the segmentation quality is now LLM-driven.
-  const firstPassMeta = smartSession.extractedMetadata as ExtractedMetadata | null;
+  const firstPassMeta = (smartSession.extractedMetadata as unknown) as ExtractedMetadata | null;
   const firstPassSegConf = firstPassMeta?.segmentationConfidence;
   const hasSecondPassInstructions = (finalMetadata.cuttingInstructions?.length ?? 0) > 0;
 
@@ -765,13 +765,13 @@ async function processSecondPass(job: Job<SmartUploadSecondPassJobData>): Promis
     }
 
     // FIX: Treat fields as JSON directly, NOT strings (Bug #2 fix)
-    const metadata = smartSession.extractedMetadata as ExtractedMetadata | null;
+    const metadata = (smartSession.extractedMetadata as unknown) as ExtractedMetadata | null;
     if (!metadata) {
       throw new Error('Missing extracted metadata');
     }
 
-    const parsedParts = smartSession.parsedParts as ParsedPartRecord[] | null;
-    const cuttingInstructions = smartSession.cuttingInstructions as CuttingInstruction[] | null;
+    const parsedParts = (smartSession.parsedParts as unknown) as ParsedPartRecord[] | null;
+    const cuttingInstructions = (smartSession.cuttingInstructions as unknown) as CuttingInstruction[] | null;
 
     let verificationPrompt: string = '';
 
