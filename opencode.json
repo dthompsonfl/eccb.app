@@ -75,7 +75,7 @@
         "bash": {
           "npm *": "allow",
           "yarn *": "allow",
-          "pnpm *": "allow",
+          "npm *": "allow",
           "npx *": "allow",
           "git status*": "allow",
           "git log*": "allow",

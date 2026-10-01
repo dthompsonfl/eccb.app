@@ -56,10 +56,14 @@ export async function POST(request: NextRequest) {
 
     const { provider, endpoint, model, apiKey: requestApiKey } = parsed.data;
 
-    const needsApiKey = providerRequiresApiKey(provider);
     let apiKey = requestApiKey?.trim() || '';
 
-    if (!apiKey && needsApiKey) {
+    // Providers that do NOT require a key (glm-ocr, ollama, custom) may still
+    // be deployed behind an auth proxy and have a token stored in the API-key
+    // service. Try to load one opportunistically: if none is stored this throws
+    // and is swallowed, leaving apiKey empty, so key-less setups are unchanged.
+    // Without this, a protected local GLM service could never be tested.
+    if (!apiKey) {
       try {
         apiKey = await getPrimaryApiKey(provider as LLMProviderValue);
       } catch {

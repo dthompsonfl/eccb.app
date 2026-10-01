@@ -24,13 +24,6 @@ import { logger } from '@/lib/logger';
 // Types
 // =============================================================================
 
-interface RepairRequest {
-  action: 'reset' | 'migrate' | 'seed' | 'full';
-  force?: boolean;
-  /** Must equal `action` for irreversible operations. See validateDestructiveConfirmation. */
-  confirm?: string;
-}
-
 interface RepairResponse {
   success: boolean;
   phase: SetupPhase;

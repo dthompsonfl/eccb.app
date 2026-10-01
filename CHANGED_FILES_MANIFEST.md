@@ -49,8 +49,8 @@ Total modified/created files: 151
 | `src/app/(admin)/admin/communications/templates/actions.ts` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/communications/templates/new/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/communications/templates/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
-| `src/app/(admin)/admin/contact-submissions/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
-| `src/app/(admin)/admin/contact-submissions/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
+| `src/app/(admin)/admin/contact-submissions/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
+| `src/app/(admin)/admin/contact-submissions/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
 | `src/app/(admin)/admin/events/[id]/attendance/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/events/[id]/edit/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/events/[id]/music/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
@@ -58,10 +58,10 @@ Total modified/created files: 151
 | `src/app/(admin)/admin/events/__tests__/actions.test.ts` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/events/new/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/events/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
-| `src/app/(admin)/admin/gallery/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
-| `src/app/(admin)/admin/gallery/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
-| `src/app/(admin)/admin/leadership/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
-| `src/app/(admin)/admin/leadership/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
+| `src/app/(admin)/admin/gallery/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
+| `src/app/(admin)/admin/gallery/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
+| `src/app/(admin)/admin/leadership/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
+| `src/app/(admin)/admin/leadership/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
 | `src/app/(admin)/admin/members/[id]/edit/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/members/[id]/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/members/actions.ts` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
@@ -84,8 +84,8 @@ Total modified/created files: 151
 | `src/app/(admin)/admin/roles/permissions/actions.ts` | modified | Normalized authorization checks and canonical permission contract. | Permissions and security hardening | Static requirePermission literal scan; requires authz test suite. |
 | `src/app/(admin)/admin/settings/actions.ts` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
 | `src/app/(admin)/admin/settings/page.tsx` | modified | Support change for product completion and release readiness. | Cross-cutting | Static inspection; requires full validation ladder. |
-| `src/app/(admin)/admin/sponsors/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
-| `src/app/(admin)/admin/sponsors/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires pnpm typecheck/build in full env. |
+| `src/app/(admin)/admin/sponsors/actions.ts` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
+| `src/app/(admin)/admin/sponsors/page.tsx` | created | Added admin-managed public CMS workflow. | Public CMS / admin completion | Static route/file inspection; requires npm run typecheck/build in full env. |
 | `src/app/(admin)/admin/users/[id]/page.tsx` | modified | Normalized authorization checks and canonical permission contract. | Permissions and security hardening | Static requirePermission literal scan; requires authz test suite. |
 | `src/app/(admin)/admin/users/actions.ts` | modified | Normalized authorization checks and canonical permission contract. | Permissions and security hardening | Static requirePermission literal scan; requires authz test suite. |
 | `src/app/(admin)/admin/users/new/page.tsx` | modified | Normalized authorization checks and canonical permission contract. | Permissions and security hardening | Static requirePermission literal scan; requires authz test suite. |

@@ -52,24 +52,24 @@ git clone https://github.com/your-org/eccb.app.git
 cd eccb.app
 
 # Install dependencies
-pnpm install --frozen-lockfile
+npm ci
 
 # Create and edit environment configuration
 cp env.example .env
 # Edit .env with real secrets, database URL, storage, and email values
 
 # Validate environment and generate Prisma client
-pnpm run setup
+npm run setup
 
 # Setup database
-pnpm run db:migrate
-pnpm run db:seed
+npm run db:migrate
+npm run db:seed
 
 # Start development server
-pnpm run dev
+npm run dev
 ```
 
-The `pnpm run setup` command validates the current environment and regenerates the Prisma client. It intentionally does not generate production secrets. Create strong secrets with a password manager or `openssl rand -base64 32`, then store them in `.env` or the deployment secret store.
+The `npm run setup` command validates the current environment and regenerates the Prisma client. It intentionally does not generate production secrets. Create strong secrets with a password manager or `openssl rand -base64 32`, then store them in `.env` or the deployment secret store.
 
 ### Setup and Repair System
 
@@ -99,15 +99,15 @@ For detailed setup instructions, see [LOCAL_SETUP.md](./LOCAL_SETUP.md).
 
 | Script | Description |
 |--------|-------------|
-| `pnpm run dev` | Start development server with hot reload |
-| `pnpm run build` | Type-check and build for production |
-| `pnpm run start` | Start production server |
-| `pnpm run lint` | Run ESLint on codebase |
-| `pnpm run test` | Run test suite |
-| `pnpm run setup` | Validate environment and generate Prisma client |
-| `pnpm run db:migrate` | Run database migrations |
-| `pnpm run db:seed` | Seed database with initial data |
-| `pnpm run db:studio` | Open Prisma Studio GUI |
+| `npm run dev` | Start development server with hot reload |
+| `npm run build` | Type-check and build for production |
+| `npm run start` | Start production server |
+| `npm run lint` | Run ESLint on codebase |
+| `npm run test` | Run test suite |
+| `npm run setup` | Validate environment and generate Prisma client |
+| `npm run db:migrate` | Run database migrations |
+| `npm run db:seed` | Seed database with initial data |
+| `npm run db:studio` | Open Prisma Studio GUI |
 
 ## Project Structure
 
@@ -166,10 +166,10 @@ The platform is designed for self-hosting on Ubuntu 22.04 LTS without Docker.
 
 ```bash
 # Build for production
-pnpm run build
+npm run build
 
 # Start production server
-pnpm run start
+npm run start
 ```
 
 For complete deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
@@ -226,10 +226,10 @@ All application settings are managed through an intuitive browser-based admin pa
 
 ```bash
 # Run all tests
-pnpm run test
+npm run test
 
 # Run with coverage
-pnpm run test:coverage
+npm run test:coverage
 
 # Run specific test
 npx vitest run path/to/test.test.ts
@@ -239,8 +239,8 @@ npx vitest run path/to/test.test.ts
 
 1. Create a feature branch: `git checkout -b feat/description`
 2. Make changes following the code style in [AGENTS.md](./AGENTS.md)
-3. Run tests: `pnpm run test`
-4. Run linting: `pnpm run lint`
+3. Run tests: `npm run test`
+4. Run linting: `npm run lint`
 5. Submit a pull request
 
 ## License

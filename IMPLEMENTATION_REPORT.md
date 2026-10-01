@@ -9,7 +9,7 @@
 - Existing behavior preserved:
   - Existing page, announcement, asset, member, event, music, upload, and stand surfaces were preserved. New public CMS functionality was added without replacing existing generic page CMS.
 - Generated-code/source-of-truth notes:
-  - Prisma schema and migration were updated. `@prisma/client` must be regenerated with `pnpm run db:generate` before typechecking/building.
+  - Prisma schema and migration were updated. `@prisma/client` must be regenerated with `npm run db:generate` before typechecking/building.
 
 ## Changes made
 
@@ -37,14 +37,14 @@ See `CHANGED_FILES_MANIFEST.md` for the full file-level manifest.
 | Static runtime permission scan | `src/app`, `src/components`, `src/lib` | pass | No non-test `requirePermission('literal')` runtime calls remain in the scanned source. |
 | Static public broken-link scan | `src` | pass | Reviewed dead links to `/auditions`, `/about/history`, `/join`, and public `/music` removed from changed surfaces. |
 | Static placeholder/debug scan | reviewed public/admin surfaces | pass | No reviewed `coming soon`, `console.log`, `href="#"`, `TODO`, or `not implemented` strings remain in changed public/admin report surfaces. |
-| `pnpm install --frozen-lockfile` | full repo | not run | `pnpm` and dependencies are unavailable in this container. |
-| `pnpm run db:generate` | Prisma | not run | Requires dependency install. |
-| `pnpm run db:migrate:deploy` | Prisma/MariaDB | not run | Requires database and dependency install. |
-| `pnpm run typecheck` | full repo | not run | Requires dependency install/generated Prisma client. |
-| `pnpm run lint` | full repo | not run | Requires dependency install. |
-| `pnpm run test:run` | Vitest | not run | Requires dependency install. |
-| `pnpm run test:e2e:ci` | Playwright | not run | Requires dependency install, browser binaries, seeded auth user, and running app. |
-| `pnpm run build` | Next.js | not run | Requires dependency install/generated Prisma client. |
+| `npm ci` | full repo | not run | `npm` and dependencies are unavailable in this container. |
+| `npm run db:generate` | Prisma | not run | Requires dependency install. |
+| `npm run db:migrate:deploy` | Prisma/MariaDB | not run | Requires database and dependency install. |
+| `npm run typecheck` | full repo | not run | Requires dependency install/generated Prisma client. |
+| `npm run lint` | full repo | not run | Requires dependency install. |
+| `npm run test:run` | Vitest | not run | Requires dependency install. |
+| `npm run test:e2e:ci` | Playwright | not run | Requires dependency install, browser binaries, seeded auth user, and running app. |
+| `npm run build` | Next.js | not run | Requires dependency install/generated Prisma client. |
 
 ## Failure classification
 
@@ -55,7 +55,7 @@ See `CHANGED_FILES_MANIFEST.md` for the full file-level manifest.
 - Introduced by this change:
   - Unknown until full typecheck, migration, test, E2E, and build validation run in a real environment.
 - Environment/tooling:
-  - `pnpm`, `node_modules`, MariaDB, Redis, Playwright browsers, and generated Prisma client are unavailable here.
+  - `npm`, `node_modules`, MariaDB, Redis, Playwright browsers, and generated Prisma client are unavailable here.
 - Unknown:
   - Any runtime issue requiring the full application stack remains unknown until CI/local validation runs.
 
@@ -69,7 +69,7 @@ See `CHANGED_FILES_MANIFEST.md` for the full file-level manifest.
   - User management now has a canonical `user.manage` permission.
 - Data/contracts/migrations/generated clients:
   - Apply the new migration before using public CMS admin routes.
-  - Run `pnpm run db:generate` after applying schema changes.
+  - Run `npm run db:generate` after applying schema changes.
 - Performance/accessibility/observability:
   - Public pages use ordered, filtered DB queries and render empty states instead of placeholders.
   - Gallery and leadership images require valid alt text/public labels through admin forms.

@@ -21,7 +21,7 @@ Required production secrets include:
 Use constants from `src/lib/auth/permission-constants.ts`. Runtime source must not use legacy colon-delimited permissions.
 
 ```bash
-pnpm run permissions:audit
+npm run permissions:audit
 ```
 
 Legacy aliases exist only as a compatibility bridge while old data/tests are migrated. New runtime code must use canonical constants.

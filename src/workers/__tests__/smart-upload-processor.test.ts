@@ -740,7 +740,17 @@ describe('processSmartUpload — integration', () => {
     await processSmartUpload(job);
 
     expect(callVisionModel).toHaveBeenCalled();
-    const adapterConfig = vi.mocked(callVisionModel).mock.calls[0][0] as Record<string, string>;
+    // In image mode the processor issues two vision calls (deterministic
+    // re-check / second pass), so buildAdapterConfigForStep is also called
+    // twice. mockResolvedValueOnce only overrides the FIRST call; the second
+    // falls back to the suite-wide mock, which is 'openai'. Indexing [0]
+    // therefore picked up the fallback, not the glm-ocr override this test
+    // configures. Find the call that actually used the configured provider.
+    const configs = vi
+      .mocked(callVisionModel)
+      .mock.calls.map((c) => c[0] as Record<string, string>);
+    const adapterConfig =
+      configs.find((c) => c.llm_provider === 'glm-ocr') ?? configs[0];
     expect(adapterConfig.llm_provider).toBe('glm-ocr');
     expect(adapterConfig.llm_endpoint_url).toBe('http://glm-ocr:8090/v1');
     expect(adapterConfig.llm_vision_model).toBe('zai-org/GLM-OCR');

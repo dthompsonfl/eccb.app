@@ -45,7 +45,7 @@ prisma/migrations/20260522000000_public_cms_completion/migration.sql
 
 ## Validation performed in this environment
 
-The container does not have `pnpm`, installed dependencies, MariaDB, Redis, or Playwright browser binaries. Full runtime validation could not be executed here.
+The container does not have `npm`, installed dependencies, MariaDB, Redis, or Playwright browser binaries. Full runtime validation could not be executed here.
 
 Static checks performed:
 
@@ -59,15 +59,15 @@ Static checks performed:
 Run in a real development or CI environment:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm run db:generate
-pnpm run db:migrate:deploy
-pnpm run typecheck
-pnpm run lint
-pnpm run test:run
-pnpm run test:e2e:ci
-pnpm run build
-pnpm run security:audit
+npm ci
+npm run db:generate
+npm run db:migrate:deploy
+npm run typecheck
+npm run lint
+npm run test:run
+npm run test:e2e:ci
+npm run build
+npm run security:audit
 ```
 
 ## Residual risk

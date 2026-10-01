@@ -73,12 +73,12 @@ Delete actions require `cms.delete`.
 After applying the public CMS migration, verify:
 
 ```bash
-pnpm run db:generate
-pnpm run db:migrate:deploy
-pnpm run typecheck
-pnpm run lint
-pnpm run test:run
-pnpm run build
+npm run db:generate
+npm run db:migrate:deploy
+npm run typecheck
+npm run lint
+npm run test:run
+npm run build
 ```
 
 Then smoke-test:

@@ -4,10 +4,10 @@ This application is not considered release-ready until every required gate below
 
 ## Package Manager Contract
 
-The repository uses pnpm as the authoritative package manager. CI and local release checks must use the checked-in `pnpm-lock.yaml`.
+The repository uses npm as the authoritative package manager. CI and local release checks must use the checked-in `package-lock.json`.
 
 ```bash
-pnpm install --frozen-lockfile
+npm ci
 ```
 
 ## Required Local/CI Validation
@@ -15,16 +15,16 @@ pnpm install --frozen-lockfile
 Run these commands in order:
 
 ```bash
-pnpm run setup
-pnpm run db:generate
-pnpm run typecheck
-pnpm run lint
-pnpm run test:run
-pnpm run test:coverage
-pnpm run build
-pnpm run test:e2e:ci
-pnpm run security:audit
-pnpm run validate
+npm run setup
+npm run db:generate
+npm run typecheck
+npm run lint
+npm run test:run
+npm run test:coverage
+npm run build
+npm run test:e2e:ci
+npm run security:audit
+npm run validate
 ```
 
 If a command cannot run in the current environment, document the exact blocker and classify it as one of:
@@ -40,8 +40,8 @@ If a command cannot run in the current environment, document the exact blocker a
 Before production deployment:
 
 ```bash
-pnpm run db:migrate:deploy
-pnpm run db:seed
+npm run db:migrate:deploy
+npm run db:seed
 ```
 
 Production seeding requires an explicitly configured `SUPER_ADMIN_PASSWORD`. Never deploy with placeholders from `env.example`.
@@ -53,8 +53,8 @@ The runtime permission contract is `resource.action.scope` using constants from 
 Required checks:
 
 ```bash
-pnpm run permissions:audit
-pnpm run test:run -- src/lib/auth
+npm run permissions:audit
+npm run test:run -- src/lib/auth
 ```
 
 Release is blocked if runtime source contains colon-delimited permission checks such as `music:read`, `members:read`, or `events:create`.

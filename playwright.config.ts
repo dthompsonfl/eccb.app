@@ -99,7 +99,7 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'pnpm run dev',
+    command: 'npm run dev',
     url: playwrightBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

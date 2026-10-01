@@ -10,7 +10,7 @@ Updated:
 
 - `package.json`
 - `package-lock.json`
-- `pnpm-lock.yaml`
+- `package-lock.json`
 
 Resolution:
 
@@ -44,19 +44,19 @@ Attempted `npm run build`; the previous explicit Server Action errors did not re
 ## Commands to run locally
 
 ```bash
-rm -rf node_modules package-lock.json pnpm-lock.yaml
+rm -rf node_modules package-lock.json package-lock.json
 npm install
 npm run db:generate
 npm run build
 ```
 
-If you prefer pnpm, use:
+If you prefer npm, use:
 
 ```bash
 corepack enable
-pnpm install
-pnpm run db:generate
-pnpm run build
+npm ci
+npm run db:generate
+npm run build
 ```
 
 Do not use `--force` or `--legacy-peer-deps`; the dependency conflict is resolved by the Vite downgrade to the supported Vite 7 line.

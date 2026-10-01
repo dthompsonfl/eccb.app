@@ -15,6 +15,7 @@ import {
   StrokePoint,
   StrokeData,
 } from '@/store/standStore';
+import { useShallow } from 'zustand/react/shallow';
 import { STAMPS, loadStampImage } from '@/lib/stamps';
 
 function generateId(): string {
@@ -54,21 +55,30 @@ export function AnnotationLayer() {
     selectedStampId,
     setSelectedStampId,
     setCurrentTool,
-  } = useStandStore((state) => ({
-    annotations: state.annotations,
-    currentPage: state._currentPage,
-    selectedLayer: state.selectedLayer,
-    editMode: state.editMode,
-    currentTool: state.currentTool,
-    toolColor: state.toolColor,
-    strokeWidth: state.strokeWidth,
-    pressureScale: state.pressureScale,
-    addAnnotation: state.addAnnotation,
-    deleteAnnotation: state.deleteAnnotation,
-    selectedStampId: state.selectedStampId,
-    setSelectedStampId: state.setSelectedStampId,
-    setCurrentTool: state.setCurrentTool,
-  }));
+  } = useStandStore(
+    // useShallow is REQUIRED here. Zustand v5 compares the selector's return
+    // value by reference in useSyncExternalStore. Returning a fresh object
+    // literal on every call made getSnapshot() produce a new value each time,
+    // so React saw a "changed" store on every notification and re-rendered
+    // forever ("Maximum update depth exceeded"). This crashed the Digital Music
+    // Stand's annotation canvas, which is the component that draws every
+    // personal/section/director annotation.
+    useShallow((state) => ({
+      annotations: state.annotations,
+      currentPage: state._currentPage,
+      selectedLayer: state.selectedLayer,
+      editMode: state.editMode,
+      currentTool: state.currentTool,
+      toolColor: state.toolColor,
+      strokeWidth: state.strokeWidth,
+      pressureScale: state.pressureScale,
+      addAnnotation: state.addAnnotation,
+      deleteAnnotation: state.deleteAnnotation,
+      selectedStampId: state.selectedStampId,
+      setSelectedStampId: state.setSelectedStampId,
+      setCurrentTool: state.setCurrentTool,
+    })),
+  );
 
   const pieceId = useStandStore((s) => s.pieces[s.currentPieceIndex]?.id);
 

@@ -685,7 +685,7 @@ describe('validateSmartUploadSettings', () => {
     const result = validateSmartUploadSettings(settings);
 
     expect(result.valid).toBe(false);
-    expect(result.errors.some(e => e.includes('Custom provider requires'))).toBe(true);
+    expect(result.errors.some(e => e.includes('requires an endpoint URL'))).toBe(true);
   });
 
   it('should validate URL format for custom provider endpoint', () => {

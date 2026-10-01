@@ -68,14 +68,14 @@ else
     echo -e "${YELLOW}Please create .env file before starting the application${NC}"
 fi
 
-pnpm install --frozen-lockfile
+npm ci
 
 # ====================================
 # 4. Build Application
 # ====================================
 echo -e "\n${YELLOW}[4/6] Building application...${NC}"
 
-pnpm build
+npm run build
 
 # Copy static files for standalone
 cp -r public .next/standalone/
@@ -86,7 +86,7 @@ cp -r .next/static .next/standalone/.next/
 # ====================================
 echo -e "\n${YELLOW}[5/6] Running database migrations...${NC}"
 
-pnpm prisma migrate deploy
+npx prisma migrate deploy
 
 # ====================================
 # 6. Switch to New Release

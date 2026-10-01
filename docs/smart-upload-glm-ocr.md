@@ -79,12 +79,12 @@ Readiness checks:
 Use the repo-native command set:
 
 ```bash
-pnpm install --no-frozen-lockfile
-pnpm run lint
-pnpm exec tsc --noEmit
-pnpm run test:run
-pnpm run test:smart-upload:fixtures
-pnpm run build
+npm ci
+npm run lint
+npx tsc --noEmit
+npm run test:run
+npm run test:smart-upload:fixtures
+npm run build
 ```
 
 Run E2E only when the environment has the required database, Redis, and Playwright browsers configured.

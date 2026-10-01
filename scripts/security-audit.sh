@@ -19,12 +19,13 @@ EXIT_ON_VULN="${EXIT_ON_VULN:-true}"
 
 cd "$(dirname "$0")/.."
 
-if [[ -f pnpm-lock.yaml ]]; then
-  PACKAGE_MANAGER="pnpm"
-elif [[ -f package-lock.json ]]; then
+# npm is the canonical package manager (see docs/TOOLCHAIN.md). A stray
+# pnpm-lock.yaml is not accepted: it was stale and would install a different
+# dependency tree than the one this repository is tested against.
+if [[ -f package-lock.json ]]; then
   PACKAGE_MANAGER="npm"
 else
-  echo -e "${RED}Error: no supported lockfile found. Expected pnpm-lock.yaml or package-lock.json.${NC}"
+  echo -e "${RED}Error: no supported lockfile found. Expected package-lock.json (see docs/TOOLCHAIN.md).${NC}"
   exit 1
 fi
 
@@ -57,7 +58,7 @@ echo ""
 echo -e "${YELLOW}Remediation:${NC}"
 echo "  1. Review the vulnerable advisory and affected dependency path."
 echo "  2. Prefer a targeted package upgrade over force-upgrading the dependency graph."
-echo "  3. Re-run: pnpm run security:audit"
+echo "  3. Re-run: npm run security:audit"
 echo ""
 
 if [[ "$EXIT_ON_VULN" == "true" ]]; then

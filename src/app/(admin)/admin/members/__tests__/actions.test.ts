@@ -1,3 +1,4 @@
+import { MEMBER_VIEW_ALL } from '@/lib/auth/permission-constants';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { exportMembersToCSV } from '../actions';
 import { prisma } from '@/lib/db';
@@ -171,7 +172,7 @@ describe('Member Actions', () => {
     it('should require permission', async () => {
       await exportMembersToCSV({});
 
-      expect(requirePermission).toHaveBeenCalledWith('members:read');
+      expect(requirePermission).toHaveBeenCalledWith(MEMBER_VIEW_ALL);
     });
   });
 });

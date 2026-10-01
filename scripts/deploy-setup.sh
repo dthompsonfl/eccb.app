@@ -73,11 +73,9 @@ if ! command -v node &> /dev/null; then
     apt-get install -y nodejs
 fi
 
-# Install pnpm globally
-npm install -g pnpm
 
 echo -e "${GREEN}Node.js $(node -v) installed${NC}"
-echo -e "${GREEN}pnpm $(pnpm -v) installed${NC}"
+echo -e "${GREEN}npm $(npm -v) installed${NC}"
 
 # ====================================
 # 4. Configure MariaDB
@@ -310,8 +308,8 @@ echo -e ""
 echo -e "Next steps:"
 echo -e "1. Clone your repository to $APP_DIR/current"
 echo -e "2. Create .env file with production settings"
-echo -e "3. Run 'pnpm install' and 'pnpm build'"
-echo -e "4. Run database migrations: 'pnpm prisma migrate deploy'"
+echo -e "3. Run 'npm ci' and 'npm run build'"
+echo -e "4. Run database migrations: 'npx prisma migrate deploy'"
 echo -e "5. Start the service: 'systemctl start eccb'"
 echo -e "6. (Optional) Setup SSL with: 'certbot --nginx -d $DOMAIN'"
 echo -e ""

@@ -1,3 +1,4 @@
+import { USER_MANAGE } from '@/lib/auth/permission-constants';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   getAllPermissions,
@@ -48,10 +49,19 @@ vi.mock('@/lib/services/audit', () => ({
   auditLog: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/permission-constants', () => ({
-  isValidPermission: vi.fn(),
-  ALL_PERMISSIONS: [],
-}));
+// Partial mock: keep the REAL permission constants so actions that import
+// them (USER_MANAGE, ROLE_MANAGE, …) resolve. A full replacement with only
+// isValidPermission/ALL_PERMISSIONS made every action importing a constant
+// fail with 'No "USER_MANAGE" export is defined on the mock'.
+vi.mock('@/lib/auth/permission-constants', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/auth/permission-constants')>();
+  return {
+    ...actual,
+    isValidPermission: vi.fn(),
+    ALL_PERMISSIONS: [],
+  };
+});
 
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
@@ -90,12 +100,12 @@ describe('Permission Actions', () => {
   });
 
   describe('getAllPermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.permission.findMany).mockResolvedValue([]);
 
       await getAllPermissions();
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return permissions grouped by resource', async () => {
@@ -121,12 +131,12 @@ describe('Permission Actions', () => {
   });
 
   describe('getAllPermissionsList', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.permission.findMany).mockResolvedValue([]);
 
       await getAllPermissionsList();
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return flat list of permissions', async () => {
@@ -143,12 +153,12 @@ describe('Permission Actions', () => {
   });
 
   describe('getUserCustomPermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.userPermission.findMany).mockResolvedValue([]);
 
       await getUserCustomPermissions('user-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return user custom permissions', async () => {
@@ -177,12 +187,12 @@ describe('Permission Actions', () => {
   });
 
   describe('getUserWithPermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
 
       await getUserWithPermissions('user-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return user with roles and custom permissions', async () => {
@@ -208,12 +218,12 @@ describe('Permission Actions', () => {
   });
 
   describe('getUsersWithCustomPermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
       await getUsersWithCustomPermissions();
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return only users with custom permissions', async () => {
@@ -233,7 +243,7 @@ describe('Permission Actions', () => {
   });
 
   describe('getUserEffectivePermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue({
         ...mockUser,
         roles: [],
@@ -242,7 +252,7 @@ describe('Permission Actions', () => {
 
       await getUserEffectivePermissions('user-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return empty map if user not found', async () => {
@@ -350,7 +360,7 @@ describe('Permission Actions', () => {
   });
 
   describe('grantPermission', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(isValidPermission).mockReturnValue(true);
       vi.mocked(prisma.permission.findUnique).mockResolvedValue(mockPermission as any);
       vi.mocked(prisma.userPermission.findUnique).mockResolvedValue(null);
@@ -359,7 +369,7 @@ describe('Permission Actions', () => {
 
       await grantPermission('user-1', 'music.view');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return error for invalid permission', async () => {
@@ -449,7 +459,7 @@ describe('Permission Actions', () => {
   });
 
   describe('revokePermission', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.userPermission.findUnique).mockResolvedValue({
         id: 'up-1',
         userId: 'user-1',
@@ -464,7 +474,7 @@ describe('Permission Actions', () => {
 
       await revokePermission('user-1', 'perm-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return error if permission assignment not found', async () => {
@@ -507,7 +517,7 @@ describe('Permission Actions', () => {
   });
 
   describe('batchGrantPermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(isValidPermission).mockReturnValue(true);
       vi.mocked(prisma.permission.findMany).mockResolvedValue([mockPermission] as any);
       vi.mocked(prisma.user.findUnique).mockResolvedValue(mockUser as any);
@@ -516,7 +526,7 @@ describe('Permission Actions', () => {
 
       await batchGrantPermissions('user-1', ['music.view']);
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return error for invalid permissions', async () => {
@@ -577,12 +587,12 @@ describe('Permission Actions', () => {
   });
 
   describe('batchRevokePermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.userPermission.deleteMany).mockResolvedValue({ count: 2 });
 
       await batchRevokePermissions('user-1', ['perm-1', 'perm-2']);
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should revoke multiple permissions', async () => {
@@ -601,13 +611,13 @@ describe('Permission Actions', () => {
   });
 
   describe('searchUsersForPermissions', () => {
-    it('should require admin.users.manage permission', async () => {
+    it('should require the canonical user.manage permission', async () => {
       vi.mocked(prisma.user.findMany).mockResolvedValue([]);
       vi.mocked(prisma.user.count).mockResolvedValue(0);
 
       await searchUsersForPermissions('test');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should search users with query', async () => {

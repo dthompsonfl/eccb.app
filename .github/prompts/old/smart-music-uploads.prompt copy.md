@@ -133,8 +133,8 @@ Below is an **exhaustive, end-to-end file checklist** for a fully integrated Sma
 
 ### UPDATE
 
-* `pnpm-lock.yaml`
-  Auto-updated by pnpm.
+* `package-lock.json`
+  Auto-updated by npm.
 
 ---
 

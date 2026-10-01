@@ -1,3 +1,4 @@
+import { USER_MANAGE } from '@/lib/auth/permission-constants';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   assignRole,
@@ -80,7 +81,7 @@ describe('Role Actions', () => {
 
       await getUserRoles();
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return users with their roles', async () => {
@@ -138,7 +139,7 @@ describe('Role Actions', () => {
 
       await getAvailableRoles();
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return all roles with permissions and user count', async () => {
@@ -181,7 +182,7 @@ describe('Role Actions', () => {
 
       await assignRole('user-1', 'role-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return error if role already assigned', async () => {
@@ -279,7 +280,7 @@ describe('Role Actions', () => {
 
       await removeRole('user-1', 'role-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return error if role assignment not found', async () => {
@@ -337,7 +338,7 @@ describe('Role Actions', () => {
 
       await searchUsers('test');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should search users with query', async () => {
@@ -398,7 +399,7 @@ describe('Role Actions', () => {
 
       await getUserWithRoles('user-1');
 
-      expect(requirePermission).toHaveBeenCalledWith('admin.users.manage');
+      expect(requirePermission).toHaveBeenCalledWith(USER_MANAGE);
     });
 
     it('should return user with roles', async () => {

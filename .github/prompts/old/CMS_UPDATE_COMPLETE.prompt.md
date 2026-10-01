@@ -69,7 +69,7 @@ These two issues block CMS operation and must be fixed. In addition, the CMS cod
 - Update the client form component (`PageForm`): toggle `isSubmitting`, display a toast on error, and redirect the user client‑side based on the returned `pageId` instead of relying on server‑side redirects.
 
 ### Additional Diagnostics
-- Run `pnpm dev` and reproduce the hang while watching the terminal for server errors; unhandled promise rejections will surface there.
+- Run `npm dev` and reproduce the hang while watching the terminal for server errors; unhandled promise rejections will surface there.
 - Add temporary `console.log` statements if necessary to trace execution flow.
 
 ---
@@ -130,7 +130,7 @@ For each file listed below, conduct a thorough review. The goal is to ensure the
 ### Production Readiness Items
 - Run `npm run lint` and fix any warnings/errors from the reviewed files, paying particular attention to `src/app/(admin)/admin/pages/actions.ts` (unused vars) and `src/app/actions/cms.ts` (any-type warnings).
 - Run `npm run build` to ensure the project compiles cleanly.
-- Type‑check (`npm run typecheck` or `pnpm tsc --noEmit`).
+- Type‑check (`npm run typecheck` or `npm tsc --noEmit`).
 - Review `prisma/schema.prisma` for appropriate constraints (slug unique, required fields) and verify migrations have been generated and applied.
 - Confirm `seed.ts` or migrations include initial CMS pages and that they load without errors.
 - Search for `CmsService` usage and ensure the public route (`src/app/(public)/[...slug]/page.tsx`) correctly handles reserved slugs, scheduled publishing, and sanitizes HTML.

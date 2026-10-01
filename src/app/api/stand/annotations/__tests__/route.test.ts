@@ -50,6 +50,15 @@ vi.mock('@/lib/db', () => ({
       findUnique: vi.fn().mockResolvedValue({
         id: 'music-1',
       }),
+      // src/lib/stand/access.ts uses findFirst to load the piece and its
+      // assignments when deciding whether the caller may view/download it.
+      // Resolves a piece so `canAccessPiece` grants an active member access
+      // and the tests exercise the real authorization path rather than 404.
+      findFirst: vi.fn().mockResolvedValue({ id: 'music-1' }),
+    },
+    attendance: {
+      // access.ts checks the caller's attendance/RSVP state for a piece.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     member: {
       findFirst: vi.fn().mockResolvedValue({
@@ -63,6 +72,13 @@ vi.mock('@/lib/db', () => ({
     },
     userRole: {
       findMany: vi.fn(),
+      // src/lib/stand/access.ts resolves privileged/leadership roles with
+      // findFirst. Without it every annotations request threw
+      // 'prisma.userRole.findFirst is not a function' and returned 500,
+      // which masked the actual 401/403/201 assertions.
+      // Resolves null by default: the caller is a plain MEMBER, so
+      // director/section-layer checks correctly deny.
+      findFirst: vi.fn().mockResolvedValue(null),
     },
   },
 }));

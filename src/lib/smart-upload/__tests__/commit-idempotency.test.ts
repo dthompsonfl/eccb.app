@@ -311,6 +311,8 @@ describe('Idempotency — Duplicate Commit Handling', () => {
 
     expect(result.wasIdempotent).toBe(true);
     expect(result.musicPieceTitle).toBe('File-Lookup Piece');
+    // The code also flags the session for human review on commit failure,
+    // so assert the fields that matter rather than an exact object.
     expect(prisma.smartUploadSession.update).toHaveBeenCalledWith({
       where: { uploadSessionId: SESSION_ID },
       data: expect.objectContaining({
@@ -410,12 +412,20 @@ describe('Race Condition — P2002 Unique Constraint Recovery', () => {
 
     await expect(commitSmartUploadSessionToLibrary(SESSION_ID)).rejects.toThrow('Commit failed');
 
+    // On a P2002 unique-constraint failure the session is marked FAILED *and*
+    // flagged for human review so it is never left looking auto-committable.
+    // The previous assertion used an exact object with only two fields, so it
+    // broke when that safe-fail behaviour was added.
+    // The code also flags the session for human review on commit failure,
+    // so assert the fields that matter rather than an exact object.
     expect(prisma.smartUploadSession.update).toHaveBeenCalledWith({
       where: { uploadSessionId: SESSION_ID },
-      data: {
+      data: expect.objectContaining({
         commitStatus: 'FAILED',
         commitError: expect.stringContaining('Unique constraint failed'),
-      },
+        requiresHumanReview: true,
+        status: 'FAILED',
+      }),
     });
   });
 });
@@ -433,12 +443,16 @@ describe('Transaction Failure — Error Handling', () => {
 
     await expect(commitSmartUploadSessionToLibrary(SESSION_ID)).rejects.toThrow('Commit failed');
 
+    // The code also flags the session for human review on commit failure,
+    // so assert the fields that matter rather than an exact object.
     expect(prisma.smartUploadSession.update).toHaveBeenCalledWith({
       where: { uploadSessionId: SESSION_ID },
-      data: {
+      data: expect.objectContaining({
         commitStatus: 'FAILED',
         commitError: 'Database connection lost',
-      },
+        requiresHumanReview: true,
+        status: 'FAILED',
+      }),
     });
   });
 
@@ -506,12 +520,16 @@ describe('Transaction Failure — Error Handling', () => {
 
     await expect(commitSmartUploadSessionToLibrary(SESSION_ID)).rejects.toThrow('Commit failed');
 
+    // The code also flags the session for human review on commit failure,
+    // so assert the fields that matter rather than an exact object.
     expect(prisma.smartUploadSession.update).toHaveBeenCalledWith({
       where: { uploadSessionId: SESSION_ID },
-      data: {
+      data: expect.objectContaining({
         commitStatus: 'FAILED',
         commitError: 'connect ECONNREFUSED 127.0.0.1:3306',
-      },
+        requiresHumanReview: true,
+        status: 'FAILED',
+      }),
     });
   });
 });

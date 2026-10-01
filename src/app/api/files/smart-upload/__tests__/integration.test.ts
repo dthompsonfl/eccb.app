@@ -11,6 +11,25 @@
  * @fileoverview Enterprise-grade integration test suite for Smart Upload
  */
 
+// This suite exercises a SERVER Route Handler, so it must run in the Node
+// environment, not jsdom.
+//
+// The global vitest config sets `environment: 'jsdom'` for component tests.
+// Under jsdom, `File` is jsdom's implementation while NextRequest's
+// request.formData() is undici's. The two are not interchangeable, so
+// undici's multipart parser aborts with
+//
+//   assert(typeof value === "string" && webidl.is.USVString(value)
+//          || webidl.is.File(value))
+//
+// for ANY multipart body — even one built from the runtime's own FormData.
+// That throw happens inside request.formData() before any route logic runs, so
+// all 12 upload tests received a 500 instead of their expected
+// 202/400/409/503. Verified: identical code passes with
+// `// @vitest-environment node` and fails under jsdom.
+//
+// @vitest-environment node
+
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import type { Job } from 'bullmq';
@@ -330,32 +349,46 @@ function createMockPdfBuffer(size: number = 1024, corrupt: boolean = false): Buf
 }
 
 /**
- * Build a multipart upload request
+ * Build a multipart upload request.
+ *
+ * Uses the runtime's own FormData/File rather than hand-rolled multipart bytes.
+ * These tests run in the jsdom environment, where NextRequest (undici) rejects a
+ * raw hand-built multipart body inside request.formData() with
+ *
+ *   assert(typeof value === "string" && webidl.is.USVString(value)
+ *          || webidl.is.File(value))
+ *
+ * which is thrown before ANY route logic runs. Every downstream assertion then
+ * saw a 500 instead of the real 202/400/409/503. Constructing a genuine
+ * FormData lets the platform serialise the boundary itself. This is the same
+ * approach the passing assets upload tests use.
+ *
+ * Extra headers (e.g. CSRF) are still applied; only Content-Type is left to the
+ * runtime because it must carry the generated boundary.
  */
 function buildUploadRequest(
   filename: string = 'Test Score.pdf',
   content?: Buffer,
   headers?: Record<string, string>
 ): NextRequest {
-  const boundary = '----FormBoundaryECCBTest12345';
   const pdfBytes = content ?? createMockPdfBuffer();
-  const body = Buffer.concat([
-    Buffer.from(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
-      `Content-Type: application/pdf\r\n\r\n`
-    ),
-    pdfBytes,
-    Buffer.from(`\r\n--${boundary}--\r\n`),
-  ]);
+  const file = new File([new Uint8Array(pdfBytes)], filename, {
+    type: 'application/pdf',
+  });
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  // Drop any caller-supplied Content-Type/Content-Length: the runtime sets
+  // them from the FormData it serialises, and a mismatched boundary breaks
+  // formData() parsing.
+  const { 'content-type': _ct, 'Content-Type': _CT, 'content-length': _cl, 'Content-Length': _CL, ...safeHeaders } =
+    headers ?? {};
 
   return new NextRequest('http://localhost:3000/api/files/smart-upload', {
     method: 'POST',
-    headers: {
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
-      ...headers,
-    },
-    body,
+    headers: safeHeaders as Record<string, string>,
+    body: formData,
   });
 }
 

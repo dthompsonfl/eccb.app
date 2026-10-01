@@ -3,14 +3,14 @@
 ## Command Contract
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm run setup
-pnpm run typecheck
-pnpm run lint
-pnpm run test:run
-pnpm run test:coverage
-pnpm run test:e2e:ci
-pnpm run build
+npm ci
+npm run setup
+npm run typecheck
+npm run lint
+npm run test:run
+npm run test:coverage
+npm run test:e2e:ci
+npm run build
 ```
 
 ## Permission Regression Testing
@@ -18,7 +18,7 @@ pnpm run build
 Runtime code must import permission constants from `src/lib/auth/permission-constants.ts`.
 
 ```bash
-pnpm run permissions:audit
+npm run permissions:audit
 ```
 
 This fails if runtime source reintroduces old colon-delimited permission strings.
@@ -44,7 +44,7 @@ SUPER_ADMIN_PASSWORD=...
 Run:
 
 ```bash
-pnpm run test:e2e:ci
+npm run test:e2e:ci
 ```
 
 ## Failure Classification

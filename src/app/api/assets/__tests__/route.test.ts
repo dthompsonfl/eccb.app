@@ -1,3 +1,11 @@
+// Server Route Handler test: run in the Node environment.
+//
+// Under the global jsdom environment, `File` is jsdom's implementation while
+// NextRequest.formData() is undici's, so undici's multipart parser asserts
+// `webidl.is.File(value)` and throws for any multipart body. request.formData()
+// then rejects and the handler returns 500 instead of the expected 400.
+// @vitest-environment node
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 

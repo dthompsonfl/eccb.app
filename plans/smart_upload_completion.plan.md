@@ -15,7 +15,7 @@ Deliver a production-grade, autonomous Smart Upload pipeline that supports combi
 
 3. Phase 2 — OCR and parsing reliability (new machine readiness)
    3.1 Formalize OCR engine strategy matrix: native text layer -> header/full OCR -> vision fallback; preserve settings-driven toggles (`smart_upload_*`).
-   3.2 Add install-time/runtime health checks for OCR capabilities (npm/pnpm install compatibility + system binary probes) and explicit optional-warning behavior.
+   3.2 Add install-time/runtime health checks for OCR capabilities (npm/npm ci compatibility + system binary probes) and explicit optional-warning behavior.
    3.3 Publish machine bootstrap checklist and verification script outputs for OCR readiness. *depends on 1; parallel with 4*
 
 4. Phase 3 — Vision-provider safety and cost control
@@ -45,7 +45,7 @@ Deliver a production-grade, autonomous Smart Upload pipeline that supports combi
 
 8. Phase 7 — Enterprise test and release gates
    8.1 Expand automated coverage by stage: intake, OCR-first, fallback routing, provider gating, split validation, commit idempotency, review operations, chair assignment rules.
-   8.2 Add install verification tests/scripts for new machine bootstrap (`npm/pnpm install` + health checks).
+   8.2 Add install verification tests/scripts for new machine bootstrap (`npm/npm ci` + health checks).
    8.3 Run end-to-end datasets (combined PDF + multi-PDF) and establish release SLO gates.
    8.4 Ship final runbooks and rollback playbooks for operations. *depends on all prior phases*
 
@@ -90,7 +90,7 @@ Deliver a production-grade, autonomous Smart Upload pipeline that supports combi
 
 **Verification**
 1. Dependency/install verification
-   1.1 Run clean-machine install simulation (`pnpm install --frozen-lockfile` and optionally `npm install`) and verify OCR readiness script reports explicit pass/warn states.
+   1.1 Run clean-machine install simulation (`npm ci` and optionally `npm install`) and verify OCR readiness script reports explicit pass/warn states.
    1.2 Verify optional system binaries (`ocrmypdf`, `ghostscript`, `poppler-utils`) are detected and warnings are surfaced, not silent failure.
 2. Provider gating verification
    2.1 Unit tests for capability checks: vision task + text-only model must hard-fail before network call.

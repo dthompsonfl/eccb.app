@@ -157,7 +157,7 @@ cd eccb.app
 
 ```bash
 # Install Node.js dependencies
-pnpm install --frozen-lockfile
+npm ci
 ```
 
 ### Environment Configuration
@@ -167,10 +167,10 @@ Create your `.env` from the checked-in example and then validate it:
 ```bash
 cp env.example .env
 # Edit .env with real local values and strong secrets
-pnpm run setup
+npm run setup
 ```
 
-`pnpm run setup` validates the environment and regenerates the Prisma client. It does not create production secrets; generate those explicitly and keep them out of version control.
+`npm run setup` validates the environment and regenerates the Prisma client. It does not create production secrets; generate those explicitly and keep them out of version control.
 - Idempotent — safe to re-run and preserves existing values
 
 If you prefer manual setup, continue with the steps below:
@@ -227,7 +227,7 @@ openssl rand -base64 32
 
 ```bash
 # Run Prisma migrations
-pnpm run db:migrate
+npm run db:migrate
 
 # Generate Prisma client
 npx prisma generate
@@ -239,10 +239,10 @@ npx prisma generate
 
 ```bash
 # Ensure SUPER_ADMIN_PASSWORD is set in .env, then seed with initial data (admin user, roles, permissions)
-pnpm run db:seed
+npm run db:seed
 ```
 
-> Note: run `pnpm run setup` before building to validate required environment variables and regenerate the Prisma client. Production secrets must be supplied explicitly and kept out of version control.
+> Note: run `npm run setup` before building to validate required environment variables and regenerate the Prisma client. Production secrets must be supplied explicitly and kept out of version control.
 
 ### Create Storage Directory
 
@@ -260,7 +260,7 @@ chmod 755 storage
 
 ```bash
 # Start development server with hot reload
-pnpm run dev
+npm run dev
 ```
 
 Access the application at: http://localhost:3000
@@ -269,24 +269,24 @@ Access the application at: http://localhost:3000
 
 ```bash
 # Build for production
-pnpm run build
+npm run build
 
 # Start production server
-pnpm run start
+npm run start
 ```
 
 ### Available Scripts
 
 | Script | Description |
 |--------|-------------|
-| `pnpm run dev` | Start development server with hot reload |
-| `pnpm run build` | Type-check and build for production |
-| `pnpm run start` | Start production server (requires build first) |
-| `pnpm run lint` | Run ESLint on codebase |
-| `pnpm run test` | Run test suite with Vitest |
-| `pnpm run db:migrate` | Run database migrations |
-| `pnpm run db:seed` | Seed database with initial data |
-| `pnpm run db:studio` | Open Prisma Studio GUI |
+| `npm run dev` | Start development server with hot reload |
+| `npm run build` | Type-check and build for production |
+| `npm run start` | Start production server (requires build first) |
+| `npm run lint` | Run ESLint on codebase |
+| `npm run test` | Run test suite with Vitest |
+| `npm run db:migrate` | Run database migrations |
+| `npm run db:seed` | Seed database with initial data |
+| `npm run db:studio` | Open Prisma Studio GUI |
 
 ## Default Login Credentials
 
@@ -295,7 +295,7 @@ After seeding, the seeder ensures a `SUPER_ADMIN` account exists. Behavior is id
 - **Email:** `admin@eccb.org` (or value of `SUPER_ADMIN_EMAIL`)
 - **Password:** Value of `SUPER_ADMIN_PASSWORD` in `.env`
 
-**Important:** You must set `SUPER_ADMIN_PASSWORD` before running `pnpm run db:seed` — the seeder will refuse to run without it. Change the password immediately after first login and never commit credentials to version control.
+**Important:** You must set `SUPER_ADMIN_PASSWORD` before running `npm run db:seed` — the seeder will refuse to run without it. Change the password immediately after first login and never commit credentials to version control.
 
 ## Troubleshooting
 
@@ -356,10 +356,10 @@ rm -rf .next
 
 # Reinstall dependencies
 rm -rf node_modules
-pnpm install --frozen-lockfile
+npm ci
 
 # Rebuild
-pnpm run build
+npm run build
 ```
 
 ## Health Check
@@ -388,7 +388,7 @@ curl http://localhost:3000/api/health
 
 ```bash
 # Open Prisma Studio (GUI for database)
-pnpm run db:studio
+npm run db:studio
 
 # Create a new migration after schema changes
 npx prisma migrate dev --name description_of_change
@@ -398,10 +398,10 @@ npx prisma migrate dev --name description_of_change
 
 ```bash
 # Run all tests
-pnpm run test
+npm run test
 
 # Run tests with coverage
-pnpm run test:coverage
+npm run test:coverage
 
 # Run specific test file
 npx vitest run path/to/test.test.ts
@@ -411,10 +411,10 @@ npx vitest run path/to/test.test.ts
 
 ```bash
 # Run linter
-pnpm run lint
+npm run lint
 
 # Fix auto-fixable issues
-pnpm run lint -- --fix
+npm run lint -- --fix
 ```
 
 ## Architecture Overview
