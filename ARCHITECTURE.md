@@ -84,7 +84,12 @@ This document outlines the production-grade architecture for a Community Band Ma
 4. **Fail Gracefully**: Graceful degradation and error handling
 5. **Performance**: Edge caching, CDN delivery, optimistic updates
 6. **Accessibility**: WCAG 2.1 AA compliance throughout
-7. **Offline-First**: PWA with service workers for music access
+7. **Resilient Under Intermittency**: Stand sync falls back from WebSocket to
+   polling; OCR and LLM steps degrade to a lower-confidence result that forces
+   human review rather than committing unverified data.
+   *Not yet offline-first:* there is no working PWA. `public/sw.js`
+   self-unregisters and the manifest uses `display: "browser"`, so no music is
+   cached for offline use. Treat offline access as unimplemented.
 
 ---
 

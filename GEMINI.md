@@ -164,8 +164,11 @@ All application settings follow a **database-first** architecture:
 - `stand.websocketEnabled` — Allow WebSocket upgrade
 - `stand.websocketPort` — Port for standalone Socket.IO worker (default: 3005)
 - `stand.pollingIntervalMs` — Fallback interval (default: 5000)
-- `stand.offlineEnabled`, `stand.allowOfflineSync` — Offline features
-- `stand.practiceTrackingEnabled`, `stand.audioSyncEnabled` — Feature toggles
+- `stand.practiceTrackingEnabled` — practice timer toggle (implemented)
+- `stand.offlineEnabled`, `stand.allowOfflineSync` — **NOT IMPLEMENTED**: no
+  working PWA (`public/sw.js` self-unregisters, manifest is
+  `display: browser`), so nothing is cached for offline use
+- `stand.audioSyncEnabled` — **NOT IMPLEMENTED**: no audio link editor
 - `stand.accessPolicy` — `"any_member"` or `"rsvp_only"`
 - Limit settings: `maxAnnotationsPerPage`, `maxStrokeDataBytes`, `maxPdfSizeBytes`, `maxFileSizeMb`
 - `stand.maintenanceMessage` — Message shown when stand is disabled
@@ -205,8 +208,11 @@ All application settings follow a **database-first** architecture:
 - `stand.websocketEnabled` — Allow WebSocket upgrade
 - `stand.websocketPort` — Port for standalone Socket.IO worker (default: 3005)
 - `stand.pollingIntervalMs` — Fallback interval (default: 5000)
-- `stand.offlineEnabled`, `stand.allowOfflineSync` — Offline features
-- `stand.practiceTrackingEnabled`, `stand.audioSyncEnabled` — Feature toggles
+- `stand.practiceTrackingEnabled` — practice timer toggle (implemented)
+- `stand.offlineEnabled`, `stand.allowOfflineSync` — **NOT IMPLEMENTED**: no
+  working PWA (`public/sw.js` self-unregisters, manifest is
+  `display: browser`), so nothing is cached for offline use
+- `stand.audioSyncEnabled` — **NOT IMPLEMENTED**: no audio link editor
 - `stand.accessPolicy` — `"any_member"` or `"rsvp_only"`
 - Limit settings: `maxAnnotationsPerPage`, `maxStrokeDataBytes`, `maxPdfSizeBytes`, `maxFileSizeMb`
 - `stand.maintenanceMessage` — Message shown when stand is disabled

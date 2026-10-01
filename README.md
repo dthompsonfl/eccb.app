@@ -213,7 +213,18 @@ All application settings are managed through an intuitive browser-based admin pa
 - `stand.realtimeMode` - `"polling"` (default) or `"websocket"`
 - `stand.websocketPort` - Port for standalone Socket.IO server (3005)
 - `stand.pollingIntervalMs` - Fallback polling interval (5000ms)
-- And more: offline mode, practice tracking, audio sync, access policies
+- `stand.accessPolicy` - `"any_member"` or `"rsvp_only"`
+- `stand.practiceTrackingEnabled` - Show the practice timer
+- `stand.offlineEnabled` / `stand.allowOfflineSync` - **reserved, not implemented**
+- `stand.audioSyncEnabled` - **reserved, not implemented**
+
+> **Not implemented:** offline/PWA support and Stand audio sync are declared in
+> the settings schema but have no working runtime path. `public/sw.js`
+> deliberately unregisters itself and the manifest uses `display: "browser"`,
+> so there is no installable PWA and nothing is cached for offline use. The
+> `offlineEnabled`, `allowOfflineSync`, and `audioSyncEnabled` settings are read
+> by nothing outside their own unit tests. Do not rely on them; do not advertise
+> them to members until an implementation lands.
 
 **To add new settings:**
 1. Add field to `StandGlobalSettings` in `src/lib/stand/settings.ts`

@@ -21,12 +21,22 @@ export interface StandGlobalSettings {
   realtimeMode: 'polling' | 'websocket' | 'off';
   maxStrokeDataBytes: number;
   maxAnnotationsPerPage: number;
+  /**
+   * NOT IMPLEMENTED. There is no working PWA: `public/sw.js` deliberately
+   * unregisters itself and `public/manifest.json` uses `display: "browser"`,
+   * so nothing is cached for offline use. Nothing reads this flag outside its
+   * own unit test. Kept in the schema only so an existing SystemSetting row
+   * does not break loading. Either implement offline support or delete these
+   * three fields — do not surface an admin toggle for them.
+   */
   offlineEnabled: boolean;
   practiceTrackingEnabled: boolean;
+  /** NOT IMPLEMENTED. No audio link editor exists. See `offlineEnabled`. */
   audioSyncEnabled: boolean;
   defaultAutoTurnDelay: number;
   maxPdfSizeBytes: number;
   maxFileSizeMb: number;
+  /** NOT IMPLEMENTED. No offline annotation queue exists. See `offlineEnabled`. */
   allowOfflineSync: boolean;
   accessPolicy: 'any_member' | 'rsvp_only';
   maintenanceMessage: string | null;
