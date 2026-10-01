@@ -8,7 +8,8 @@
  * - Status reporting
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { csrfValidationResponse } from '@/lib/csrf';
 import { z } from 'zod';
 
 import { checkMigrationStatus, runMigrations, seedDatabase } from '@/lib/setup/schema-automation';
@@ -20,8 +21,12 @@ import {
 } from '@/lib/setup/types';
 import { invalidateSetupStateCache } from '@/lib/setup/state';
 import { logger } from '@/lib/logger';
-import { validateSetupRequest } from '@/lib/setup/setup-guard';
+import {
+  validateSetupRequest,
+  validateSetupReadRequest,
+} from '@/lib/setup/setup-guard';
 import { setEnvVariable } from '@/lib/setup/env-manager';
+import { applyRateLimit } from '@/lib/rate-limit';
 
 // =============================================================================
 // Types
@@ -173,8 +178,9 @@ async function runFullSetup(): Promise<SetupResponse> {
  * Get current setup status
  */
 export async function GET(request: Request): Promise<NextResponse<SetupResponse> | NextResponse> {
-  // Validate request is authorized for setup
-  const authResponse = await validateSetupRequest(request);
+  // Read-only status: uses the weaker read guard so the installer can poll
+  // before any administrator exists. It never mutates and returns no secrets.
+  const authResponse = await validateSetupReadRequest(request);
   if (authResponse) return authResponse;
 
   try {
@@ -205,8 +211,23 @@ export async function GET(request: Request): Promise<NextResponse<SetupResponse>
  * POST /api/setup
  * Run setup operations
  */
-export async function POST(request: Request): Promise<NextResponse<SetupResponse> | NextResponse> {
-  // Validate request is authorized for setup
+export async function POST(request: NextRequest): Promise<NextResponse<SetupResponse> | NextResponse> {
+  // Rate limit: setup actions run migrations and seeding, so they must not be
+  // reachable in a tight loop by an unauthenticated caller.
+  const rateLimitResponse = await applyRateLimit(request, 'adminAction');
+  if (rateLimitResponse) {
+    return rateLimitResponse as NextResponse<SetupResponse>;
+  }
+
+  // CSRF: the proxy does not blanket-exempt this route (only /api/setup/status
+  // and /api/setup/verify are exempt), so validate defensively here too.
+  const csrfError = csrfValidationResponse(request);
+  if (csrfError) {
+    return csrfError as NextResponse<SetupResponse>;
+  }
+
+  // Validate request is authorized for setup. A healthy application does NOT
+  // bypass this guard — see src/lib/setup/setup-guard.ts.
   const authResponse = await validateSetupRequest(request);
   if (authResponse) return authResponse;
 

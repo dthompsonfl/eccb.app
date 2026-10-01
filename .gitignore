@@ -30,8 +30,19 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-# .env*
+# env files — NEVER commit these.
+#
+# A root .env containing live AUTH_SECRET, BETTER_AUTH_SECRET, SETUP_TOKEN,
+# SUPER_ADMIN_PASSWORD and ENCRYPTION_KEY values was committed in 34667e6 while
+# this rule was commented out. It has been untracked; the values must be
+# treated as compromised and rotated (see docs/SECURITY.md).
+#
+# `.env.example` / `env.example` are the only env files that may be committed.
+.env
+.env.*
+*.env
+!.env.example
+!env.example
 
 # vercel
 .vercel

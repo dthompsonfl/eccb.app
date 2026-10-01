@@ -288,9 +288,17 @@ export async function proxy(request: NextRequest) {
   // ── CSRF protection for mutating API requests ────────────────────────────
   // Validate Origin/Referer for all state-changing API calls.
   // Excluded paths: /api/auth (BetterAuth owns its CSRF), /api/setup, /api/health.
+  // Setup status/verify are read-only and are usable before any session exists,
+  // so they stay exempt. The setup MUTATION endpoints (/api/setup itself and
+  // /api/setup/repair) are deliberately NOT exempt: they perform CSRF
+  // validation internally whenever a session cookie is present.
+  const isSetupReadOnlyPath =
+    pathname === '/api/setup/status' || pathname === '/api/setup/verify';
+
   if (
     pathname.startsWith('/api') &&
     !isAuthApiPath(pathname) &&
+    !isSetupReadOnlyPath &&
     !isSetupBypassPath(pathname)
   ) {
     const csrfError = csrfValidationResponse(request);

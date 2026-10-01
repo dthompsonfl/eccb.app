@@ -10,7 +10,7 @@ import { NextResponse } from 'next/server';
 import { getSetupState } from '@/lib/setup/state';
 import { SetupPhase } from '@/lib/setup/types';
 import { logger } from '@/lib/logger';
-import { validateSetupRequest } from '@/lib/setup/setup-guard';
+import { validateSetupReadRequest } from '@/lib/setup/setup-guard';
 
 // =============================================================================
 // Types
@@ -88,7 +88,9 @@ function phaseToMeta(
  * Returns the current setup state as a rich StatusResponse.
  */
 export async function GET(request: Request): Promise<NextResponse<StatusResponse> | NextResponse> {
-  const authResponse = await validateSetupRequest(request);
+  // Read-only: the installer needs progress before any admin exists, so this
+  // uses the weaker read guard. It never mutates and never returns secrets.
+  const authResponse = await validateSetupReadRequest(request);
   if (authResponse) return authResponse;
 
   try {

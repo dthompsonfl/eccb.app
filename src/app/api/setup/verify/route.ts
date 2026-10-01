@@ -12,7 +12,7 @@ import { NextResponse } from 'next/server';
 
 import { verifySetup } from '@/lib/setup/state';
 import { logger } from '@/lib/logger';
-import { validateSetupRequest } from '@/lib/setup/setup-guard';
+import { validateSetupReadRequest } from '@/lib/setup/setup-guard';
 
 interface VerifyResponse {
   success: boolean;
@@ -24,7 +24,8 @@ interface VerifyResponse {
  * Verifies setup completion by force-refreshing state.
  */
 export async function POST(request: Request): Promise<NextResponse<VerifyResponse>> {
-  const authResponse = await validateSetupRequest(request);
+  // Read-only: this only re-reads and reports state, so it uses the read guard.
+  const authResponse = await validateSetupReadRequest(request);
   if (authResponse) return authResponse as NextResponse<VerifyResponse>;
 
   try {

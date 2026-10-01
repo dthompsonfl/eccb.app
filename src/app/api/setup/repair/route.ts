@@ -7,11 +7,16 @@
  * - Fix connection issues
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { repairDatabase, runMigrations, seedDatabase } from '@/lib/setup/schema-automation';
-import { validateSetupRequest } from '@/lib/setup/setup-guard';
+import {
+  validateSetupRequest,
+  validateDestructiveConfirmation,
+} from '@/lib/setup/setup-guard';
+import { applyRateLimit } from '@/lib/rate-limit';
+import { validateCSRF } from '@/lib/csrf';
 import { SetupPhase, type MigrationStatus } from '@/lib/setup/types';
 import { logger } from '@/lib/logger';
 
@@ -22,6 +27,8 @@ import { logger } from '@/lib/logger';
 interface RepairRequest {
   action: 'reset' | 'migrate' | 'seed' | 'full';
   force?: boolean;
+  /** Must equal `action` for irreversible operations. See validateDestructiveConfirmation. */
+  confirm?: string;
 }
 
 interface RepairResponse {
@@ -46,6 +53,7 @@ interface RepairResponse {
 const repairSchema = z.object({
   action: z.enum(['reset', 'migrate', 'seed', 'full']),
   force: z.boolean().optional().default(false),
+  confirm: z.string().optional(),
 });
 
 // =============================================================================
@@ -114,8 +122,36 @@ async function runFullRepair(force: boolean): Promise<RepairResponse> {
  * POST /api/setup/repair
  * Run repair operations
  */
-export async function POST(request: Request): Promise<NextResponse<RepairResponse>> {
-  // Security Check
+export async function POST(request: NextRequest): Promise<NextResponse<RepairResponse>> {
+  // ── Rate limiting ──────────────────────────────────────────────────────
+  // Repair is rare and destructive; a tight budget prevents both brute force
+  // against the setup token and accidental hammering of the database.
+  const rateLimitResponse = await applyRateLimit(request, 'adminAction');
+  if (rateLimitResponse) {
+    return rateLimitResponse as NextResponse<RepairResponse>;
+  }
+
+  // ── CSRF ───────────────────────────────────────────────────────────────
+  // Repair can be driven purely by a setup token (no session cookie), in which
+  // case the token itself is the authorization proof and there is no ambient
+  // credential for a cross-site request to borrow.
+  const hasSessionCookie =
+    request.cookies.has('better-auth.session_token') ||
+    request.cookies.has('__Secure-better-auth.session_token');
+
+  if (hasSessionCookie) {
+    const csrf = validateCSRF(request);
+    if (!csrf.valid) {
+      logger.warn('CSRF validation failed for setup repair', { reason: csrf.reason });
+      return NextResponse.json(
+        { success: false, phase: SetupPhase.CHECKING, progress: 0, error: 'CSRF validation failed' },
+        { status: 403 },
+      );
+    }
+  }
+
+  // ── Authorization ──────────────────────────────────────────────────────
+  // Note: a healthy application does NOT bypass this. See setup-guard.ts.
   const guardResult = await validateSetupRequest(request);
   if (guardResult) {
     return guardResult as NextResponse<RepairResponse>;
@@ -138,9 +174,21 @@ export async function POST(request: Request): Promise<NextResponse<RepairRespons
       );
     }
 
-    const { action, force = false } = validation.data as RepairRequest;
+    const { action, force = false, confirm } = validation.data;
 
-    logger.info(`Repair action: ${action}`, { force });
+    // ── Explicit confirmation for irreversible operations ────────────────
+    // 'reset' drops and recreates the schema; 'full' does the same via repair.
+    // Requiring the caller to echo the action name prevents a stray or
+    // replayed request from destroying data.
+    if (action === 'reset' || action === 'full') {
+      const confirmationError = validateDestructiveConfirmation(action, confirm);
+      if (confirmationError) {
+        logger.warn('Destructive setup repair blocked: missing confirmation', { action });
+        return confirmationError as NextResponse<RepairResponse>;
+      }
+    }
+
+    logger.info(`Repair action: ${action}`, { force, confirmed: action === 'reset' || action === 'full' });
 
     // Handle different repair actions
     switch (action) {
