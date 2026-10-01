@@ -28,6 +28,7 @@ const formSchema = z.object({
   address: z.string().optional(),
   website_url: z.string().url('Invalid URL').optional().or(z.literal('')),
   facebook_url: z.string().url('Invalid URL').optional().or(z.literal('')),
+  instagram_url: z.string().url('Invalid URL').optional().or(z.literal('')),
   youtube_url: z.string().url('Invalid URL').optional().or(z.literal('')),
 });
 
@@ -50,6 +51,7 @@ export function GeneralSettingsForm({ settings }: GeneralSettingsFormProps) {
       address: settings['address'] || '',
       website_url: settings['website_url'] || '',
       facebook_url: settings['facebook_url'] || '',
+      instagram_url: settings['instagram_url'] || '',
       youtube_url: settings['youtube_url'] || '',
     },
   });
@@ -175,6 +177,20 @@ export function GeneralSettingsForm({ settings }: GeneralSettingsFormProps) {
                 <FormLabel>Facebook URL</FormLabel>
                 <FormControl>
                   <Input {...field} placeholder="https://facebook.com/..." />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="instagram_url"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Instagram URL</FormLabel>
+                <FormControl>
+                  <Input {...field} placeholder="https://instagram.com/..." />
                 </FormControl>
                 <FormMessage />
               </FormItem>

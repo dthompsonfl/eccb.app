@@ -25,6 +25,13 @@ const RESERVED_SLUGS = [
   'news',
   'policies',
   'sponsors',
+  // Static legal/accessibility routes. These must always resolve, even in a
+  // database with no CMS content, so the catch-all must never serve them.
+  'privacy',
+  'terms',
+  'accessibility',
+  // Real static routes that would otherwise be shadowed by the catch-all.
+  'auditions',
   'admin',
   'member',
   'api',

@@ -1,5 +1,4 @@
 import { Metadata } from 'next';
-import Link from 'next/link';
 import { requireAuth, getUserWithProfile } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { formatDate } from '@/lib/date';
@@ -7,9 +6,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { AuthorizedDownloadButton } from '@/components/music/authorized-download-button';
 import {
   Music,
-  Download,
   Search,
   FileText,
   Filter,
@@ -187,23 +186,42 @@ export default async function MemberMusicPage() {
                       <h4 className="font-medium text-sm text-muted-foreground mb-2">
                         Download Parts
                       </h4>
-                      
-                      {/* Assigned part */}
+
+                      {/* Assigned part.
+                          Downloads go through AuthorizedDownloadButton, which
+                          POSTs to /api/files/download-url. That endpoint
+                          performs session, CSRF, rate-limit, and per-piece
+                          assignment authorization before returning a
+                          short-lived signed URL. The previous markup linked
+                          straight to `/api/music/download/${fileId}` — a route
+                          that does not exist, and one that would have had no
+                          signed token even if it did. */}
                       {relevantParts.length > 0 ? (
-                        relevantParts.map((part) => (
-                          <Button
-                            key={part.id}
-                            variant="outline"
-                            className="w-full justify-start"
-                            asChild
-                            disabled={!part.file}
-                          >
-                            <Link href={part.file ? `/api/music/download/${part.fileId}` : '#'}>
-                              <Download className="mr-2 h-4 w-4" />
-                              {part.partName} ({part.instrument.name})
-                            </Link>
-                          </Button>
-                        ))
+                        relevantParts.map((part) =>
+                          part.file ? (
+                            <AuthorizedDownloadButton
+                              key={part.id}
+                              storageKey={part.file.storageKey}
+                              label={`${part.partName} (${part.instrument.name})`}
+                              variant="outline"
+                              className="w-full justify-start"
+                            />
+                          ) : (
+                            <Button
+                              key={part.id}
+                              variant="outline"
+                              className="w-full justify-start"
+                              disabled
+                            >
+                              <FileText
+                                className="mr-2 h-4 w-4"
+                                aria-hidden="true"
+                              />
+                              {part.partName} ({part.instrument.name}) —
+                              file unavailable
+                            </Button>
+                          ),
+                        )
                       ) : (
                         <p className="text-sm text-muted-foreground">
                           No parts available for your instruments.
@@ -211,18 +229,20 @@ export default async function MemberMusicPage() {
                       )}
 
                       {/* Full score if available */}
-                      {piece.files.some(f => f.fileType === 'FULL_SCORE') && (
-                        <Button
-                          variant="ghost"
-                          className="w-full justify-start text-muted-foreground"
-                          asChild
-                        >
-                          <Link href={`/api/music/download/${piece.files.find(f => f.fileType === 'FULL_SCORE')?.id}`}>
-                            <FileText className="mr-2 h-4 w-4" />
-                            Full Score
-                          </Link>
-                        </Button>
-                      )}
+                      {(() => {
+                        const fullScore = piece.files.find(
+                          (f) => f.fileType === 'FULL_SCORE',
+                        );
+                        if (!fullScore) return null;
+                        return (
+                          <AuthorizedDownloadButton
+                            storageKey={fullScore.storageKey}
+                            label="Full Score"
+                            variant="ghost"
+                            className="w-full justify-start text-muted-foreground"
+                          />
+                        );
+                      })()}
                     </div>
                   </div>
                 </CardContent>

@@ -1,5 +1,8 @@
 name: E2E Tests
 
+# Canonical package manager: **npm** (see docs/TOOLCHAIN.md), consistent
+# with .github/workflows/test.yml and package-lock.json.
+
 on:
   push:
     branches: [main, develop]
@@ -43,18 +46,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+          node-version: '22'
+          cache: npm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium firefox webkit
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Setup environment
         run: |
@@ -70,21 +69,21 @@ jobs:
           echo "SUPER_ADMIN_PASSWORD=some-secure-test-password-123!" >> .env
 
       - name: Generate Prisma client
-        run: pnpm run db:generate
+        run: npm run db:generate
 
       - name: Run database migrations
-        run: pnpm run db:migrate:deploy
+        run: npm run db:migrate:deploy
 
       - name: Seed database
-        run: pnpm run db:seed
+        run: npm run db:seed
 
       - name: Run E2E setup
-        run: pnpm run test:e2e:setup
+        run: npm run test:e2e:setup
         env:
           CI: true
 
       - name: Run E2E tests
-        run: pnpm run test:e2e:ci
+        run: npm run test:e2e:ci
         env:
           CI: true
           PLAYWRIGHT_BASE_URL: http://localhost:3000
@@ -147,18 +146,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+          node-version: '22'
+          cache: npm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Install Playwright
-        run: pnpm exec playwright install chromium
+        run: npx playwright install chromium
 
       - name: Setup environment
         run: |
@@ -174,16 +169,16 @@ jobs:
           echo "SUPER_ADMIN_PASSWORD=some-secure-test-password-123!" >> .env
 
       - name: Generate Prisma client
-        run: pnpm run db:generate
+        run: npm run db:generate
 
       - name: Run database migrations
-        run: pnpm run db:migrate:deploy
+        run: npm run db:migrate:deploy
 
       - name: Seed database
-        run: pnpm run db:seed
+        run: npm run db:seed
 
       - name: Run performance tests
-        run: pnpm exec playwright test e2e/public/homepage.spec.ts --grep "Performance" --reporter=list
+        run: npx playwright test e2e/public/homepage.spec.ts --grep "Performance" --reporter=list
         env:
           CI: true
 
@@ -219,18 +214,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
+          node-version: '22'
+          cache: npm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Install Playwright
-        run: pnpm exec playwright install chromium
+        run: npx playwright install chromium
 
       - name: Setup environment
         run: |
@@ -246,15 +237,15 @@ jobs:
           echo "SUPER_ADMIN_PASSWORD=some-secure-test-password-123!" >> .env
 
       - name: Generate Prisma client
-        run: pnpm run db:generate
+        run: npm run db:generate
 
       - name: Run database migrations
-        run: pnpm run db:migrate:deploy
+        run: npm run db:migrate:deploy
 
       - name: Seed database
-        run: pnpm run db:seed
+        run: npm run db:seed
 
       - name: Run accessibility tests
-        run: pnpm exec playwright test e2e/public/homepage.spec.ts --grep "Accessibility" --reporter=list
+        run: npx playwright test e2e/public/homepage.spec.ts --grep "Accessibility" --reporter=list
         env:
           CI: true

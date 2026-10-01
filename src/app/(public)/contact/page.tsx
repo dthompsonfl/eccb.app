@@ -1,41 +1,58 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
 import { ContactForm } from '@/components/public/contact-form';
-import { Mail, Phone, MapPin, Clock, Navigation } from 'lucide-react';
+import { Mail, Phone, MapPin, Navigation } from 'lucide-react';
+import { getPublicSettings } from '@/lib/cms/public-settings';
+import type { LucideIcon } from 'lucide-react';
 
 export const metadata: Metadata = {
   title: 'Contact Us',
-  description: 'Get in touch with the Emerald Coast Community Band. We would love to hear from you!',
+  description:
+    'Get in touch with the Emerald Coast Community Band. We would love to hear from you!',
 };
 
-const contactInfo = [
-  {
-    icon: Mail,
-    title: 'Email',
-    content: 'info@eccb.app',
-    href: 'mailto:info@eccb.app',
-  },
-  {
-    icon: Phone,
-    title: 'Phone',
-    content: '(850) 555-1234',
-    href: 'tel:+18505551234',
-  },
-  {
-    icon: MapPin,
-    title: 'Location',
-    content: 'Niceville, FL 32578',
-    href: null,
-  },
-  {
-    icon: Clock,
-    title: 'Rehearsals',
-    content: 'Mondays, 7:00 PM - 9:00 PM',
-    href: null,
-  },
-];
+interface ContactItem {
+  icon: LucideIcon;
+  title: string;
+  content: string;
+  href: string | null;
+}
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  // Contact channels come from SystemSetting (admin General settings) rather
+  // than being hard-coded. Items with no configured value are omitted entirely
+  // instead of rendering a placeholder that visitors would try to use.
+  const settings = await getPublicSettings();
+
+  const contactInfo: ContactItem[] = [];
+
+  if (settings.contactEmail) {
+    contactInfo.push({
+      icon: Mail,
+      title: 'Email',
+      content: settings.contactEmail,
+      href: `mailto:${settings.contactEmail}`,
+    });
+  }
+
+  if (settings.contactPhone && settings.contactPhoneHref) {
+    contactInfo.push({
+      icon: Phone,
+      title: 'Phone',
+      content: settings.contactPhone,
+      href: settings.contactPhoneHref,
+    });
+  }
+
+  if (settings.address) {
+    contactInfo.push({
+      icon: MapPin,
+      title: 'Location',
+      content: settings.address,
+      href: null,
+    });
+  }
+
   return (
     <div className="w-full py-12 md:py-16">
       {/* Hero */}

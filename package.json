@@ -180,5 +180,9 @@
     "minimatch": ">=10.2.1",
     "@eslint/config-array": ">=0.23.0"
   },
-  "packageManager": "npm@11.1.0"
+  "packageManager": "npm@11.1.0",
+  "engines": {
+    "node": ">=22 <27",
+    "npm": ">=11"
+  }
 }

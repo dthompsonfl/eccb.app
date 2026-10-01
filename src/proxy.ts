@@ -19,7 +19,6 @@ const ROUTE_CONFIG: Record<string, RouteConfig> = {
   // Member/dashboard routes - require auth
   '/dashboard': { requiresAuth: true, redirectTo: '/login' },
   '/member': { requiresAuth: true, redirectTo: '/login' },
-  '/music/upload': { requiresAuth: true, redirectTo: '/login' },
 };
 
 // Public routes that don't require authentication
@@ -33,6 +32,10 @@ const PUBLIC_ROUTES = [
   '/news',
   '/policies',
   '/sponsors',
+  // Static legal/accessibility pages linked from the public footer.
+  '/privacy',
+  '/terms',
+  '/accessibility',
   '/login',
   '/signup',
   '/forgot-password',

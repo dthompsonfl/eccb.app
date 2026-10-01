@@ -49,5 +49,11 @@ export interface RoleWithPermissions {
   };
 }
 
-// Permission constant for user management
-export const ADMIN_USERS_MANAGE = 'admin.users.manage';
+// Permission constant for user management.
+//
+// Re-exported from the canonical permission constants instead of being
+// re-declared here as a legacy colon-style alias. Both admin/roles pages gate
+// on requirePermission(ADMIN_USERS_MANAGE), and that alias resolved to
+// USER_MANAGE anyway, so importing the canonical constant keeps a single
+// source of truth and satisfies the permissions:audit release gate.
+export { USER_MANAGE as ADMIN_USERS_MANAGE } from '@/lib/auth/permission-constants';

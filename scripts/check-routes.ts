@@ -96,6 +96,13 @@ function extractLinksFromFile(filePath: string): NavLink[] {
   
   const content = fs.readFileSync(filePath, 'utf-8');
   const fileName = path.basename(filePath);
+
+  // Strip comments before scanning. Otherwise an href quoted inside an
+  // explanatory comment (e.g. documenting a bug that was fixed) is reported
+  // as a broken link, which trains people to ignore this check.
+  const contentNoComments = content
+    .replace(/\/\*[\s\S]*?\*\//g, '') // block comments
+    .replace(/(^|[^:])\/\/.*$/gm, '$1'); // line comments, but not https://
   
   // Match href attributes in JSX
   // Pattern matches: href="/path" or href={'/path'}
@@ -111,9 +118,9 @@ function extractLinksFromFile(filePath: string): NavLink[] {
   
   let match;
   
-  // Extract from href attributes
+  // Extract from href attributes (comment-stripped source).
   for (const pattern of hrefPatterns) {
-    while ((match = pattern.exec(content)) !== null) {
+    while ((match = pattern.exec(contentNoComments)) !== null) {
       const href = match[1];
       // Skip external links, anchors, and dynamic links
       if (href.startsWith('http') || href.startsWith('#') || href.startsWith('mailto:') || href.includes('${')) {
@@ -127,8 +134,8 @@ function extractLinksFromFile(filePath: string): NavLink[] {
     }
   }
   
-  // Extract from navigation objects
-  while ((match = navObjectPattern.exec(content)) !== null) {
+  // Extract from navigation objects (comment-stripped source)
+  while ((match = navObjectPattern.exec(contentNoComments)) !== null) {
     const name = match[1];
     const href = match[2];
     if (!href.startsWith('http') && !href.startsWith('#')) {
@@ -145,20 +152,49 @@ function extractLinksFromFile(filePath: string): NavLink[] {
 
 function extractLinksFromSidebarComponents(): NavLink[] {
   const links: NavLink[] = [];
-  
+
+  // Always check the known navigation shells explicitly so the report stays
+  // readable, then walk the whole components tree so that a link living in
+  // any other component (footer.tsx, a card grid, a CTA button) is still
+  // validated. Hard-coding only the four nav shells is how /privacy, /terms
+  // and /accessibility stayed linked-but-missing for so long: the public
+  // footer was never scanned.
   const sidebarFiles = [
     path.join(COMPONENTS_DIR, 'admin', 'sidebar.tsx'),
     path.join(COMPONENTS_DIR, 'member', 'sidebar.tsx'),
     path.join(COMPONENTS_DIR, 'dashboard', 'sidebar.tsx'),
     path.join(COMPONENTS_DIR, 'public', 'navigation.tsx'),
+    path.join(COMPONENTS_DIR, 'public', 'footer.tsx'),
   ];
-  
+
+  const seenFiles = new Set<string>();
   for (const file of sidebarFiles) {
-    const fileLinks = extractLinksFromFile(file);
-    links.push(...fileLinks);
+    const resolved = path.resolve(file);
+    if (seenFiles.has(resolved) || !fs.existsSync(resolved)) continue;
+    seenFiles.add(resolved);
+    links.push(...extractLinksFromFile(resolved));
   }
-  
-  // Deduplicate by href
+
+  // Walk every .tsx under src/components.
+  const walkComponents = (dir: string): void => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+        walkComponents(full);
+        continue;
+      }
+      if (!entry.name.endsWith('.tsx')) continue;
+      const resolved = path.resolve(full);
+      if (seenFiles.has(resolved)) continue;
+      seenFiles.add(resolved);
+      links.push(...extractLinksFromFile(resolved));
+    }
+  };
+  walkComponents(COMPONENTS_DIR);
+
+  // Deduplicate by href, keeping the first source seen.
   const seen = new Set<string>();
   return links.filter(link => {
     if (seen.has(link.href)) {
@@ -178,20 +214,32 @@ function routeMatches(href: string, routes: Set<string>): { matches: boolean; ma
   if (routes.has(href)) {
     return { matches: true, matchedRoute: href };
   }
-  
+
   // Check for dynamic route matches
   for (const route of routes) {
+    // A catch-all route (`/:slug*`, from the public CMS `[...slug]` page)
+    // compiles to a regex that matches EVERY path. Treating it as a match
+    // made this checker unable to report any broken link at all, which is why
+    // /privacy, /terms and /accessibility could be linked but missing for so
+    // long while the gate reported "0 broken".
+    //
+    // A catch-all is a legitimate route shape, but it resolves through the CMS
+    // at runtime, so it cannot validate a static link. It is therefore only
+    // used as a last resort, and only after every explicit route has failed.
+    if (route.includes('*')) {
+      continue;
+    }
+
     // Convert route pattern to regex
-    const pattern = route
-      .replace(/:[^/]+\*/g, '.*')  // :param* -> .*
-      .replace(/:[^/]+/g, '[^/]+'); // :param -> [^/]+
-    
+    const pattern = route.replace(/:[^/]+/g, '[^/]+');
     const regex = new RegExp(`^${pattern}$`);
     if (regex.test(href)) {
       return { matches: true, matchedRoute: route };
     }
   }
-  
+
+  // Nothing explicit matched. Report as broken rather than deferring to the
+  // CMS catch-all: a static link in a component should point at a real route.
   return { matches: false, matchedRoute: null };
 }
 
