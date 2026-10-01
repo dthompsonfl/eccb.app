@@ -9,6 +9,7 @@
 import { Job } from 'bullmq';
 import { getQueue, initializeQueues } from './queue';
 import { logger } from '@/lib/logger';
+import type { OcrFallbackOptions } from '@/lib/services/ocr-fallback';
 
 // =============================================================================
 // Job Data Interfaces
@@ -149,6 +150,80 @@ export async function queueSmartUploadAutoCommit(sessionId: string): Promise<Job
   );
 
   logger.info('Smart upload auto-commit job queued', { jobId: job.id, sessionId });
+  return job;
+}
+
+// =============================================================================
+// OCR Fallback Queueing
+// =============================================================================
+//
+// The OCR worker (src/workers/ocr-worker.ts) has been started by
+// src/workers/index.ts since it was written, but nothing ever enqueued a job
+// for it: a repo-wide search for "ocr.process" matched only the worker file
+// itself. The worker therefore held a BullMQ consumer and a Redis connection
+// open in production while doing nothing at all.
+//
+// Smart Upload runs OCR inline during processing, and that is the primary
+// path. This queue exists for the RE-RUN case: a librarian wants to re-OCR an
+// already-uploaded session (a different engine, a different render scale, or to
+// fill in a title/composer the first pass missed) without re-uploading the PDF
+// and without blocking a request thread. That is exactly the job shape
+// OcrProcessJobData already describes, so the missing producer belongs here.
+
+export const OCR_JOB_NAMES = {
+  PROCESS: 'ocr.process',
+} as const;
+
+/** Options for a re-OCR request. Mirrors OcrProcessJobData in the worker. */
+export interface OcrProcessJobData {
+  sessionId: string;
+  storageKey?: string;
+  filename?: string;
+  options?: Partial<OcrFallbackOptions>;
+  overwriteExistingMetadata?: boolean;
+  updateParseStatus?: boolean;
+}
+
+/**
+ * Enqueue a non-LLM OCR fallback pass for an existing Smart Upload session.
+ *
+ * Idempotent per session: a pending job for the same session is removed before
+ * enqueuing, so a librarian double-clicking does not run the same OCR twice.
+ * A job that is already active is left alone.
+ */
+export async function queueOcrProcess(data: OcrProcessJobData): Promise<Job> {
+  initializeQueues();
+  const queue = getQueue('OCR');
+
+  if (!queue) {
+    throw new Error('OCR queue not initialized');
+  }
+
+  const jobId = `ocr_process_${data.sessionId}`;
+
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === 'waiting' || state === 'delayed' || state === 'prioritized') {
+      await existing.remove();
+    }
+  }
+
+  const job = await queue.add(OCR_JOB_NAMES.PROCESS, data, {
+    jobId,
+    // OCR is CPU/RAM heavy; keep it behind Smart Upload processing.
+    priority: 3,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 10_000 },
+    removeOnComplete: 100,
+    removeOnFail: false,
+  });
+
+  logger.info('Queued OCR fallback processing', {
+    sessionId: data.sessionId,
+    jobId: job.id,
+  });
+
   return job;
 }
 
