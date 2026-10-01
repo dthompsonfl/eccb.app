@@ -1,0 +1,44 @@
+[Unit]
+Description=ECCB Platform — web (Next.js)
+Documentation=file:///var/www/eccb/DEPLOYMENT.md
+After=network-online.target mariadb.service redis-server.service
+Wants=network-online.target
+Requires=mariadb.service redis-server.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/eccb
+
+# Secrets live in a root-owned, 0600 file — never in the unit or in git.
+EnvironmentFile=/etc/eccb/eccb.env
+
+# `next start` serves the production build. This process is stateless: durable
+# state lives in MariaDB and Redis, so it can be restarted freely.
+ExecStart=/usr/bin/node /var/www/eccb/node_modules/.bin/next start -p 3000
+
+Restart=always
+RestartSec=10
+
+# Give in-flight requests a chance to finish before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Hardening: the web process needs no shell and no new privileges, and should
+# only be able to write to the upload/log directories.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/www/eccb/storage /var/www/eccb/logs
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=eccb-web
+
+[Install]
+WantedBy=multi-user.target

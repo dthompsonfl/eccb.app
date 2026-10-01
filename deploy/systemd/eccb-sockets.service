@@ -1,0 +1,47 @@
+[Unit]
+Description=ECCB Platform — Stand live-sync WebSocket server
+Documentation=file:///var/www/eccb/DEPLOYMENT.md
+After=network-online.target eccb-web.service mariadb.service redis-server.service
+Wants=network-online.target
+Requires=redis-server.service
+
+# NOTE: this unit is OPTIONAL and should only be enabled when
+# ENABLE_WEBSOCKETS=true. With it disabled the Stand uses polling
+# (stand.pollingIntervalMs, default 5000ms) and everything still works.
+# Leaving it enabled while the port is unused just burns a process.
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/eccb
+
+EnvironmentFile=/etc/eccb/eccb.env
+
+# SOCKET_PORT (default 3005). next.config.ts rewrites /api/stand/socket to
+# this port when ENABLE_WEBSOCKETS=true, so the two must agree.
+ExecStart=/usr/bin/node /var/www/eccb/node_modules/.bin/tsx src/server/socket-worker.ts
+
+Restart=always
+RestartSec=10
+
+# Socket.io holds long-lived connections. Give them time to close cleanly on
+# deploy instead of severing them mid-annotation-sync.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/www/eccb/logs
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=eccb-sockets
+
+[Install]
+WantedBy=multi-user.target

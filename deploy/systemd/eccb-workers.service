@@ -1,0 +1,55 @@
+[Unit]
+Description=ECCB Platform — background workers (email, scheduler, Smart Upload, OCR)
+Documentation=file:///var/www/eccb/DEPLOYMENT.md
+After=network-online.target eccb-web.service mariadb.service redis-server.service
+Wants=network-online.target
+# Requires the web service to exist, but not to be running: if the web process
+# is down the workers should still drain their queues.
+Requires=mariadb.service redis-server.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/eccb
+
+EnvironmentFile=/etc/eccb/eccb.env
+
+# This process owns:
+#   - the email queue (verification, reset, invitations, announcements)
+#   - the scheduler (scheduled publication, reminders, cleanup)
+#   - Smart Upload processing and the second-pass / auto-commit queues
+#   - the dedicated OCR fallback queue
+#   - the worker health server (WORKER_HEALTH_PORT, default 3001)
+#
+# Run it via tsx because the worker entrypoint is TypeScript. On a production
+# build you may prefer compiling first and running `node dist/workers/index.js`
+# to avoid paying TS transform cost at boot.
+ExecStart=/usr/bin/node /var/www/eccb/node_modules/.bin/tsx src/workers/index.ts
+
+Restart=always
+RestartSec=10
+
+# Queue draining: BullMQ in-flight jobs need time to finish. A short
+# TimeoutStopSec would abort jobs mid-transaction and leave sessions stuck in
+# IN_PROGRESS, which is the exact corruption the Smart Upload commit path
+# guards against. 60s lets in-flight work complete.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+KillMode=mixed
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/www/eccb/storage /var/www/eccb/logs /var/www/eccb/outbox
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=eccb-workers
+
+[Install]
+WantedBy=multi-user.target
