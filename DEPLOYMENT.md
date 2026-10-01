@@ -192,56 +192,55 @@ npm run db:seed
 npm run build
 ```
 
-### 8. Systemd Service
+### 8. Systemd Services
 
-Create a systemd service for the application:
+The application is **three** long-running processes, not one. A single unit
+running only `next start` leaves the background worker and the WebSocket
+server unstarted, which means no email is sent, the scheduler never runs,
+Smart Upload and OCR never process, and Stand live-sync degrades to polling —
+all without any error surfacing, because every process reports healthy.
 
-```bash
-sudo nano /etc/systemd/system/eccb.service
-```
+| Service | Process | Required |
+| --- | --- | --- |
+| `eccb-web` | `next start` | always |
+| `eccb-workers` | `tsx src/workers/index.ts` | always |
+| `eccb-sockets` | `tsx src/server/socket-worker.ts` | only when `ENABLE_WEBSOCKETS=true` |
 
-```ini
-[Unit]
-Description=ECCB Platform - Next.js Application
-Documentation=https://github.com/your-org/eccb.app
-After=network.target MariaDB.service redis-server.service
-
-[Service]
-Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/var/www/eccb
-Environment="NODE_ENV=production"
-ExecStart=/usr/bin/node /var/www/eccb/node_modules/.bin/next start
-Restart=always
-RestartSec=10
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=eccb
-
-# Security settings
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/www/eccb/storage /var/www/eccb/logs
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-```
+Ready-made unit files ship in [`deploy/systemd/`](deploy/systemd/) with
+hardening, graceful-shutdown timeouts and drain-aware `TimeoutStopSec`. Use
+them instead of the inline unit below.
 
 ```bash
-# Set ownership
+sudo mkdir -p /etc/eccb
+sudo cp deploy/systemd/eccb-*.service /etc/systemd/system/
+sudo install -o root -g root -m 600 deploy/systemd/eccb.env.example /etc/eccb/eccb.env
+sudo ${EDITOR:-nano} /etc/eccb/eccb.env   # fill in real values, then chmod 600
+
 sudo chown -R www-data:www-data /var/www/eccb
-
-# Enable and start service
 sudo systemctl daemon-reload
-sudo systemctl enable eccb
-sudo systemctl start eccb
+sudo systemctl enable --now eccb-web eccb-workers
 
-# Check status
-sudo systemctl status eccb
+# Only if ENABLE_WEBSOCKETS=true:
+sudo systemctl enable --now eccb-sockets
 ```
+
+```bash
+# Check status
+sudo systemctl status eccb-web eccb-workers
+
+# Readiness (the app is up AND its dependencies answer)
+curl -fsS localhost:3000/api/health
+curl -fsS localhost:3001/health    # worker health port
+```
+
+**Do not inline secrets in the unit.** The old unit hard-coded
+`Environment="NODE_ENV=production"`; all credentials belong in
+`/etc/eccb/eccb.env` with mode 0600, owned by root.
+
+See [`deploy/systemd/README.md`](deploy/systemd/README.md) for the full install
+and verification procedure, and for why the worker needs a 60-second stop
+timeout (aborting an in-flight BullMQ job mid-transaction leaves Smart Upload
+sessions stuck in `IN_PROGRESS`).
 
 ## SSL/TLS Setup
 
@@ -489,7 +488,7 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/heal
 
 if [ "$RESPONSE" != "200" ]; then
     echo "Health check failed: HTTP $RESPONSE"
-    sudo systemctl restart eccb
+    sudo systemctl restart eccb-web eccb-workers
     echo "Application restarted"
     exit 1
 fi
@@ -530,10 +529,10 @@ npx prisma migrate deploy
 npm run build
 
 # Restart service
-sudo systemctl restart eccb
+sudo systemctl restart eccb-web eccb-workers
 
 # Verify status
-sudo systemctl status eccb
+sudo systemctl status eccb-web eccb-workers
 ```
 
 ### Zero-Downtime Updates
@@ -624,7 +623,7 @@ sudo systemctl start fail2ban
 
 ```bash
 # Check service status
-sudo systemctl status eccb
+sudo systemctl status eccb-web eccb-workers
 
 # View logs
 sudo journalctl -u eccb -n 50
@@ -703,7 +702,7 @@ sudo systemctl restart nginx
 ┌─────────────────────────▼───────────────────────────┐
 │               Next.js Application                    │
 │                    Port 3000                         │
-│               (systemd: eccb.service)                │
+│               (systemd: eccb-web + eccb-workers)                │
 └───────┬─────────────────┬─────────────────┬─────────┘
         │                 │                 │
 ┌───────▼───────┐ ┌───────▼───────┐ ┌───────▼───────┐
