@@ -28,8 +28,8 @@ CREATE INDEX `session_impersonatedBy_fkey` ON `session`(`impersonatedBy`);
 -- CreateTable
 CREATE TABLE `twoFactor` (
     `id` VARCHAR(191) NOT NULL,
-    `secret` VARCHAR(191) NOT NULL,
-    `backupCodes` VARCHAR(191) NOT NULL,
+    `secret` TEXT NOT NULL,
+    `backupCodes` TEXT NOT NULL,
     `userId` VARCHAR(191) NOT NULL,
 
     UNIQUE INDEX `twoFactor_userId_key`(`userId`),

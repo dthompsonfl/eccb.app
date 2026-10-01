@@ -64,13 +64,20 @@ const httpServer = http.createServer((_req, res) => {
 let isShuttingDown = false;
 
 async function start(): Promise<void> {
-  // Load port from database settings, with env as fallback.
-  // When the preferred port is busy the server rolls forward to the next
-  // free port instead of crashing (see src/lib/ports.ts).
+  // Ports are env-driven (next.config.ts rewrites can only see env, so this
+  // worker must agree with SOCKET_PORT). An explicitly-set SOCKET_PORT wins
+  // over the DB value; otherwise the DB value is used. When the preferred
+  // port is busy the server rolls forward to the next free port instead of
+  // crashing (see src/lib/ports.ts).
+  const socketPortEnv = (process.env.SOCKET_PORT || '').trim();
   const settings = await getStandSettings();
-  const preferredPort =
-    settings.websocketPort ||
-    parseInt(process.env.SOCKET_PORT || String(DEFAULT_PORTS.SOCKET), 10);
+  const preferredPort = socketPortEnv
+    ? parseInt(socketPortEnv, 10)
+    : (settings.websocketPort ||
+      parseInt(process.env.SOCKET_PORT || String(DEFAULT_PORTS.SOCKET), 10));
+  logger.info(
+    `[SocketWorker] Socket port source: ${socketPortEnv ? `SOCKET_PORT env (${preferredPort})` : `database setting (${preferredPort})`}`,
+  );
   
   const pubClient = makeRedisClient(REDIS_URL, 'pub');
   const subClient = makeRedisClient(REDIS_URL, 'sub');

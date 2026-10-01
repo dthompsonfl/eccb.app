@@ -1,6 +1,7 @@
 import { requireAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { MemberSettingsForm } from '@/components/member/settings-form';
+import { TwoFactorSettings } from '@/components/auth/two-factor-settings';
 
 export default async function MemberSettingsPage() {
   const session = await requireAuth();
@@ -13,6 +14,7 @@ export default async function MemberSettingsPage() {
       name: true,
       email: true,
       emailVerified: true,
+      twoFactorEnabled: true,
     },
   });
 
@@ -30,6 +32,8 @@ export default async function MemberSettingsPage() {
       </div>
 
       <MemberSettingsForm user={user} />
+
+      <TwoFactorSettings enabled={user.twoFactorEnabled} />
     </div>
   );
 }

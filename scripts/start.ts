@@ -10,6 +10,7 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createServer } from 'http';
+import { existsSync } from 'fs';
 import net from 'net';
 import 'dotenv/config';
 import { dirname, resolve } from 'path';
@@ -107,7 +108,9 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
     cwd: ROOT_DIR,
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
+    // Never use shell:true with an args array: arguments are concatenated
+    // unescaped (security risk, DEP0190). execvp resolves npx via PATH.
+    shell: false,
   });
 
   // Handle stdout
@@ -165,20 +168,32 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
 
 /**
  * Start the Next.js server on the already-resolved PORT.
+ *
+ * Prefers the standalone build (`.next/standalone/server.js`, required when
+ * `output: 'standalone'` is set) and falls back to `next start` when no
+ * standalone build exists. NODE_ENV is forced to production: `next start`
+ * is a production server and warns on any other value.
  */
 function startNextServer(): void {
+  const standalone = resolve(ROOT_DIR, '.next/standalone/server.js');
+  const useStandalone = existsSync(standalone);
   const managed: ManagedProcess = {
     name: 'next-server',
     process: null,
-    command: 'npx',
-    args: ['next', 'start', '-p', String(PORT)],
+    command: useStandalone ? 'node' : 'npx',
+    args: useStandalone ? [standalone] : ['next', 'start', '-p', String(PORT)],
     env: {
       PORT: String(PORT),
+      ...(useStandalone ? { HOSTNAME: '0.0.0.0' } : {}),
+      NODE_ENV: 'production',
     },
     restartCount: 0,
     lastRestart: 0,
   };
 
+  if (useStandalone) {
+    log('info', 'Using standalone server build (.next/standalone/server.js)');
+  }
   managed.process = spawnProcess(managed.name, managed.command, managed.args, managed.env);
   processes.set(managed.name, managed);
 }

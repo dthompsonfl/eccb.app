@@ -48,6 +48,7 @@ export const AUDIT_ACTIONS = [
   'user.unban',
   'user.password_reset_sent',
   'user.impersonate_start',
+  'user.impersonate_end',
   // Session actions
   'session.revoke',
   'session.revoke_all',

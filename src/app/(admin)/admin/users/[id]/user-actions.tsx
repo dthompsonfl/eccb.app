@@ -167,7 +167,9 @@ export function UserActions({ user }: UserActionsProps) {
       if (data.success) {
         toast.success('Impersonation started. Redirecting...');
         setShowImpersonateDialog(false);
-        // Redirect to member dashboard as the impersonated user
+        // The response carried Set-Cookie headers that established the
+        // impersonation session, so a full reload is required — a
+        // client-side navigation would keep rendering the admin identity.
         window.location.href = '/member';
       } else {
         toast.error(data.error || 'Failed to impersonate user');

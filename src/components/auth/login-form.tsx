@@ -7,7 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Loader2, Mail, Lock } from 'lucide-react';
+import { Loader2, Mail, Lock, ShieldCheck } from 'lucide-react';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
+import { requiresTwoFactorChallenge } from '@/lib/auth/two-factor-client';
 
 // Check if Google OAuth is enabled via environment variable
 const isGoogleAuthEnabled = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === 'true';
@@ -17,6 +19,13 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  // When Better Auth reports `twoFactorRedirect`, the password was correct but
+  // the session was deliberately NOT created. The user must now clear the
+  // second factor before a session exists.
+  const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
   const rawCallbackUrl = searchParams.get('callbackUrl') || '/';
@@ -31,7 +40,7 @@ export function LoginForm() {
     e.preventDefault();
     setLoading(true);
 
-    const { error } = await authClient.signIn.email({
+    const { data, error } = await authClient.signIn.email({
       email,
       password,
       callbackURL: callbackUrl,
@@ -40,11 +49,62 @@ export function LoginForm() {
     if (error) {
       toast.error(error.message || 'Failed to sign in');
       setLoading(false);
-    } else {
-      toast.success('Signed in successfully');
-      router.push(callbackUrl);
-      router.refresh();
+      return;
     }
+
+    // Password accepted but a second factor is required. Better Auth has
+    // already deleted the provisional session and set a short-lived
+    // httpOnly `two_factor` cookie; nothing is authenticated yet.
+    if (requiresTwoFactorChallenge(data)) {
+      setNeedsTwoFactor(true);
+      setLoading(false);
+      return;
+    }
+
+    toast.success('Signed in successfully');
+    router.push(callbackUrl);
+    router.refresh();
+  };
+
+  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const value = twoFactorCode.trim();
+
+    if (useBackupCode ? !value : value.length !== 6) {
+      toast.error(
+        useBackupCode ? 'Enter a backup code' : 'Enter the 6-digit code',
+      );
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = useBackupCode
+        ? await authClient.twoFactor.verifyBackupCode({ code: value, trustDevice })
+        : await authClient.twoFactor.verifyTotp({ code: value, trustDevice });
+
+      if (error) {
+        toast.error(error.message || 'That code was not accepted');
+        setTwoFactorCode('');
+        setLoading(false);
+        return;
+      }
+
+      toast.success('Signed in successfully');
+      // A full reload so the server re-reads the newly established session.
+      window.location.href = callbackUrl;
+    } catch {
+      toast.error('That code was not accepted');
+      setTwoFactorCode('');
+      setLoading(false);
+    }
+  };
+
+  const cancelTwoFactor = () => {
+    setNeedsTwoFactor(false);
+    setTwoFactorCode('');
+    setUseBackupCode(false);
+    setLoading(false);
   };
 
   const handleGoogleSignIn = async () => {
@@ -78,6 +138,101 @@ export function LoginForm() {
       setGoogleLoading(false);
     }
   };
+
+  if (needsTwoFactor) {
+    return (
+      <form onSubmit={handleTwoFactorSubmit} className="space-y-6">
+        <div className="space-y-2 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+            <ShieldCheck className="h-6 w-6 text-primary" aria-hidden="true" />
+          </div>
+          <h3 className="text-lg font-semibold">Two-factor verification</h3>
+          <p className="text-sm text-muted-foreground">
+            {useBackupCode
+              ? 'Enter one of the backup codes you saved when you set this up.'
+              : `Enter the 6-digit code from your authenticator app for ${email}.`}
+          </p>
+        </div>
+
+        {useBackupCode ? (
+          <div className="space-y-2">
+            <Label htmlFor="backup-code">Backup code</Label>
+            <Input
+              id="backup-code"
+              name="backup-code"
+              value={twoFactorCode}
+              onChange={(e) => setTwoFactorCode(e.target.value)}
+              autoComplete="one-time-code"
+              placeholder="XXXXX-XXXXX"
+              className="text-center font-mono"
+              required
+            />
+          </div>
+        ) : (
+          <div className="flex justify-center py-2">
+            <InputOTP
+              maxLength={6}
+              value={twoFactorCode}
+              onChange={setTwoFactorCode}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+            >
+              <InputOTPGroup>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <InputOTPSlot key={i} index={i} />
+                ))}
+              </InputOTPGroup>
+            </InputOTP>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 text-sm">
+          <input
+            id="trust-device"
+            type="checkbox"
+            checked={trustDevice}
+            onChange={(e) => setTrustDevice(e.target.checked)}
+            className="h-4 w-4 rounded border-input"
+          />
+          <Label htmlFor="trust-device" className="font-normal">
+            Don't ask again on this device for 30 days
+          </Label>
+        </div>
+
+        <Button
+          type="submit"
+          className="w-full bg-primary hover:bg-primary/90"
+          disabled={loading}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Verifying...
+            </>
+          ) : (
+            'Verify'
+          )}
+        </Button>
+
+        <div className="flex justify-between text-sm">
+          <button
+            type="button"
+            onClick={() => setUseBackupCode((v) => !v)}
+            className="font-medium text-primary hover:underline"
+          >
+            {useBackupCode ? 'Use authenticator code' : 'Use a backup code'}
+          </button>
+          <button
+            type="button"
+            onClick={cancelTwoFactor}
+            className="text-muted-foreground hover:underline"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">

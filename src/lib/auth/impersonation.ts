@@ -89,8 +89,37 @@ export const IMPERSONATION_BA_ROLE = 'ECCB_SUPPORT';
  */
 export const IMPERSONATION_DURATION_SECONDS = 15 * 60;
 
-/** App role types that confer administrative authority. */
+/**
+ * Values in the `Role.type` enum that confer administrative authority.
+ * Checked against the app's own role tables.
+ */
 const ADMIN_ROLE_TYPES = ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR'] as const;
+
+/**
+ * Values in the `User.role` column that confer administrative authority.
+ *
+ * A different vocabulary from `ADMIN_ROLE_TYPES`: this column is Better Auth's
+ * own admin-plugin role, which the plugin defaults to `'user'` on create and
+ * which is NOT where this app records authority (that lives in Role/UserRole).
+ * It is checked anyway, so a user is not treated as non-privileged merely
+ * because their app roles are incomplete or because the column was set
+ * out-of-band.
+ */
+const ADMIN_BA_ROLES = ['admin', 'super_admin', 'superadmin'] as const;
+
+function isAdminRoleType(type: string | null | undefined): boolean {
+  return !!type && (ADMIN_ROLE_TYPES as readonly string[]).includes(type);
+}
+
+function isAdminBaRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const normalized = role.trim().toLowerCase();
+  // The column may hold a comma-separated list.
+  return normalized
+    .split(',')
+    .map((part) => part.trim())
+    .some((part) => (ADMIN_BA_ROLES as readonly string[]).includes(part));
+}
 
 export interface ImpersonationSuccess {
   success: true;
@@ -179,10 +208,7 @@ export async function startImpersonation(
   // app's role tables so that a user is not treated as non-privileged merely
   // because their app roles are incomplete.
   const targetIsAdmin =
-    (ADMIN_ROLE_TYPES as readonly string[]).includes(target.role ?? '') ||
-    target.roles.some((ur) =>
-      (ADMIN_ROLE_TYPES as readonly string[]).includes(ur.role.type),
-    );
+    isAdminBaRole(target.role) || target.roles.some((ur) => isAdminRoleType(ur.role.type));
 
   if (targetIsAdmin) {
     logger.warn('Impersonation denied: target holds an admin role', {

@@ -352,25 +352,17 @@ describe('User Management Actions', () => {
   });
 
   describe('impersonateUser', () => {
-    it('should not allow impersonating yourself', async () => {
-      const result = await impersonateUser('admin-id');
+    // The old implementation of this action minted a token nobody consumed and
+    // reported success. It no longer performs any authorization of its own, so
+    // these tests pin the redirect away from the dead code path. The real
+    // behaviour (permission checks, privilege-escalation guards, session
+    // creation, cookie forwarding) is covered in
+    // src/lib/auth/__tests__/impersonation.test.ts.
+    it('is no longer an entry point and points callers at the route', async () => {
+      const result = await impersonateUser();
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('You cannot impersonate your own account');
-    });
-
-    it('should not allow impersonating banned users', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({
-        id: 'banned-user',
-        email: 'banned@test.com',
-        name: 'Banned User',
-        banned: true,
-      });
-
-      const result = await impersonateUser('banned-user');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Cannot impersonate a banned user');
+      expect(result.error).toContain('/api/admin/users/impersonate');
     });
   });
 

@@ -1,7 +1,15 @@
 import type { NextConfig } from 'next';
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// Project root (this file lives at the repo root). Pinning it silences the
+// "inferred workspace root" warning caused by a stray lockfile elsewhere
+// (e.g. ~/bun.lock) and keeps standalone tracing scoped to this project.
+const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+  outputFileTracingRoot: projectRoot,
 
   // Proxy WebSocket connections to the standalone socket worker when running.
   // The SOCKET_PORT env var controls which port it binds to (default 3226).

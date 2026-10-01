@@ -49,6 +49,8 @@ const HEALTH_CHECK_PORT = parseInt(process.env.WORKER_HEALTH_PORT || String(DEFA
 const SCHEDULER_INTERVAL_MS = parseInt(process.env.SCHEDULER_INTERVAL_MS || '60000', 10); // 1 minute
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || '86400000', 10); // 24 hours
 const SOCKET_PORT = parseInt(process.env.SOCKET_PORT || String(DEFAULT_PORTS.SOCKET), 10);
+/** True only when SOCKET_PORT was explicitly set in the environment. */
+const SOCKET_PORT_EXPLICIT = (process.env.SOCKET_PORT || '').trim() !== '';
 const ENABLE_WEBSOCKETS = process.env.ENABLE_WEBSOCKETS === 'true';
 
 // ============================================================================
@@ -331,9 +333,13 @@ async function main(): Promise<void> {
   // Optionally start embedded WebSocket worker
   if (ENABLE_WEBSOCKETS) {
     try {
-      // Load websocket port from database settings, with env as fallback
+      // Ports are env-driven (next.config.ts rewrites can only see env, so
+      // the worker must agree with SOCKET_PORT). An explicitly-set
+      // SOCKET_PORT wins over the DB value; otherwise the DB value is used.
+      // Either way listenWithFallback rolls forward when busy.
       const settings = await getStandSettings();
-      const socketPort = settings.websocketPort || SOCKET_PORT;
+      const socketPort = SOCKET_PORT_EXPLICIT ? SOCKET_PORT : (settings.websocketPort || SOCKET_PORT);
+      logger.info(`Socket port source: ${SOCKET_PORT_EXPLICIT ? `SOCKET_PORT env (${SOCKET_PORT})` : `database setting (${socketPort})`}`);
       
       const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
       const makeClient = (label: string) => {

@@ -87,9 +87,12 @@ model Session {
 /// symmetric ciphertext, never plaintext, and are excluded from API output
 /// by the plugin schema (`returned: false`).
 model TwoFactor {
-  id          String @id @default(cuid())
-  secret      String
-  backupCodes String
+  id String @id @default(cuid())
+  // TEXT, not String: Better Auth stores symmetric-ciphertext here, which is
+  // far wider than the 191 chars a Prisma `String` would give. Verified
+  // against the live DB — 10 backup codes overflowed varchar(191) outright.
+  secret      String @db.Text
+  backupCodes String @db.Text
   // Better Auth treats this model as one-to-one: enable always deletes the
   // user's existing rows before inserting, and every read is a findOne on
   // userId. Enforcing that here turns a latent "duplicate enrolment" bug into

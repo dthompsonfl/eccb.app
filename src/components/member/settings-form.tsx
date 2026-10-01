@@ -27,7 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { Loader2, User, Shield, Bell, Lock, Smartphone } from 'lucide-react';
+import { Loader2, User, Shield, Bell, Lock } from 'lucide-react';
 
 const profileSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -59,8 +59,6 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
   const router = useRouter();
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
-  const [_is2FADialogOpen, setIs2FADialogOpen] = useState(false);
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(user.twoFactorEnabled ?? false);
 
   const profileForm = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -108,25 +106,6 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
       toast.error('Failed to update password. Please check your current password.');
     } finally {
       setIsUpdatingPassword(false);
-    }
-  }
-
-  async function handleToggle2FA() {
-    try {
-      if (twoFactorEnabled) {
-        // Disable 2FA
-        await authClient.twoFactor.disable({
-          password: '', // Would need password confirmation
-        });
-        setTwoFactorEnabled(false);
-        toast.success('Two-factor authentication disabled');
-      } else {
-        // Enable 2FA - this should open a setup flow
-        setIs2FADialogOpen(true);
-      }
-    } catch (error) {
-      console.error('Error toggling 2FA:', error);
-      toast.error('Failed to update two-factor authentication');
     }
   }
 
@@ -257,24 +236,6 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-2">
-                <Smartphone className="h-4 w-4" />
-                <span className="font-medium">Two-Factor Authentication</span>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                Add an extra layer of security to your account
-              </p>
-            </div>
-            <Switch
-              checked={twoFactorEnabled}
-              onCheckedChange={handleToggle2FA}
-            />
-          </div>
-
-          <Separator />
-
           <div className="space-y-2">
             <p className="font-medium">Email Verified</p>
             <p className="text-sm text-muted-foreground">

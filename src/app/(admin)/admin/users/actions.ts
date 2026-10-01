@@ -645,62 +645,32 @@ export async function revokeAllSessions(
 }
 
 /**
- * Impersonate a user (create a temporary session)
- * This is for admin support purposes
+ * Impersonation is intentionally NOT implemented here.
+ *
+ * This used to mint a random token into the `verification` table and return it
+ * as `impersonationToken`. Nothing ever consumed that value, so no session was
+ * ever established and the caller was told "success" while their browser still
+ * held their own admin cookie.
+ *
+ * The real flow needs Better Auth to mint the session cookie itself, which
+ * only works from a Route Handler that can forward the `Set-Cookie` headers
+ * back to the browser. It now lives in:
+ *   - `src/lib/auth/impersonation.ts`  (authorization + Better Auth calls)
+ *   - `POST /api/admin/users/impersonate`
+ *   - `POST /api/admin/users/impersonate/stop`
+ *
+ * This stub remains so that any stale import fails loudly with an explanation
+ * rather than silently doing nothing.
  */
-export async function impersonateUser(
-  userId: string
-): Promise<{ success: boolean; error?: string; impersonationToken?: string }> {
-  const session = await requirePermission(USER_MANAGE);
-
-  try {
-    // Prevent impersonating yourself
-    if (userId === session.user.id) {
-      return { success: false, error: 'You cannot impersonate your own account' };
-    }
-
-    const targetUser = await prisma.user.findUnique({
-      where: { id: userId, deletedAt: null },
-      select: { id: true, email: true, name: true, banned: true },
-    });
-
-    if (!targetUser) {
-      return { success: false, error: 'User not found' };
-    }
-
-    if (targetUser.banned) {
-      return { success: false, error: 'Cannot impersonate a banned user' };
-    }
-
-    // Generate an impersonation token
-    const token = randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-
-    // Store the impersonation token
-    await prisma.verification.create({
-      data: {
-        identifier: `impersonate:${session.user.id}:${targetUser.id}`,
-        value: token,
-        expiresAt,
-      },
-    });
-
-    await auditLog({
-      action: 'user.impersonate_start',
-      entityType: 'User',
-      entityId: userId,
-      newValues: {
-        adminId: session.user.id,
-        adminEmail: session.user.email,
-        targetEmail: targetUser.email,
-      },
-    });
-
-    return { success: true, impersonationToken: token };
-  } catch (error) {
-    console.error('Failed to impersonate user:', error);
-    return { success: false, error: 'Failed to impersonate user' };
-  }
+export async function impersonateUser(): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  return {
+    success: false,
+    error:
+      'impersonateUser() no longer exists. Use POST /api/admin/users/impersonate.',
+  };
 }
 
 /**
