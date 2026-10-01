@@ -3,12 +3,17 @@
 import * as pdfjs from 'pdfjs-dist';
 
 // Configure PDF.js worker from our own public/ copy (CSP-safe).
+// The worker file is synced from the installed pdfjs-dist package by
+// scripts/sync-pdf-worker.mjs so its API version always matches this bundle.
 let workerInitialised = false;
 
 export function initializePdfJs(): void {
   if (workerInitialised) return;
-  // Served from public/pdf.worker.min.mjs – same origin, so CSP 'self' allows it.
-  pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+
+  // Include the API version in the URL so browsers/proxies cannot reuse a
+  // worker cached from an older pdfjs-dist release after an application update.
+  const workerVersion = encodeURIComponent(pdfjs.version);
+  pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.mjs?v=${workerVersion}`;
   workerInitialised = true;
 }
 
