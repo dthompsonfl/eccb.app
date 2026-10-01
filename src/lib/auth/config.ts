@@ -1,9 +1,23 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { createAccessControl } from 'better-auth/plugins/access';
+import { defaultStatements } from 'better-auth/plugins/admin/access';
 import { prisma } from '@/lib/db';
 import { magicLink, twoFactor, admin, openAPI } from 'better-auth/plugins';
 import { sendEmail } from '@/lib/email';
 import { env } from '@/lib/env';
+import { IMPERSONATION_BA_ROLE } from '@/lib/auth/impersonation';
+
+/**
+ * Better Auth access-control instance for the admin plugin.
+ *
+ * Defined here (rather than inline in the plugin options) because
+ * `src/lib/auth/impersonation.ts` needs the same role name to stamp onto
+ * actors; keeping one definition prevents the grant and the assignment from
+ * drifting apart, which would either lock every admin out of impersonation or
+ * silently widen it.
+ */
+const ECCB_ADMIN_AC = createAccessControl(defaultStatements);
 
 /**
  * Escape HTML entities to prevent injection in email body content.
@@ -118,8 +132,32 @@ export const auth = betterAuth({
     }),
     twoFactor({
       issuer: env.NEXT_PUBLIC_APP_NAME,
+      // Do not let enrolment succeed without a final TOTP verification, and do
+      // not allow a factor to be enabled without a password check.
+      skipVerificationOnEnable: false,
     }),
-    admin(),
+    admin({
+      ac: ECCB_ADMIN_AC,
+      roles: {
+        // Every authenticated user is 'user' with no admin statements.
+        user: ECCB_ADMIN_AC.newRole({ user: [], session: [] }),
+        // Impersonation ONLY. Deliberately NOT 'admin': the stock admin
+        // role also grants ban / delete / set-password / set-role on
+        // /api/auth/*, which would bypass this application's own RBAC
+        // (src/lib/auth/permission-constants.ts) and its audit log. Granting
+        // exactly one statement keeps admin user management auditable here.
+        [IMPERSONATION_BA_ROLE]: ECCB_ADMIN_AC.newRole({ user: ['impersonate'] }),
+      },
+      defaultRole: 'user',
+      // Better Auth validates that every name in `adminRoles` exists in
+      // `roles`. We deliberately never assign the stock 'admin' role — it would
+      // also grant ban/delete/set-password on /api/auth/*, bypassing this
+      // application's own RBAC and audit log. The only admin-ish role that
+      // exists here is the impersonation-only support role.
+      adminRoles: [IMPERSONATION_BA_ROLE],
+      // Short-lived impersonation sessions.
+      impersonationSessionDuration: 15 * 60,
+    }),
     openAPI(),
   ],
   session: {
