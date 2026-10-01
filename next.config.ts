@@ -84,7 +84,12 @@ const nextConfig: NextConfig = {
         key: 'Referrer-Policy',
         value: 'strict-origin-when-cross-origin',
       },
-      // Restrict browser features
+      // Restrict browser features.
+      //
+      // Least privilege: the microphone is DENIED by default and re-enabled
+      // only on the Digital Music Stand routes (see the route-scoped entry
+      // below), which are the only place the Tuner and Audio Tracker call
+      // getUserMedia(). camera/geolocation/payment stay denied everywhere.
       {
         key: 'Permissions-Policy',
         value: [
@@ -129,6 +134,27 @@ const nextConfig: NextConfig = {
         // Apply to all routes
         source: '/:path*',
         headers: securityHeaders,
+      },
+      // Digital Music Stand routes: the Tuner and Audio Tracker need real
+      // microphone access. Scoped to these paths only — every other route
+      // keeps microphone=(). The Allow attribute still requires a user
+      // gesture, so this grants no ambient recording capability.
+      {
+        source: '/member/stand/:path*',
+        headers: [
+          {
+            key: 'Permissions-Policy',
+            value: [
+              'camera=()',
+              'microphone=(self)',
+              'geolocation=()',
+              'interest-cohort=()',
+              'payment=()',
+              'sync-xhr=(self)',
+              'midi=(self)',
+            ].join(', '),
+          },
+        ],
       },
       {
         // Specific headers for API routes - more restrictive

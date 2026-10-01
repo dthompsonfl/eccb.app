@@ -64,11 +64,10 @@ const SKIP_LOGGING_PATHS = [
 ];
 
 // Security headers to apply to all responses
-const SECURITY_HEADERS = {
+const BASE_SECURITY_HEADERS = {
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'Permissions-Policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
   // Enforce HTTPS for 1 year on all subdomains; include in browser preload list
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
   // Prevent DNS prefetch leaking navigated origins
@@ -76,6 +75,30 @@ const SECURITY_HEADERS = {
   // Enable XSS filter in browsers
   'X-XSS-Protection': '1; mode=block',
 };
+
+/**
+ * Permissions-Policy, least privilege.
+ *
+ * The microphone is denied everywhere EXCEPT the Digital Music Stand routes,
+ * which are the only pages that call getUserMedia() (Tuner and Audio Tracker).
+ * Declaring microphone=() globally while shipping a tuner would make the
+ * feature permanently broken in every browser, so it is granted per-route.
+ *
+ * camera/geolocation/payment stay denied on all routes.
+ */
+const PERMISSIONS_POLICY_DENY_ALL =
+  'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()';
+
+const PERMISSIONS_POLICY_STAND =
+  'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(self), payment=(), usb=()';
+
+/** Stand routes are the only ones permitted to open a microphone stream. */
+function isMicrophoneAllowedPath(pathname: string): boolean {
+  return (
+    pathname === '/member/stand' ||
+    pathname.startsWith('/member/stand/')
+  );
+}
 
 // Content Security Policy.
 // unsafe-inline is required by Tailwind (style) and Next.js inline style injection.
@@ -150,21 +173,81 @@ function isSetupBypassPath(pathname: string): boolean {
 }
 
 /**
- * Check if path should skip logging
+ * Framework and public static asset prefixes.
+ *
+ * These are the ONLY paths that bypass the auth/setup gates. Previously the
+ * bypass was `pathname.includes('.')`, which meant any path containing a dot
+ * skipped every check — e.g. `/member/music.pdf`, `/admin/secret.json`, and
+ * even `/admin/users/x.`. That was an authorization bypass, not a static-asset
+ * rule, so it is replaced with an explicit allowlist of real asset roots.
  */
-function shouldSkipLogging(pathname: string): boolean {
-  return SKIP_LOGGING_PATHS.some(path => pathname.startsWith(path)) || pathname.includes('.');
+const STATIC_ASSET_PREFIXES = [
+  '/_next/static',
+  '/_next/image',
+  '/_next/data',
+  '/static',
+  '/images',
+  '/icons',
+  '/uploads/public',
+  '/Stock Images',
+];
+
+/** Exact, non-prefixed static paths. */
+const STATIC_ASSET_EXACT = new Set([
+  '/favicon.ico',
+  '/robots.txt',
+  '/sitemap.xml',
+  '/manifest.json',
+  '/sw.js',
+  '/pdf.worker.min.mjs',
+]);
+
+/** File extensions that are unambiguously static assets. */
+const STATIC_ASSET_EXTENSIONS = new Set([
+  '.ico', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif',
+  '.css', '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.txt', '.xml', '.webmanifest', '.map',
+]);
+
+function isStaticAssetPath(pathname: string): boolean {
+  if (STATIC_ASSET_EXACT.has(pathname)) return true;
+  if (STATIC_ASSET_PREFIXES.some(prefix => pathname.startsWith(prefix))) return true;
+
+  // Extension check, but ONLY when the path is not an application route.
+  // A dot in the final segment is a strong signal of a file, whereas a dot in
+  // a directory or filename belonging to a known route is not.
+  const lastSegment = pathname.split('/').pop() ?? '';
+  const dot = lastSegment.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return STATIC_ASSET_EXTENSIONS.has(lastSegment.slice(dot).toLowerCase());
 }
 
 /**
- * Apply security headers to response
+ * Check if path should skip logging.
+ *
+ * Logging is suppressed for high-volume static assets only — never as an
+ * authorization decision.
  */
-function applySecurityHeaders(response: NextResponse): void {
-  // Apply standard security headers
-  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+function shouldSkipLogging(pathname: string): boolean {
+  return SKIP_LOGGING_PATHS.some(path => pathname.startsWith(path)) || isStaticAssetPath(pathname);
+}
+
+/**
+ * Apply security headers to response.
+ *
+ * `pathname` selects the Permissions-Policy variant: microphone is only
+ * permitted on Digital Music Stand routes.
+ */
+function applySecurityHeaders(response: NextResponse, pathname: string): void {
+  for (const [key, value] of Object.entries(BASE_SECURITY_HEADERS)) {
     response.headers.set(key, value);
   }
-  
+
+  response.headers.set(
+    'Permissions-Policy',
+    isMicrophoneAllowedPath(pathname) ? PERMISSIONS_POLICY_STAND : PERMISSIONS_POLICY_DENY_ALL,
+  );
+
   // Apply CSP
   response.headers.set('Content-Security-Policy', CSP_DIRECTIVES);
 }
@@ -259,18 +342,12 @@ export async function proxy(request: NextRequest) {
   response.headers.set('X-Request-Id', requestId);
   
   // Apply security headers to all responses
-  applySecurityHeaders(response);
+  applySecurityHeaders(response, pathname);
 
-  // Allow static assets
-  if (
-    pathname.startsWith('/_next') ||
-    pathname.startsWith('/static') ||
-    pathname.startsWith('/images') ||
-    pathname === '/favicon.ico' ||
-    pathname === '/robots.txt' ||
-    pathname === '/sitemap.xml' ||
-    pathname.includes('.') // Static files
-  ) {
+  // Allow real static assets only. This used to be `pathname.includes('.')`,
+  // which let any dot-containing path (e.g. `/admin/report.csv`) skip the
+  // auth and setup gates entirely. See isStaticAssetPath().
+  if (isStaticAssetPath(pathname)) {
     if (!skipLogging) {
       logResponse(request, response, requestId, startTime, requestLogger);
     }
@@ -313,7 +390,7 @@ export async function proxy(request: NextRequest) {
         { error: 'CSRF validation failed' },
         { status: 403 },
       );
-      applySecurityHeaders(csrfResponse);
+      applySecurityHeaders(csrfResponse, pathname);
       csrfResponse.headers.set('X-Request-Id', requestId);
       if (!skipLogging) {
         logResponse(request, csrfResponse, requestId, startTime, requestLogger);
@@ -341,7 +418,7 @@ export async function proxy(request: NextRequest) {
         const setupUrl = new URL('/setup', request.url);
         const redirectResponse = NextResponse.redirect(setupUrl);
         redirectResponse.headers.set('X-Request-Id', requestId);
-        applySecurityHeaders(redirectResponse);
+        applySecurityHeaders(redirectResponse, pathname);
         if (!skipLogging) {
           logResponse(request, redirectResponse, requestId, startTime, requestLogger);
         }
@@ -379,7 +456,7 @@ export async function proxy(request: NextRequest) {
       loginUrl.searchParams.set('callbackUrl', pathname);
       const redirectResponse = NextResponse.redirect(loginUrl);
       redirectResponse.headers.set('X-Request-Id', requestId);
-      applySecurityHeaders(redirectResponse);
+      applySecurityHeaders(redirectResponse, pathname);
       
       if (!skipLogging) {
         logResponse(request, redirectResponse, requestId, startTime, requestLogger);
