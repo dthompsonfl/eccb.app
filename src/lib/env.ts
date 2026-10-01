@@ -12,13 +12,13 @@ const envSchema = z.object({
   /** Set to "true" to enable the standalone Socket.IO process (socket-worker). */
   ENABLE_WEBSOCKETS: z.string().default('false').transform((val) => `${val}`.trim().split(/\s+/)[0].toLowerCase() === 'true'),
   /** Port the standalone Socket.IO worker listens on. */
-  SOCKET_PORT: z.coerce.number().int().positive().default(3005),
+  SOCKET_PORT: z.coerce.number().int().positive().default(3226),
   
   // Better Auth
   AUTH_SECRET: z.string().min(32, 'AUTH_SECRET must be at least 32 characters'),
   BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 characters'),
-  AUTH_URL: z.string().url().default('http://localhost:3000'),
-  BETTER_AUTH_URL: z.string().url().default('http://localhost:3000'),
+  AUTH_URL: z.string().url().default('http://localhost:3225'),
+  BETTER_AUTH_URL: z.string().url().default('http://localhost:3225'),
   
   // Super Admin Credentials
   SUPER_ADMIN_EMAIL: z.string().email().default('admin@eccb.org'),
@@ -52,7 +52,7 @@ const envSchema = z.object({
   SMTP_SECURE: z.string().default('false').transform((val) => `${val}`.trim().split(/\s+/)[0].toLowerCase() === 'true'),
   
   // App Config
-  NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3000"),
+  NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3225"),
   NEXT_PUBLIC_APP_NAME: z.string().default("Emerald Coast Community Band"),
 
   // Setup Configuration

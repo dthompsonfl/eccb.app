@@ -273,7 +273,7 @@ export function initializeStandSocketServer(
   subClient: Redis,
   appUrl?: string,
 ): SocketIOServer {
-  const origin = appUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
+  const origin = appUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3225';
 
   io = new SocketIOServer(httpServer, {
     path: '/api/stand/socket',

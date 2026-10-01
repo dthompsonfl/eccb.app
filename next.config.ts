@@ -4,11 +4,11 @@ const nextConfig: NextConfig = {
   output: 'standalone',
 
   // Proxy WebSocket connections to the standalone socket worker when running.
-  // The SOCKET_PORT env var controls which port it binds to (default 3005).
+  // The SOCKET_PORT env var controls which port it binds to (default 3226).
   // Only active when ENABLE_WEBSOCKETS=true; harmless otherwise.
   async rewrites() {
     if (process.env.ENABLE_WEBSOCKETS !== 'true') return [];
-    const socketPort = process.env.SOCKET_PORT || '3005';
+    const socketPort = process.env.SOCKET_PORT || '3226';
     return [
       {
         source: '/api/stand/socket',

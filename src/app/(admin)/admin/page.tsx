@@ -17,6 +17,7 @@ import {
 import { formatDate, formatRelativeTime } from '@/lib/date';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { requireAdminConsole } from '@/lib/auth/guards';
 
 export const metadata: Metadata = {
   title: 'Admin Dashboard',
@@ -67,6 +68,11 @@ async function getDashboardStats() {
 }
 
 export default async function AdminDashboardPage() {
+  // The dashboard aggregates band-wide counts. State the shell gate explicitly
+  // rather than relying on the parent layout, so the dependency is visible if
+  // the route is ever moved out from under that layout.
+  await requireAdminConsole();
+
   const stats = await getDashboardStats();
 
   return (

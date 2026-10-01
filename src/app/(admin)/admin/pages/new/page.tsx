@@ -1,7 +1,13 @@
 import { Breadcrumbs } from '@/components/shared/breadcrumbs';
 import { PageForm } from '@/components/admin/pages/page-form';
 import { createPage } from '../actions';
-export default function NewPagePage() {
+import { requirePermission } from '@/lib/auth/guards';
+import { CMS_EDIT } from '@/lib/auth/permission-constants';
+
+export default async function NewPagePage() {
+  // Authoring CMS content requires cms.edit.
+  await requirePermission(CMS_EDIT);
+
   async function handleCreatePage(formData: FormData) {
     'use server';
 

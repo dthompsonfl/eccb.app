@@ -23,6 +23,7 @@ import {
   closeStandSocketServer,
 } from '@/lib/websocket/stand-socket';
 import { getStandSettings } from '@/lib/stand/settings';
+import { DEFAULT_PORTS, listenWithFallback } from '@/lib/ports';
 
 /**
  * Worker Entry Point for ECCB Platform
@@ -44,10 +45,10 @@ console.warn = (...args: unknown[]) => {
 // Configuration
 // ============================================================================
 
-const HEALTH_CHECK_PORT = parseInt(process.env.WORKER_HEALTH_PORT || '3001', 10);
+const HEALTH_CHECK_PORT = parseInt(process.env.WORKER_HEALTH_PORT || String(DEFAULT_PORTS.WORKER_HEALTH), 10);
 const SCHEDULER_INTERVAL_MS = parseInt(process.env.SCHEDULER_INTERVAL_MS || '60000', 10); // 1 minute
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || '86400000', 10); // 24 hours
-const SOCKET_PORT = parseInt(process.env.SOCKET_PORT || '3005', 10);
+const SOCKET_PORT = parseInt(process.env.SOCKET_PORT || String(DEFAULT_PORTS.SOCKET), 10);
 const ENABLE_WEBSOCKETS = process.env.ENABLE_WEBSOCKETS === 'true';
 
 // ============================================================================
@@ -215,15 +216,21 @@ function startHealthServer(): void {
     }
   });
 
-  healthServer.listen(HEALTH_CHECK_PORT, () => {
-    logger.info(`Health check server listening on port ${HEALTH_CHECK_PORT}`);
+  // Roll forward to the next free port when the preferred health port is
+  // occupied (e.g. a second copy of the workers is already running).
+  void listenWithFallback(healthServer, HEALTH_CHECK_PORT, 'Worker health server', 25, (m) =>
+    logger.info(m),
+  ).catch((err: unknown) => {
+    logger.error('Health check server failed to bind', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    healthServer = null;
   });
 
   healthServer.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      logger.warn(`Health check port ${HEALTH_CHECK_PORT} is already in use; health endpoint disabled for this instance`);
-      healthServer = null;
-    } else {
+    // listenWithFallback already handles EADDRINUSE by retrying; any error
+    // reaching here is unexpected.
+    if (err.code !== 'EADDRINUSE') {
       logger.error('Health check server error', { error: err.message });
     }
   });
@@ -343,9 +350,10 @@ async function main(): Promise<void> {
         socketSubClient,
         process.env.NEXT_PUBLIC_APP_URL,
       );
-      socketHttpServer.listen(socketPort, () => {
-        logger.info(`Socket worker listening on port ${socketPort}`);
-      });
+      // Auto-roll to the next free port when SOCKET_PORT is occupied.
+      await listenWithFallback(socketHttpServer, socketPort, 'Embedded socket worker', 25, (m) =>
+        logger.info(m),
+      );
       socketWorkerEnabled = true;
     } catch (err) {
       logger.error('Failed to start socket worker', { error: err instanceof Error ? err.message : err });

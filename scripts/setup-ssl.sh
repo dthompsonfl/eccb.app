@@ -139,7 +139,7 @@ server {
     # Service worker
     location /sw.js {
         add_header Cache-Control "no-cache";
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:3225;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -154,7 +154,7 @@ server {
 
     # Proxy to Next.js
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:3225;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';

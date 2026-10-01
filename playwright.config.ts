@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const playwrightBaseUrl = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
+const appPort = process.env.PORT || '3225';
+const playwrightBaseUrl = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${appPort}`;
 
 /**
  * @see https://playwright.dev/docs/test-configuration

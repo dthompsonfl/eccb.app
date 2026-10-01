@@ -70,7 +70,7 @@ const DEFAULT_SETTINGS: StandGlobalSettings = {
   maintenanceMessage: null,
   pollingIntervalMs: 5_000,
   websocketEnabled: process.env.ENABLE_WEBSOCKETS === 'true',
-  websocketPort: parseInt(process.env.SOCKET_PORT || '3005', 10),
+  websocketPort: parseInt(process.env.SOCKET_PORT || '3226', 10),
 };
 
 const KEY_PREFIX = 'stand.';

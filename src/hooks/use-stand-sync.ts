@@ -335,7 +335,7 @@ export function useStandSync({
       return;
     }
 
-    const socketUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const socketUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
 
     try {
       const socket = socketIoClient(socketUrl as string, {

@@ -109,8 +109,8 @@ sudo systemctl restart eccb
 # Wait for startup
 sleep 3
 
-# Health check
-if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+# Health check (honours PORT from the environment, defaults to 3225)
+if curl -s "http://localhost:${PORT:-3225}/api/health" > /dev/null 2>&1; then
     echo -e "${GREEN}Application is healthy!${NC}"
 else
     echo -e "${YELLOW}Warning: Health check failed, application may still be starting...${NC}"

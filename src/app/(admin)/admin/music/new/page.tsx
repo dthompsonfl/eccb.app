@@ -1,6 +1,8 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
+import { requirePermission } from '@/lib/auth/guards';
+import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 import { MusicForm } from '@/components/admin/music/music-form';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
@@ -21,6 +23,9 @@ async function getFormData() {
 }
 
 export default async function NewMusicPage() {
+  // Adding to the library is a create capability, not merely a shell role.
+  await requirePermission(MUSIC_CREATE);
+
   const { composers, arrangers, publishers, instruments } = await getFormData();
 
   return (

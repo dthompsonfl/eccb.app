@@ -311,7 +311,7 @@ async function fetchFileBuffer(fileUrl: string): Promise<{ buffer: Buffer; mimeT
     throw new Error('Invalid file URL: must be a relative path');
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
   // Ensure we don't end up with // if baseUrl ends with /
   const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   const fullUrl = `${cleanBaseUrl}${fileUrl}`;

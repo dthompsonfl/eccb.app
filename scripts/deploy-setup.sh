@@ -138,7 +138,7 @@ echo -e "\n${YELLOW}[7/8] Configuring Nginx...${NC}"
 
 cat > /etc/nginx/sites-available/eccb << 'NGINX_EOF'
 upstream eccb_backend {
-    server 127.0.0.1:3000;
+    server 127.0.0.1:3225;
     keepalive 64;
 }
 
@@ -274,7 +274,7 @@ Type=simple
 User=eccb
 WorkingDirectory=/var/www/eccb/current
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=3225
 ExecStart=/usr/bin/node /var/www/eccb/current/.next/standalone/server.js
 Restart=on-failure
 RestartSec=10

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/guards';
-import { checkUserPermission, getUserRoles } from '@/lib/auth/permissions';
+import { checkUserPermission } from '@/lib/auth/permissions';
 import { generateSecureDownloadUrl } from '@/lib/services/storage';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { validateCSRF } from '@/lib/csrf';
@@ -9,6 +9,7 @@ import { prisma } from '@/lib/db';
 import { z } from 'zod';
 
 import { MUSIC_DOWNLOAD_ALL, MUSIC_DOWNLOAD_ASSIGNED } from '@/lib/auth/permission-constants';
+import { authorizeMusicFileAccess, hasGlobalMusicAccess } from '@/lib/music/access';
 // =============================================================================
 // Request Validation
 // =============================================================================
@@ -23,17 +24,11 @@ const DownloadUrlRequestSchema = z.object({
 // =============================================================================
 
 /**
- * Check if user has admin-level access (short-circuit for admins).
- */
-async function isAdminUser(userId: string): Promise<boolean> {
-  const roles = await getUserRoles(userId);
-  return roles.some(role => 
-    role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'LIBRARIAN'
-  );
-}
-
-/**
  * Check if user is authorized to download a specific file.
+ *
+ * Delegates the piece/part decision to @/lib/music/access so this route, the
+ * signed-URL route, and the Stand file proxies cannot drift apart. This route
+ * adds the permission layer (music.download.all / .assigned) on top.
  */
 async function checkDownloadAuthorization(
   userId: string,
@@ -44,62 +39,52 @@ async function checkDownloadAuthorization(
     where: { id: userId },
     include: { member: true },
   });
-  
+
   if (!user) {
     return { authorized: false, reason: 'User not found' };
   }
-  
-  // Admin short-circuit: admins can download any file
-  if (await isAdminUser(userId)) {
+
+  // Library administrators: admins, directors, staff, librarians.
+  if (await hasGlobalMusicAccess(userId)) {
     return { authorized: true, reason: 'admin_access' };
   }
-  
+
   // Check for music.download.all permission
   const hasDownloadAll = await checkUserPermission(userId, MUSIC_DOWNLOAD_ALL);
   if (hasDownloadAll) {
     return { authorized: true, reason: 'download_all_permission' };
   }
-  
+
   // Find the file record
   const file = await prisma.musicFile.findFirst({
     where: { storageKey },
-    include: {
-      piece: {
-        include: {
-          assignments: {
-            where: {
-              memberId: user.member?.id,
-            },
-          },
-        },
-      },
-    },
   });
-  
+
   if (!file) {
     return { authorized: false, reason: 'file_not_found' };
   }
-  
+
   // Check if file is public
   if (file.isPublic) {
     return { authorized: true, reason: 'public_file' };
   }
-  
+
   // Check if user has music.download.assigned permission
   const hasDownloadAssigned = await checkUserPermission(userId, MUSIC_DOWNLOAD_ASSIGNED);
-  
+
   if (!hasDownloadAssigned) {
     return { authorized: false, reason: 'no_download_permission' };
   }
-  
-  // Check if user is assigned to this piece
-  const isAssigned = file.piece.assignments.length > 0;
-  
-  if (!isAssigned) {
+
+  // Assignment + part scoping. Enforces: member must be assigned to the piece,
+  // and a part-specific assignment grants ONLY that part (never a sibling part
+  // and never a conductor/full score).
+  const access = await authorizeMusicFileAccess(userId, storageKey);
+  if (!access.allowed) {
     return { authorized: false, reason: 'not_assigned_to_piece' };
   }
-  
-  return { authorized: true, reason: 'assigned_to_piece' };
+
+  return { authorized: true, reason: `assigned_${access.scope}` };
 }
 
 // =============================================================================

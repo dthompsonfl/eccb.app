@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { getSession } from '@/lib/auth/guards';
-import { checkUserPermission, getUserRoles } from '@/lib/auth/permissions';
 import { downloadFile } from '@/lib/services/storage';
+import { getSession } from '@/lib/auth/guards';
+import { checkUserPermission } from '@/lib/auth/permissions';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { Readable } from 'stream';
 
 import { MUSIC_DOWNLOAD_ALL, MUSIC_DOWNLOAD_ASSIGNED } from '@/lib/auth/permission-constants';
+import { authorizeMusicFileAccess, hasGlobalMusicAccess } from '@/lib/music/access';
 // =============================================================================
 // Authorization Helpers
 // =============================================================================
@@ -17,16 +18,6 @@ interface AuthResult {
   reason: string;
   userId?: string;
   memberId?: string;
-}
-
-/**
- * Check if user has admin-level access (short-circuit for admins).
- */
-async function isAdminUser(userId: string): Promise<boolean> {
-  const roles = await getUserRoles(userId);
-  return roles.some(role => 
-    role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'LIBRARIAN'
-  );
 }
 
 /**
@@ -42,6 +33,11 @@ async function isFilePublic(storageKey: string): Promise<boolean> {
 
 /**
  * Check if user is authorized to download a specific file.
+ *
+ * Mirrors POST /api/files/download-url exactly: same global-role short-circuit,
+ * same permission gates, same assignment + part scoping via
+ * @/lib/music/access. Keep the two in step — this route is the fallback path
+ * and must never be the weaker one.
  */
 async function checkDownloadAuthorization(
   userId: string,
@@ -52,95 +48,83 @@ async function checkDownloadAuthorization(
     where: { id: userId },
     include: { member: true },
   });
-  
+
   if (!user) {
     return { authorized: false, reason: 'User not found' };
   }
-  
-  // Admin short-circuit: admins can download any file
-  if (await isAdminUser(userId)) {
+
+  // Library administrators: admins, directors, staff, librarians.
+  if (await hasGlobalMusicAccess(userId)) {
     logger.info('Download authorized: admin access', { userId, storageKey });
-    return { 
-      authorized: true, 
+    return {
+      authorized: true,
       reason: 'admin_access',
       userId,
       memberId: user.member?.id,
     };
   }
-  
+
   // Check for music.download.all permission
   const hasDownloadAll = await checkUserPermission(userId, MUSIC_DOWNLOAD_ALL);
   if (hasDownloadAll) {
     logger.info('Download authorized: download.all permission', { userId, storageKey });
-    return { 
-      authorized: true, 
+    return {
+      authorized: true,
       reason: 'download_all_permission',
       userId,
       memberId: user.member?.id,
     };
   }
-  
+
   // Find the file record
   const file = await prisma.musicFile.findFirst({
     where: { storageKey },
-    include: {
-      piece: {
-        include: {
-          assignments: {
-            where: {
-              memberId: user.member?.id,
-            },
-          },
-        },
-      },
-    },
   });
-  
+
   if (!file) {
     logger.warn('Download denied: file not found', { userId, storageKey });
     return { authorized: false, reason: 'file_not_found' };
   }
-  
+
   // Check if file is public
   if (file.isPublic) {
     logger.info('Download authorized: public file', { userId, storageKey });
-    return { 
-      authorized: true, 
+    return {
+      authorized: true,
       reason: 'public_file',
       userId,
       memberId: user.member?.id,
     };
   }
-  
+
   // Check if user has music.download.assigned permission
   const hasDownloadAssigned = await checkUserPermission(userId, MUSIC_DOWNLOAD_ASSIGNED);
-  
+
   if (!hasDownloadAssigned) {
     logger.warn('Download denied: no download permission', { userId, storageKey });
     return { authorized: false, reason: 'no_download_permission' };
   }
-  
-  // Check if user is assigned to this piece
-  const isAssigned = file.piece.assignments.length > 0;
-  
-  if (!isAssigned) {
-    logger.warn('Download denied: not assigned to piece', { 
-      userId, 
+
+  // Assignment + part scoping (shared with the download-url route and Stand).
+  const access = await authorizeMusicFileAccess(userId, storageKey);
+  if (!access.allowed) {
+    logger.warn('Download denied: not assigned to piece', {
+      userId,
       storageKey,
-      pieceId: file.pieceId,
+      pieceId: access.pieceId,
     });
     return { authorized: false, reason: 'not_assigned_to_piece' };
   }
-  
-  logger.info('Download authorized: assigned to piece', { 
-    userId, 
+
+  logger.info('Download authorized: assigned to piece', {
+    userId,
     storageKey,
-    pieceId: file.pieceId,
+    pieceId: access.pieceId,
   });
-  
-  return { 
-    authorized: true, 
-    reason: 'assigned_to_piece',
+
+  return {
+    authorized: true,
+    reason: `assigned_${access.scope}`,
     userId,
     memberId: user.member?.id,
   };

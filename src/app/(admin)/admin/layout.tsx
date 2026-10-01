@@ -1,5 +1,5 @@
 import React from 'react';
-import { requireRole } from '@/lib/auth/guards';
+import { requireAdminConsole } from '@/lib/auth/guards';
 import {
   ShieldCheck,
   Users,
@@ -31,8 +31,10 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Guard the entire /admin route
-  await requireRole('ADMIN');
+  // Same canonical shell guard as the parent (admin) layout. This used to
+  // demand the ADMIN role exclusively, which contradicted the parent list and
+  // locked librarians out of the routes this sidebar links to.
+  await requireAdminConsole();
 
   return (
     <div className="flex h-screen bg-muted/30">

@@ -95,7 +95,7 @@ export function MusicStandSettingsForm({ settings }: MusicStandSettingsFormProps
       'stand.enabled': boolVal(settings, 'stand.enabled', true),
       'stand.realtimeMode': (settings['stand.realtimeMode'] as 'polling' | 'websocket') ?? 'polling',
       'stand.websocketEnabled': boolVal(settings, 'stand.websocketEnabled', false),
-      'stand.websocketPort': numVal(settings, 'stand.websocketPort', 3005),
+      'stand.websocketPort': numVal(settings, 'stand.websocketPort', 3226),
       'stand.pollingIntervalMs': numVal(settings, 'stand.pollingIntervalMs', 5000),
       'stand.offlineEnabled': boolVal(settings, 'stand.offlineEnabled', false),
       'stand.allowOfflineSync': boolVal(settings, 'stand.allowOfflineSync', false),

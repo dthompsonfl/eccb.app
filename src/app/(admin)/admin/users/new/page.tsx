@@ -1,7 +1,13 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createUser } from '../actions';
-export default function NewUserPage() {
+import { requirePermission } from '@/lib/auth/guards';
+import { USER_MANAGE } from '@/lib/auth/permission-constants';
+
+export default async function NewUserPage() {
+  // Account creation is user management, not merely console access.
+  await requirePermission(USER_MANAGE);
+
   async function handleCreateUser(formData: FormData) {
     'use server';
 

@@ -2,6 +2,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { ADMIN_CONSOLE_ROLES } from '@/lib/auth/admin-roles';
 
 // Get current session
 export async function getSession() {
@@ -46,6 +47,22 @@ export async function requireRole(...roles: string[]) {
   }
   
   return { session, roles: userRoleTypes };
+}
+
+/**
+ * Require entry to the admin console shell.
+ *
+ * Single canonical guard for BOTH admin layouts. The two layouts previously
+ * declared different role lists — the outer one allowed librarians, the nested
+ * one allowed only ADMIN — which locked librarians out of admin routes the
+ * sidebar links them to. Both now resolve through ADMIN_CONSOLE_ROLES so the
+ * lists cannot drift apart again.
+ *
+ * This is a shell gate only. Individual admin pages and server actions must
+ * still call requirePermission() for what the user may actually do.
+ */
+export async function requireAdminConsole() {
+  return requireRole(...ADMIN_CONSOLE_ROLES);
 }
 
 // Require specific permission

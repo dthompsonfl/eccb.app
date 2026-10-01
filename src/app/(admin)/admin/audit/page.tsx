@@ -45,6 +45,8 @@ import {
   getUniqueEntityTypes,
 } from './actions';
 import { AuditLogDetailDialog } from './audit-log-detail-dialog';
+import { requirePermission } from '@/lib/auth/guards';
+import { AUDIT_VIEW } from '@/lib/auth/permission-constants';
 
 interface SearchParams {
   search?: string;
@@ -61,6 +63,11 @@ export default async function AdminAuditPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
+  // Audit logs are the most sensitive admin surface. This page had no guard of
+  // its own and relied solely on the layout shell gate; it now requires the
+  // canonical audit permission.
+  await requirePermission(AUDIT_VIEW);
+
   const params = await searchParams;
 
   const search = params.search || '';

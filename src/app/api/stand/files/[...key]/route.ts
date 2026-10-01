@@ -4,7 +4,8 @@ import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { Readable } from 'stream';
-import { requireStandAccess } from '@/lib/stand/access';
+import { requireStandAccess, canAccessEvent } from '@/lib/stand/access';
+import { canReadPieceFile } from '@/lib/music/access';
 import { recordTelemetry } from '@/lib/stand/telemetry';
 
 /**
@@ -13,11 +14,15 @@ import { recordTelemetry } from '@/lib/stand/telemetry';
  * Requires:
  *   - Active session with member status
  *   - Scope via `?eventId=<id>` or `?pieceId=<id>` query param
+ *   - A matching MusicAssignment for the piece, unless the caller holds a
+ *     global music-access role (see @/lib/music/access)
  *
  * Security:
  *   - Session-only access is NOT allowed (P0 fix)
  *   - Returns 404 (non-enumerating) for access denied
  *   - Path traversal blocked
+ *   - Part-level scoping enforced: a member assigned "Trumpet 2" cannot pull
+ *     a sibling part or the conductor score through this proxy.
  */
 export async function GET(
   request: NextRequest,
@@ -54,7 +59,7 @@ export async function GET(
     let hasAccess = false;
 
     if (eventId) {
-      // Verify file belongs to the event
+      // Verify file belongs to the event, and that the caller may attend it.
       const eventFile = await prisma.musicFile.findFirst({
         where: {
           storageKey,
@@ -62,8 +67,10 @@ export async function GET(
           isArchived: false,
           piece: { eventMusic: { some: { eventId } } },
         },
-        select: { id: true },
+        select: { id: true, pieceId: true },
       });
+
+      let resolvedPieceId: string | null = eventFile?.pieceId ?? null;
 
       if (!eventFile) {
         // Also check MusicPart storageKey
@@ -72,14 +79,27 @@ export async function GET(
             storageKey,
             piece: { eventMusic: { some: { eventId } } },
           },
-          select: { id: true },
+          select: { id: true, pieceId: true },
         });
         hasAccess = !!eventPart;
+        resolvedPieceId = eventPart?.pieceId ?? null;
       } else {
         hasAccess = true;
       }
+
+      // The event must also be one the caller is actually entitled to open.
+      if (hasAccess && !(await canAccessEvent(ctx.userId, eventId))) {
+        hasAccess = false;
+      }
+
+      // Part-level scoping: if this member holds an explicit assignment on the
+      // piece, they may only read their own part, never a sibling or the score.
+      if (hasAccess && resolvedPieceId) {
+        hasAccess = await canReadPieceFile(ctx.userId, resolvedPieceId, storageKey, true);
+      }
     } else if (pieceId) {
-      // Verify file belongs to the piece (library mode)
+      // Library mode: require an assignment for the piece (or a global role,
+      // already handled by ctx.isPrivileged).
       const pieceFile = await prisma.musicFile.findFirst({
         where: {
           storageKey,
@@ -87,17 +107,24 @@ export async function GET(
           isArchived: false,
           pieceId,
         },
-        select: { id: true },
+        select: { id: true, pieceId: true },
       });
+
+      let resolvedPieceId = pieceId;
 
       if (!pieceFile) {
         const piecePart = await prisma.musicPart.findFirst({
           where: { storageKey, pieceId },
-          select: { id: true },
+          select: { id: true, pieceId: true },
         });
         hasAccess = !!piecePart;
+        resolvedPieceId = piecePart?.pieceId ?? pieceId;
       } else {
         hasAccess = true;
+      }
+
+      if (hasAccess) {
+        hasAccess = await canReadPieceFile(ctx.userId, resolvedPieceId, storageKey, false);
       }
     }
 

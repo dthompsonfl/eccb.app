@@ -15,6 +15,7 @@ import { applyRateLimit } from '@/lib/rate-limit';
 import { requireStandAccess, canAccessPiece } from '@/lib/stand/access';
 import { prisma } from '@/lib/db';
 import { downloadFile } from '@/lib/services/storage';
+import { hasGlobalMusicAccess, getPieceAssignmentGrant } from '@/lib/music/access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,10 +63,21 @@ export async function GET(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
 
-    // Verify piece access via the audioLink's pieceId
+    // Verify piece access via the audioLink's pieceId — this is authoritative,
+    // not the caller-supplied query param.
     const hasAccess = await canAccessPiece(ctx.userId, audioLink.pieceId);
     if (!hasAccess) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    // Reference audio (a recording of the piece) follows the same assignment
+    // scoping as the score itself: an unassigned member gets nothing, and a
+    // member assigned one part does not get another part's audio.
+    if (!(await hasGlobalMusicAccess(ctx.userId))) {
+      const grant = await getPieceAssignmentGrant(ctx.userId, audioLink.pieceId);
+      if (!grant.assigned) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      }
     }
 
     // Stream the file from storage (supports range requests)

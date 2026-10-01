@@ -4,7 +4,8 @@
  * Run with:  npm run start:sockets
  *
  * Environment variables:
- *   SOCKET_PORT          Port to listen on (default: 3005)
+ *   SOCKET_PORT          Port to listen on (default: 3226, auto-rolls to next
+ *                        free port when busy; override via .env)
  *   REDIS_URL            Redis connection string
  *   NEXT_PUBLIC_APP_URL  Used for CORS origin
  *   ENABLE_WEBSOCKETS    Must be "true" for this process to start
@@ -20,11 +21,12 @@ import {
 import { logger } from '@/lib/logger';
 import { getStandSettings } from '@/lib/stand/settings';
 import { buildRedisOptionsFromUrl } from '@/lib/redis-options';
+import { DEFAULT_PORTS, listenWithFallback } from '@/lib/ports';
 
 // ─── Config ────────────────────────────────────────────────────────────────
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
 
 // ─── Redis clients ──────────────────────────────────────────────────────────
 // The Redis adapter requires two separate clients: one for publishing and one
@@ -62,18 +64,22 @@ const httpServer = http.createServer((_req, res) => {
 let isShuttingDown = false;
 
 async function start(): Promise<void> {
-  // Load port from database settings, with env as fallback
+  // Load port from database settings, with env as fallback.
+  // When the preferred port is busy the server rolls forward to the next
+  // free port instead of crashing (see src/lib/ports.ts).
   const settings = await getStandSettings();
-  const PORT = settings.websocketPort || parseInt(process.env.SOCKET_PORT || '3005', 10);
+  const preferredPort =
+    settings.websocketPort ||
+    parseInt(process.env.SOCKET_PORT || String(DEFAULT_PORTS.SOCKET), 10);
   
   const pubClient = makeRedisClient(REDIS_URL, 'pub');
   const subClient = makeRedisClient(REDIS_URL, 'sub');
 
   const io = initializeStandSocketServer(httpServer, pubClient, subClient, APP_URL);
 
-  httpServer.listen(PORT, () => {
-    logger.info(`[SocketWorker] Socket.IO server listening on port ${PORT}`);
-  });
+  await listenWithFallback(httpServer, preferredPort, 'Socket.IO worker', 25, (m) =>
+    logger.info(`[SocketWorker] ${m}`),
+  );
 
   // ── Graceful shutdown ──────────────────────────────────────────────────
 

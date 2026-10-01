@@ -27,6 +27,24 @@ vi.mock('@/lib/db', () => ({
     user: {
       findUnique: vi.fn(),
     },
+    userRole: {
+      // Global music access (admins, directors, staff, librarians) is resolved
+      // through this probe by @/lib/music/access.
+      findFirst: vi.fn(),
+    },
+    member: {
+      findFirst: vi.fn(),
+    },
+    musicAssignment: {
+      // Piece download is assignment-scoped: a member must hold an assignment.
+      findMany: vi.fn(),
+    },
+    musicPart: {
+      findFirst: vi.fn(),
+    },
+    musicPiece: {
+      findFirst: vi.fn(),
+    },
     musicFile: {
       findFirst: vi.fn(),
     },
@@ -89,7 +107,32 @@ describe('Download URL API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(validateCSRF).mockImplementation(() => ({ valid: true }));
+
+    // Default: a plain member with no global music role. Individual tests
+    // override these to model a specific role or assignment.
+    vi.mocked(prisma.userRole.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.musicPiece.findFirst).mockResolvedValue({
+      isArchived: false,
+      deletedAt: null,
+    } as any);
+    vi.mocked(prisma.musicPart.findFirst).mockResolvedValue(null);
   });
+
+  /** Model a library-administrator role (global music access). */
+  function asGlobalMusicRole() {
+    vi.mocked(prisma.userRole.findFirst).mockResolvedValue({ id: 'ur-1' } as any);
+  }
+
+  /** Model an active member holding the given assignments for the piece. */
+  function asAssignedMember(
+    assignments: Array<{ partId: string | null }> = [{ partId: null }]
+  ) {
+    vi.mocked(prisma.userRole.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue({ id: 'member-1' } as any);
+    vi.mocked(prisma.musicAssignment.findMany).mockResolvedValue(
+      assignments.map((a) => ({ partId: a.partId })) as any
+    );
+  }
 
   afterEach(() => {
     vi.resetAllMocks();
@@ -150,7 +193,7 @@ describe('Download URL API', () => {
 
     it('should generate URL for admin users', async () => {
       vi.mocked(getSession).mockResolvedValue(createMockSession());
-      vi.mocked(getUserRoles).mockResolvedValue(['ADMIN']);
+      asGlobalMusicRole();
       vi.mocked(prisma.user.findUnique).mockResolvedValue({
         id: 'user-1',
         member: null,
@@ -177,6 +220,7 @@ describe('Download URL API', () => {
     it('should generate URL for users with download.all permission', async () => {
       vi.mocked(getSession).mockResolvedValue(createMockSession());
       vi.mocked(getUserRoles).mockResolvedValue(['MUSICIAN']);
+      asAssignedMember();
       vi.mocked(checkUserPermission).mockResolvedValue(true);
       vi.mocked(prisma.user.findUnique).mockResolvedValue({
         id: 'user-1',
@@ -209,7 +253,6 @@ describe('Download URL API', () => {
         id: 'file-1',
         storageKey: 'music/test.pdf',
         isPublic: false,
-        piece: { assignments: [] },
       } as any);
 
       const request = new NextRequest('http://localhost/api/files/download-url', {
@@ -237,7 +280,6 @@ describe('Download URL API', () => {
         id: 'file-1',
         storageKey: 'music/test.pdf',
         isPublic: true,
-        piece: { assignments: [] },
       } as any);
       vi.mocked(generateSecureDownloadUrl).mockResolvedValue('/api/files/download/music/test.pdf?token=abc123');
 
@@ -268,9 +310,175 @@ describe('Download URL API', () => {
         id: 'file-1',
         storageKey: 'music/test.pdf',
         isPublic: false,
-        piece: { assignments: [{ memberId: 'member-1' }] },
       } as any);
+      asAssignedMember([{ partId: null }]);
       vi.mocked(generateSecureDownloadUrl).mockResolvedValue('/api/files/download/music/test.pdf?token=abc123');
+
+      const request = new NextRequest('http://localhost/api/files/download-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'music/test.pdf' }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.url).toBeDefined();
+    });
+
+    // ─── Negative authorization tests ───────────────────────────────────────
+    // Copyrighted sheet music is a licensing boundary: unassigned and
+    // wrong-part access must be denied, not merely discouraged.
+
+    it('should return 403 for an active member with no assignment to the piece', async () => {
+      vi.mocked(getSession).mockResolvedValue(createMockSession());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-1',
+        member: { id: 'member-1' },
+      } as any);
+      vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+        id: 'file-1',
+        storageKey: 'music/test.pdf',
+        isPublic: false,
+      } as any);
+      // Member exists and is active, but holds no assignment for this piece.
+      asAssignedMember([]);
+      vi.mocked(prisma.musicPart.findFirst).mockResolvedValue({
+        id: 'part-1',
+        pieceId: 'piece-1',
+      } as any);
+      vi.mocked(checkUserPermission)
+        .mockResolvedValueOnce(false) // download.all
+        .mockResolvedValueOnce(true); // download.assigned
+
+      const request = new NextRequest('http://localhost/api/files/download-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'music/test.pdf' }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(data.reason).toBe('not_assigned_to_piece');
+    });
+
+    it('should return 403 when a member downloads a sibling part they are not assigned', async () => {
+      vi.mocked(getSession).mockResolvedValue(createMockSession());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-1',
+        member: { id: 'member-1' },
+      } as any);
+      vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+        id: 'file-sibling',
+        storageKey: 'music/trumpet-1.pdf',
+        isPublic: false,
+      } as any);
+      // Assigned Trumpet 2, requesting Trumpet 1.
+      asAssignedMember([{ partId: 'part-trumpet-2' }]);
+      vi.mocked(prisma.musicPart.findFirst)
+        .mockResolvedValueOnce(null) // not a MusicPart storage key
+        .mockResolvedValueOnce({ id: 'part-trumpet-1' } as any); // linked part
+      vi.mocked(checkUserPermission)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      const request = new NextRequest('http://localhost/api/files/download-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'music/trumpet-1.pdf' }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(data.reason).toBe('not_assigned_to_piece');
+    });
+
+    it('should return 403 when a single-part member downloads the conductor score', async () => {
+      vi.mocked(getSession).mockResolvedValue(createMockSession());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-1',
+        member: { id: 'member-1' },
+      } as any);
+      vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+        id: 'file-score',
+        storageKey: 'music/score.pdf',
+        isPublic: false,
+      } as any);
+      asAssignedMember([{ partId: 'part-trumpet-2' }]);
+      vi.mocked(prisma.musicPart.findFirst).mockResolvedValue(null);
+      vi.mocked(checkUserPermission)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      const request = new NextRequest('http://localhost/api/files/download-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'music/score.pdf' }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(data.reason).toBe('not_assigned_to_piece');
+    });
+
+    it('should return 403 for archived music requested by a plain member', async () => {
+      vi.mocked(getSession).mockResolvedValue(createMockSession());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-1',
+        member: { id: 'member-1' },
+      } as any);
+      vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+        id: 'file-1',
+        storageKey: 'music/test.pdf',
+        isPublic: false,
+      } as any);
+      asAssignedMember([{ partId: null }]);
+      vi.mocked(prisma.musicPiece.findFirst).mockResolvedValue({
+        isArchived: true,
+        deletedAt: null,
+      } as any);
+      vi.mocked(prisma.musicPart.findFirst).mockResolvedValue({
+        id: 'part-1',
+        pieceId: 'piece-1',
+      } as any);
+      vi.mocked(checkUserPermission)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true);
+
+      const request = new NextRequest('http://localhost/api/files/download-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'music/test.pdf' }),
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(403);
+      expect(data.reason).toBe('not_assigned_to_piece');
+    });
+
+    it('should allow a librarian to download archived music', async () => {
+      vi.mocked(getSession).mockResolvedValue(createMockSession());
+      asGlobalMusicRole();
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'user-1',
+        member: null,
+      } as any);
+      vi.mocked(prisma.musicPiece.findFirst).mockResolvedValue({
+        isArchived: true,
+        deletedAt: null,
+      } as any);
+      vi.mocked(generateSecureDownloadUrl).mockResolvedValue(
+        '/api/files/download/music/test.pdf?token=abc123'
+      );
 
       const request = new NextRequest('http://localhost/api/files/download-url', {
         method: 'POST',

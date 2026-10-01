@@ -50,11 +50,21 @@ vi.mock('@/lib/db', () => ({
       findUnique: vi.fn().mockResolvedValue({
         id: 'music-1',
       }),
-      // src/lib/stand/access.ts uses findFirst to load the piece and its
-      // assignments when deciding whether the caller may view/download it.
-      // Resolves a piece so `canAccessPiece` grants an active member access
-      // and the tests exercise the real authorization path rather than 404.
-      findFirst: vi.fn().mockResolvedValue({ id: 'music-1' }),
+      // @/lib/music/access reads isArchived/deletedAt off the piece when
+      // authorizing access. A live, non-archived piece is the default.
+      findFirst: vi.fn().mockResolvedValue({
+        isArchived: false,
+        deletedAt: null,
+      }),
+    },
+    musicAssignment: {
+      // Stand piece access is assignment-scoped: the caller must hold an
+      // assignment for the piece. These tests exercise the annotated/anonymous
+      // surface, so the default caller holds a whole-piece assignment.
+      findMany: vi.fn().mockResolvedValue([{ partId: null }]),
+    },
+    musicPart: {
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     attendance: {
       // access.ts checks the caller's attendance/RSVP state for a piece.

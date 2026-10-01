@@ -35,6 +35,7 @@ model User {
   roles             UserRole[]
   accounts          Account[]
   sessions          Session[]
+  twoFactor         TwoFactor?
 
   @@index([email])
   @@index([deletedAt])
@@ -67,12 +68,36 @@ model Session {
   expiresAt DateTime
   ipAddress String?
   userAgent String?
+  // Set by the Better Auth admin plugin when an admin impersonates this
+  // session. Null for every ordinary session. Never populated by us
+  // directly — Better Auth owns the value and `stopImpersonating` clears it
+  // by deleting the session row.
+  impersonatedBy String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "session_userId_fkey")
+  @@index([impersonatedBy], map: "session_impersonatedBy_fkey")
   @@map("session")
+}
+
+/// Better Auth two-factor plugin storage (TOTP secret + encrypted backup
+/// codes). The `secret` and `backupCodes` columns hold Better Auth's
+/// symmetric ciphertext, never plaintext, and are excluded from API output
+/// by the plugin schema (`returned: false`).
+model TwoFactor {
+  id          String @id @default(cuid())
+  secret      String
+  backupCodes String
+  // Better Auth treats this model as one-to-one: enable always deletes the
+  // user's existing rows before inserting, and every read is a findOne on
+  // userId. Enforcing that here turns a latent "duplicate enrolment" bug into
+  // a loud constraint violation.
+  userId      String @unique
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("twoFactor")
 }
 
 model Verification {

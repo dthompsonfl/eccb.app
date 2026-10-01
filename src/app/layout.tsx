@@ -18,7 +18,7 @@ const oswald = Oswald({
 });
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME || 'Emerald Coast Community Band';
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
 
 export const metadata: Metadata = {
   title: {

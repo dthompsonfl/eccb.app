@@ -10,6 +10,8 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createServer } from 'http';
+import net from 'net';
+import 'dotenv/config';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -17,11 +19,49 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, '..');
 
 // ============================================================================
-// Configuration
+// Configuration — every value is overridable via `.env`.
+// Defaults live in the 322x range to avoid the 300x / 3500x ports already
+// occupied on this machine. When a preferred port is busy the manager rolls
+// forward to the next free port instead of crashing (see resolveFreePort).
 // ============================================================================
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
-const WORKER_HEALTH_PORT = parseInt(process.env.WORKER_HEALTH_PORT || '3001', 10);
+const DEFAULT_APP_PORT = 3225;
+const DEFAULT_WORKER_HEALTH_PORT = 3227;
+const DEFAULT_MANAGER_HEALTH_PORT = 3228;
+const MAX_PORT_ATTEMPTS = 25;
+
+function parsePort(raw: string | undefined, fallback: number): number {
+  const n = raw !== undefined && raw !== '' ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 && n < 65536 ? n : fallback;
+}
+
+function isPortFree(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return new Promise((resolveFree) => {
+    const tester = net
+      .createServer()
+      .once('error', () => resolveFree(false))
+      .once('listening', () => tester.close(() => resolveFree(true)))
+      .listen(port, host);
+  });
+}
+
+async function resolveFreePort(preferred: number, label: string): Promise<number> {
+  let port = preferred;
+  for (let i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
+    if (port > 65535) break;
+    if (await isPortFree(port)) {
+      if (port !== preferred) {
+        log('info', `${label}: preferred port ${preferred} is busy — using next available port ${port}`);
+      }
+      return port;
+    }
+  }
+  throw new Error(`${label}: no free port found in range ${preferred}-${preferred + MAX_PORT_ATTEMPTS - 1}`);
+}
+
+let PORT = parsePort(process.env.PORT, DEFAULT_APP_PORT);
+let WORKER_HEALTH_PORT = parsePort(process.env.WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT);
+let MANAGER_HEALTH_PORT = parsePort(process.env.PROCESS_MANAGER_HEALTH_PORT, DEFAULT_MANAGER_HEALTH_PORT);
 const RESTART_CRASHED_PROCESSES = process.env.RESTART_CRASHED_PROCESSES === 'true';
 
 // ============================================================================
@@ -124,7 +164,7 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
 }
 
 /**
- * Start the Next.js server
+ * Start the Next.js server on the already-resolved PORT.
  */
 function startNextServer(): void {
   const managed: ManagedProcess = {
@@ -132,7 +172,9 @@ function startNextServer(): void {
     process: null,
     command: 'npx',
     args: ['next', 'start', '-p', String(PORT)],
-    env: {},
+    env: {
+      PORT: String(PORT),
+    },
     restartCount: 0,
     lastRestart: 0,
   };
@@ -218,7 +260,8 @@ async function stopAllProcesses(): Promise<void> {
 // ============================================================================
 
 /**
- * Start the process manager health check server
+ * Start the process manager health check server, rolling forward when the
+ * preferred port is already taken.
  */
 function startHealthServer(): void {
   healthServer = createServer(async (req, res) => {
@@ -262,11 +305,31 @@ function startHealthServer(): void {
     }
   });
 
-  // Use a different port for the process manager health check
-  const healthPort = parseInt(process.env.PROCESS_MANAGER_HEALTH_PORT || '3002', 10);
-  healthServer.listen(healthPort, () => {
-    log('info', `Process manager health check server listening on port ${healthPort}`);
-  });
+  // Use a different port for the process manager health check.
+  // Rolls forward automatically when occupied.
+  const preferred = MANAGER_HEALTH_PORT;
+  let port = preferred;
+  const tryBind = (): void => {
+    healthServer!.removeAllListeners('error');
+    healthServer!.once('error', (err: NodeJS.ErrnoException) => {
+      if (err?.code === 'EADDRINUSE' && port - preferred < MAX_PORT_ATTEMPTS - 1) {
+        log('info', `Process manager health port ${port} is busy — trying ${port + 1}`);
+        port++;
+        tryBind();
+      } else {
+        log('error', 'Process manager health server failed to bind', { error: err.message });
+      }
+    });
+    healthServer!.listen(port, () => {
+      if (port !== preferred) {
+        log('info', `Process manager health check server listening on next available port ${port} (preferred ${preferred} was busy)`);
+      } else {
+        log('info', `Process manager health check server listening on port ${port}`);
+      }
+      MANAGER_HEALTH_PORT = port;
+    });
+  };
+  tryBind();
 }
 
 /**
@@ -318,9 +381,20 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
 async function main(): Promise<void> {
   log('info', 'Starting ECCB Process Manager...');
+
+  // Resolve every port BEFORE spawning children so `next start -p` never
+  // hits EADDRINUSE. Each child inherits the resolved value via env.
+  PORT = await resolveFreePort(PORT, 'Next.js server');
+  WORKER_HEALTH_PORT = await resolveFreePort(WORKER_HEALTH_PORT, 'Worker health server');
+  MANAGER_HEALTH_PORT = await resolveFreePort(MANAGER_HEALTH_PORT, 'Process manager health server');
+  process.env.PORT = String(PORT);
+  process.env.WORKER_HEALTH_PORT = String(WORKER_HEALTH_PORT);
+  process.env.PROCESS_MANAGER_HEALTH_PORT = String(MANAGER_HEALTH_PORT);
+
   log('info', 'Configuration', {
     port: PORT,
     workerHealthPort: WORKER_HEALTH_PORT,
+    managerHealthPort: MANAGER_HEALTH_PORT,
     restartCrashedProcesses: RESTART_CRASHED_PROCESSES,
   });
 

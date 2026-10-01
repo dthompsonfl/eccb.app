@@ -7,8 +7,10 @@
 
 set -e
 
-# Configuration
-APP_URL="${APP_URL:-http://localhost:3000}"
+# Configuration — honours .env overrides; defaults match src/lib/ports.ts.
+# shellcheck disable=SC1091
+[ -f .env ] && set -a && . ./.env 2>/dev/null && set +a
+APP_URL="${APP_URL:-http://localhost:${PORT:-3225}}"
 MINIO_URL="${MINIO_URL:-http://localhost:9000}"
 REDIS_HOST="${REDIS_HOST:-localhost}"
 REDIS_PORT="${REDIS_PORT:-6379}"

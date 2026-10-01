@@ -6,11 +6,17 @@
  *
  * Policy:
  *   - Privileged roles (DIRECTOR, SUPER_ADMIN, ADMIN, STAFF) → always access
+ *   - Librarians → global library access (they run the music library)
  *   - Active members → can access published events (policy: any_member)
  *   - RSVP policy: requires attendance/RSVP record
- *   - Librarians → same as active member + can manage audio/nav links
+ *   - Library mode (pieces, no event) → assignment-scoped, see below
  *   - Section leaders → can write SECTION-layer annotations for their section
  *   - Non-members / no session → denied (returns 404 non-enumerating)
+ *
+ * Piece ("library mode") access is NOT open to every active member. It is
+ * delegated to @/lib/music/access, the single source of truth: global roles get
+ * everything, and everybody else needs an active MusicAssignment for the piece.
+ * Part-level scoping (sibling parts, conductor scores) is enforced there too.
  */
 
 import { prisma } from '@/lib/db';
@@ -20,6 +26,7 @@ import { auth } from '@/lib/auth/config';
 import { headers } from 'next/headers';
 import type { RoleType } from '@prisma/client';
 import { getStandSettings } from './settings';
+import { canAccessMusicPiece } from '@/lib/music/access';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -121,23 +128,15 @@ export async function canAccessEvent(userId: string, eventId: string): Promise<b
 
 /**
  * Can the user access a specific music piece (library mode)?
+ *
+ * Delegated to @/lib/music/access so the Stand and the download routes share one
+ * policy: global-access roles (incl. LIBRARIAN) see everything; every other
+ * member needs an active MusicAssignment for the piece. Part-level restrictions
+ * (sibling parts, conductor scores) are enforced by the file-level helper
+ * `authorizeMusicFileAccess` and by the Stand file proxy.
  */
 export async function canAccessPiece(userId: string, pieceId: string): Promise<boolean> {
-  const privilegedRole = await prisma.userRole.findFirst({
-    where: {
-      userId,
-      role: { type: { in: PRIVILEGED_ROLE_TYPES as unknown as RoleType[] } },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
-    },
-    select: { id: true },
-  });
-  if (privilegedRole) return true;
-
-  const member = await prisma.member.findFirst({ where: { userId, status: 'ACTIVE' }, select: { id: true } });
-  if (!member) return false;
-
-  const piece = await prisma.musicPiece.findFirst({ where: { id: pieceId, isArchived: false }, select: { id: true } });
-  return !!piece;
+  return canAccessMusicPiece(userId, pieceId);
 }
 
 // ─── File Access ──────────────────────────────────────────────────────────────
