@@ -82,10 +82,14 @@ describe('Scheduler Workers', () => {
 
       expect(mockAnnouncementFindMany).toHaveBeenCalled();
       expect(addJob).toHaveBeenCalledTimes(1);
-      expect(addJob).toHaveBeenCalledWith('publish.scheduled', expect.objectContaining({
-        contentType: 'announcement',
-        contentId: 'anno-1',
-      }));
+      expect(addJob).toHaveBeenCalledWith(
+        'publish.scheduled',
+        expect.objectContaining({
+          contentType: 'announcement',
+          contentId: 'anno-1',
+        }),
+        expect.objectContaining({ jobId: expect.stringContaining('anno-1') }),
+      );
     });
   });
 
@@ -107,14 +111,22 @@ describe('Scheduler Workers', () => {
 
       expect(mockEventFindMany).toHaveBeenCalledTimes(2);
       expect(addJob).toHaveBeenCalledTimes(2);
-      expect(addJob).toHaveBeenCalledWith('reminder.event', expect.objectContaining({
-        eventId: 'event-1',
-        reminderType: '24h',
-      }));
-      expect(addJob).toHaveBeenCalledWith('reminder.event', expect.objectContaining({
-        eventId: 'event-2',
-        reminderType: '1h',
-      }));
+      expect(addJob).toHaveBeenCalledWith(
+        'reminder.event',
+        expect.objectContaining({
+          eventId: 'event-1',
+          reminderType: '24h',
+        }),
+        expect.objectContaining({ jobId: expect.stringContaining('event-1') }),
+      );
+      expect(addJob).toHaveBeenCalledWith(
+        'reminder.event',
+        expect.objectContaining({
+          eventId: 'event-2',
+          reminderType: '1h',
+        }),
+        expect.objectContaining({ jobId: expect.stringContaining('event-2') }),
+      );
     });
   });
 });
