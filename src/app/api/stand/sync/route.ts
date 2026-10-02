@@ -261,8 +261,108 @@ export async function POST(request: NextRequest) {
 
     const userSection = member?.sections[0]?.section.name;
 
-    const validated = syncStateSchema.parse({ eventId, ...syncData });
+    if (syncData.presence) {
+      const presenceValidation = presenceSchema.safeParse(syncData.presence);
+      if (!presenceValidation.success) {
+        return NextResponse.json(
+          { error: 'Validation error', details: presenceValidation.error.issues },
+          { status: 400 },
+        );
+      }
 
+      if (presenceValidation.data.status === 'joined') {
+        await prisma.standSession.upsert({
+          where: {
+            eventId_userId: {
+              eventId,
+              userId: ctx.userId,
+            },
+          },
+          create: {
+            eventId,
+            userId: ctx.userId,
+            section: userSection,
+            lastSeenAt: new Date(),
+          },
+          update: {
+            section: userSection,
+            lastSeenAt: new Date(),
+          },
+        });
+      } else {
+        await prisma.standSession.deleteMany({
+          where: { eventId, userId: ctx.userId },
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        presence: presenceValidation.data,
+      });
+    }
+
+    // Shared page/piece/night-mode state is conductor/director control. Ordinary
+    // attendees may receive it, but they must never be able to drive it.
+    if (!ctx.isDirector) {
+      return NextResponse.json(
+        { error: 'Forbidden: stand sync control requires director access' },
+        { status: 403 },
+      );
+    }
+
+    if (syncData.command) {
+      const commandValidation = commandSchema.safeParse(syncData.command);
+      if (!commandValidation.success) {
+        return NextResponse.json(
+          { error: 'Validation error', details: commandValidation.error.issues },
+          { status: 400 },
+        );
+      }
+
+      const { action, page, pieceIndex, value } = commandValidation.data;
+
+      if (action === 'setPage' && page) {
+        await updateStandState(eventId, { currentPage: page });
+      } else if (action === 'setPiece' && pieceIndex !== undefined) {
+        await updateStandState(eventId, { currentPieceIndex: pieceIndex });
+      } else if (action === 'toggleNightMode') {
+        const currentState = await getStandState(eventId);
+        await updateStandState(eventId, {
+          nightMode: value ?? !currentState?.nightMode,
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        command: commandValidation.data,
+        lastSyncAt: new Date().toISOString(),
+      });
+    }
+
+    if (syncData.mode) {
+      const modeValidation = modeSchema.safeParse(syncData.mode);
+      if (!modeValidation.success) {
+        return NextResponse.json(
+          { error: 'Validation error', details: modeValidation.error.issues },
+          { status: 400 },
+        );
+      }
+
+      if (
+        modeValidation.data.name === 'nightMode' &&
+        typeof modeValidation.data.value === 'boolean'
+      ) {
+        await updateStandState(eventId, { nightMode: modeValidation.data.value });
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode: modeValidation.data,
+        lastSyncAt: new Date().toISOString(),
+      });
+    }
+
+    const validated = syncStateSchema.parse({ eventId, ...syncData });
     const state = await updateStandState(eventId, {
       ...(validated.musicId !== undefined ? { musicId: validated.musicId } : {}),
       ...(validated.currentPage !== undefined ? { currentPage: validated.currentPage } : {}),
@@ -299,13 +399,10 @@ export async function POST(request: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Validation error', details: error.issues },
-        { status: 400 }
+        { status: 400 },
       );
     }
     console.error('Error updating sync state:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
