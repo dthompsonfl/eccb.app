@@ -10,6 +10,7 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 const nextConfig: NextConfig = {
   output: 'standalone',
   outputFileTracingRoot: projectRoot,
+  viewTransition: true,
 
   // Proxy WebSocket connections to the standalone socket worker when running.
   // The SOCKET_PORT env var controls which port it binds to (default 3226).
@@ -61,7 +62,7 @@ const nextConfig: NextConfig = {
     // large music PDFs.
     proxyClientMaxBodySize: '50mb',
     taint: true,
-    viewTransition: true,
+
     webVitalsAttribution: ['CLS', 'LCP']
   },
 
