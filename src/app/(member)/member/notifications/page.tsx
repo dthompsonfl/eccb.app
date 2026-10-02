@@ -1,180 +1,161 @@
+import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireAuth } from '@/lib/auth/guards';
-import { formatDate, formatRelativeTime } from '@/lib/date';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { formatRelativeTime } from '@/lib/date';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import Link from 'next/link';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Bell,
-  Megaphone,
-  Calendar,
   AlertTriangle,
+  Bell,
+  Calendar,
+  Check,
   Info,
+  Megaphone,
+  Music,
 } from 'lucide-react';
+import {
+  markAllNotificationsRead,
+  markNotificationRead,
+} from './actions';
+import type { NotificationType } from '@prisma/client';
+
+export const dynamic = 'force-dynamic';
+
+function safeNotificationHref(value: string | null): string | null {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return null;
+  return value;
+}
+
+const TYPE_META: Record<
+  NotificationType,
+  { label: string; icon: typeof Bell; badge: 'default' | 'secondary' | 'destructive' | 'outline' }
+> = {
+  ANNOUNCEMENT: { label: 'Announcement', icon: Megaphone, badge: 'secondary' },
+  EVENT_REMINDER: { label: 'Event', icon: Calendar, badge: 'default' },
+  MUSIC_ASSIGNMENT: { label: 'Music', icon: Music, badge: 'outline' },
+  ATTENDANCE_REMINDER: { label: 'Attendance', icon: AlertTriangle, badge: 'destructive' },
+  SYSTEM: { label: 'System', icon: Info, badge: 'secondary' },
+};
 
 export default async function MemberNotificationsPage() {
-  const _session = await requireAuth();
-  
-  const now = new Date();
+  const session = await requireAuth();
 
-  // Get active announcements
-  const announcements = await prisma.announcement.findMany({
-    where: {
-      publishAt: { lte: now },
-      OR: [
-        { expiresAt: null },
-        { expiresAt: { gt: now } },
-      ],
-      audience: { in: ['ALL', 'MEMBERS'] },
-      status: 'PUBLISHED',
-    },
-    include: {
-      author: {
-        select: { name: true },
-      },
-    },
-    orderBy: [
-      { isPinned: 'desc' },
-      { isUrgent: 'desc' },
-      { publishAt: 'desc' },
-    ],
-    take: 20,
-  });
-
-  // Get upcoming events in next 7 days
-  const upcomingEvents = await prisma.event.findMany({
-    where: {
-      startTime: {
-        gte: now,
-        lte: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
-      },
-      isCancelled: false,
-      isPublished: true,
-    },
-    include: {
-      venue: {
-        select: { name: true },
-      },
-    },
-    orderBy: { startTime: 'asc' },
-  });
-
-  const typeIcons: Record<string, React.ReactNode> = {
-    INFO: <Info className="h-5 w-5 text-blue-500" />,
-    WARNING: <AlertTriangle className="h-5 w-5 text-amber-500" />,
-    URGENT: <AlertTriangle className="h-5 w-5 text-red-500" />,
-    EVENT: <Calendar className="h-5 w-5 text-green-500" />,
-  };
-
-  const typeColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-    INFO: 'secondary',
-    WARNING: 'outline',
-    URGENT: 'destructive',
-    EVENT: 'default',
-  };
+  const [notifications, unreadCount] = await Promise.all([
+    prisma.userNotification.findMany({
+      where: { userId: session.user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    }),
+    prisma.userNotification.count({
+      where: { userId: session.user.id, isRead: false },
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Notifications</h1>
-        <p className="text-muted-foreground">
-          Announcements and updates from the band
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight">Notifications</h1>
+            {unreadCount > 0 ? <Badge>{unreadCount} unread</Badge> : null}
+          </div>
+          <p className="text-muted-foreground">
+            Your announcements, event reminders, music assignments, and system updates.
+          </p>
+        </div>
+
+        {unreadCount > 0 ? (
+          <form action={markAllNotificationsRead}>
+            <Button type="submit" variant="outline" size="sm">
+              <Check className="mr-2 h-4 w-4" />
+              Mark all read
+            </Button>
+          </form>
+        ) : null}
       </div>
 
-      {/* Upcoming Events Alert */}
-      {upcomingEvents.length > 0 && (
-        <Card className="border-primary">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-primary" />
-              <CardTitle className="text-lg">Coming Up This Week</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {upcomingEvents.map((event) => (
-                <Link
-                  key={event.id}
-                  href={`/member/events/${event.id}`}
-                  className="flex items-center justify-between p-3 rounded-lg hover:bg-muted transition-colors"
-                >
-                  <div>
-                    <p className="font-medium">{event.title}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatDate(event.startTime)} • {event.venue?.name || 'TBD'}
-                    </p>
-                  </div>
-                  <Badge variant={event.type === 'CONCERT' ? 'default' : 'secondary'}>
-                    {event.type}
-                  </Badge>
-                </Link>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Announcements */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Megaphone className="h-5 w-5" />
-            <CardTitle>Announcements</CardTitle>
+            <Bell className="h-5 w-5" />
+            <CardTitle>Notification Center</CardTitle>
           </div>
           <CardDescription>
-            Important updates and news from the band
+            Read state is saved to your account and follows you across devices.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {announcements.length === 0 ? (
-            <div className="text-center py-12">
+          {notifications.length === 0 ? (
+            <div className="py-12 text-center">
               <Bell className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-semibold">All caught up!</h3>
+              <h2 className="mt-4 text-lg font-semibold">No notifications yet</h2>
               <p className="text-muted-foreground">
-                No new announcements at this time
+                New band updates will appear here.
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {announcements.map((announcement) => (
-                <div
-                  key={announcement.id}
-                  className={`p-4 rounded-lg border ${
-                    announcement.type === 'URGENT'
-                      ? 'border-red-500 bg-red-500/5'
-                      : announcement.type === 'WARNING'
-                      ? 'border-amber-500 bg-amber-500/5'
-                      : 'bg-muted/30'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0 mt-1">
-                      {typeIcons[announcement.type]}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-semibold">{announcement.title}</h3>
-                        <Badge variant={typeColors[announcement.type]}>
-                          {announcement.type}
-                        </Badge>
-                        {announcement.isPinned && (
-                          <Badge variant="outline">Pinned</Badge>
-                        )}
+            <div className="space-y-3">
+              {notifications.map((notification) => {
+                const meta = TYPE_META[notification.type];
+                const Icon = meta.icon;
+                const safeLinkUrl = safeNotificationHref(notification.linkUrl);
+
+                return (
+                  <article
+                    key={notification.id}
+                    className={`rounded-lg border p-4 ${
+                      notification.isRead ? 'bg-background' : 'border-primary/40 bg-primary/5'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-1 shrink-0">
+                        <Icon className="h-5 w-5 text-primary" aria-hidden="true" />
                       </div>
-                      <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
-                        {announcement.content}
-                      </p>
-                      <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-                        <span>By {announcement.author?.name || 'Admin'}</span>
-                        {announcement.publishAt && (
-                          <span>{formatRelativeTime(announcement.publishAt)}</span>
-                        )}
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="font-semibold">{notification.title}</h2>
+                          <Badge variant={meta.badge}>{meta.label}</Badge>
+                          {!notification.isRead ? <Badge variant="outline">Unread</Badge> : null}
+                        </div>
+
+                        <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                          {notification.message}
+                        </p>
+
+                        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <time dateTime={notification.createdAt.toISOString()}>
+                            {formatRelativeTime(notification.createdAt)}
+                          </time>
+                          {notification.readAt ? (
+                            <span>Read {formatRelativeTime(notification.readAt)}</span>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {safeLinkUrl ? (
+                            <Button asChild size="sm" variant="outline">
+                              <Link href={safeLinkUrl}>
+                                {notification.linkText || 'View details'}
+                              </Link>
+                            </Button>
+                          ) : null}
+
+                          {!notification.isRead ? (
+                            <form action={markNotificationRead.bind(null, notification.id)}>
+                              <Button type="submit" size="sm" variant="ghost">
+                                <Check className="mr-2 h-4 w-4" />
+                                Mark read
+                              </Button>
+                            </form>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           )}
         </CardContent>
