@@ -50,7 +50,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --global npm@11.1.0 && npm ci
+        run: npm install --global npm@11.21.0 && npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
@@ -150,7 +150,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --global npm@11.1.0 && npm ci
+        run: npm install --global npm@11.21.0 && npm ci
 
       - name: Install Playwright
         run: npx playwright install chromium
@@ -218,7 +218,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --global npm@11.1.0 && npm ci
+        run: npm install --global npm@11.21.0 && npm ci
 
       - name: Install Playwright
         run: npx playwright install chromium
