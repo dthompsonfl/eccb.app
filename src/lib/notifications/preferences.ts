@@ -13,9 +13,18 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: Readonly<NotificationPreferences>
 export type NotificationPreferenceKey = keyof NotificationPreferences;
 
 export function parseUserPreferenceSettings(
-  raw: string | null | undefined,
+  raw: unknown,
 ): Record<string, unknown> {
   if (!raw) return {};
+
+  // Prisma stores this field as JSON text today, but accepting an already
+  // parsed object makes the merge path tolerant of legacy callers/tests and
+  // future storage migrations without discarding unrelated preferences.
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return { ...(raw as Record<string, unknown>) };
+  }
+
+  if (typeof raw !== 'string') return {};
 
   try {
     const parsed = JSON.parse(raw) as unknown;
