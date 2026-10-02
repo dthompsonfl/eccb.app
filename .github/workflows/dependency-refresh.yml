@@ -24,9 +24,6 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Pin npm
-        run: npm install --global npm@11.1.0
-
       - name: Update remaining audited direct dependencies
         run: |
           node <<'NODE'
@@ -54,12 +51,15 @@ jobs:
           };
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           NODE
-          # npm 11.1.0 currently crashes inside Arborist (edgesOut) while
-          # resolving this refreshed graph. Generate the v3 lockfile with the
-          # Node 22 runner's compatible npm 10 line, then immediately prove
-          # that the repository's required npm 11.1.0 can consume it.
+          # Generate a clean lockfile with the Node 22 runner's bundled
+          # npm 10.9.9. npm 11.1.0 crashes inside Arborist (edgesOut) while
+          # resolving this graph, so do not use it for the resolution step.
           rm -f package-lock.json
-          npx --yes npm@10.9.9 install --package-lock-only --ignore-scripts
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Verify regenerated lockfile with repository npm
+        run: |
+          npm install --global npm@11.1.0
           npm ci --ignore-scripts
 
       - name: Record remaining audit result
