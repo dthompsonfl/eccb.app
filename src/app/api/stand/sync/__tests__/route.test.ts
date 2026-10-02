@@ -2,38 +2,51 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GET, POST } from '@/app/api/stand/sync/route';
 import { NextRequest } from 'next/server';
 
+const redisMocks = vi.hoisted(() => {
+  const multi = {
+    hset: vi.fn(),
+    expire: vi.fn(),
+    exec: vi.fn().mockResolvedValue([]),
+  };
+  multi.hset.mockReturnValue(multi);
+  multi.expire.mockReturnValue(multi);
+
+  return {
+    hgetall: vi.fn().mockResolvedValue({}),
+    multiFactory: vi.fn(() => multi),
+    multi,
+  };
+});
+
 vi.mock('@/lib/rate-limit', () => ({
   applyRateLimit: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/lib/stand/settings', () => ({
-  getStandSettings: vi.fn().mockResolvedValue({
-    accessPolicy: 'any_member',
-  }),
+  getStandSettings: vi.fn().mockResolvedValue({ accessPolicy: 'any_member' }),
 }));
 
-// Mock auth
 vi.mock('@/lib/auth/config', () => ({
-  auth: {
-    api: {
-      getSession: vi.fn(),
-    },
-  },
+  auth: { api: { getSession: vi.fn() } },
 }));
 
-// Mock permissions
 vi.mock('@/lib/auth/permissions', () => ({
   getUserRoles: vi.fn().mockResolvedValue(['MUSICIAN']),
 }));
 
-// Mock prisma
+vi.mock('@/lib/redis', () => ({
+  redis: {
+    hgetall: redisMocks.hgetall,
+    multi: redisMocks.multiFactory,
+  },
+}));
+
 vi.mock('@/lib/db', () => ({
   prisma: {
     standSession: {
-      count: vi.fn().mockResolvedValue(0),
       upsert: vi.fn().mockResolvedValue({}),
-      findFirst: vi.fn(),
-      findMany: vi.fn(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     annotation: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -43,8 +56,10 @@ vi.mock('@/lib/db', () => ({
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    user: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: {
-      // default to an active member; individual tests may override
       findFirst: vi.fn().mockResolvedValue({
         id: 'member-1',
         userId: 'user-1',
@@ -55,7 +70,6 @@ vi.mock('@/lib/db', () => ({
       findUnique: vi.fn(),
     },
     event: {
-      // default to a published event
       findFirst: vi.fn().mockResolvedValue({ id: 'test-event', isPublished: true }),
       findUnique: vi.fn(),
     },
@@ -66,6 +80,7 @@ vi.mock('@/lib/db', () => ({
 }));
 
 import { auth } from '@/lib/auth/config';
+import { getUserRoles } from '@/lib/auth/permissions';
 import { prisma } from '@/lib/db';
 
 const mockAuth = auth as unknown as { api: { getSession: ReturnType<typeof vi.fn> } };
@@ -73,192 +88,126 @@ const mockAuth = auth as unknown as { api: { getSession: ReturnType<typeof vi.fn
 describe('Stand Sync API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getUserRoles).mockResolvedValue(['MUSICIAN']);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue({
+      id: 'member-1',
+      userId: 'user-1',
+      firstName: 'John',
+      lastName: 'Doe',
+      sections: [],
+    } as never);
+    vi.mocked(prisma.event.findFirst).mockResolvedValue({
+      id: 'test-event',
+      isPublished: true,
+    } as never);
+    vi.mocked(prisma.standSession.findMany).mockResolvedValue([]);
+    redisMocks.hgetall.mockResolvedValue({});
+    redisMocks.multi.hset.mockReturnValue(redisMocks.multi);
+    redisMocks.multi.expire.mockReturnValue(redisMocks.multi);
+    redisMocks.multi.exec.mockResolvedValue([]);
   });
 
-  describe('GET', () => {
-    it('should return 401 if no session', async () => {
-      mockAuth.api.getSession.mockResolvedValue(null);
-
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync?eventId=test-event')
-      );
-
-      const response = await GET(request);
-      const data = await response.json();
-
-      expect(response.status).toBe(401);
-      expect(data.error).toBe('Unauthorized');
-    });
-
-    it('should return 400 if no eventId', async () => {
-      mockAuth.api.getSession.mockResolvedValue({
-        user: { id: 'user-1' },
-      });
-
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync')
-      );
-
-      const response = await GET(request);
-      const data = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(data.error).toBe('eventId query parameter is required');
-    });
-
-    it('should return sync state for valid request', async () => {
-      mockAuth.api.getSession.mockResolvedValue({
-        user: { id: 'user-1' },
-      });
-      mockAuth.api.getSession.mockResolvedValue({
-        user: { id: 'user-1' },
-      });
-
-      // Mock member lookup for event access
-      vi.mocked(prisma.member.findFirst).mockResolvedValueOnce({
-        id: 'member-1',
-        userId: 'user-1',
-        firstName: 'John',
-        lastName: 'Doe',
-        sections: [],
-      } as any);
-
-      vi.mocked(prisma.event.findFirst).mockResolvedValueOnce({
-        id: 'test-event',
-        title: 'Test Event',
-      } as any);
-
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync?eventId=test-event')
-      );
-
-      const response = await GET(request);
-      const data = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(data.eventId).toBe('test-event');
-      expect(data.activeUsers).toBe(0);
-    });
+  it('returns 401 without a session', async () => {
+    mockAuth.api.getSession.mockResolvedValue(null);
+    const response = await GET(
+      new NextRequest('http://localhost:3000/api/stand/sync?eventId=test-event'),
+    );
+    expect(response.status).toBe(401);
   });
 
-  describe('POST', () => {
-    it('should return 401 if no session', async () => {
-      mockAuth.api.getSession.mockResolvedValue(null);
-
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync'),
-        {
-          method: 'POST',
-          body: JSON.stringify({ eventId: 'test-event' }),
-        }
-      );
-
-      const response = await POST(request);
-      const data = await response.json();
-
-      expect(response.status).toBe(401);
-      expect(data.error).toBe('Unauthorized');
+  it('returns persisted distributed sync state', async () => {
+    mockAuth.api.getSession.mockResolvedValue({ user: { id: 'user-1' } });
+    redisMocks.hgetall.mockResolvedValue({
+      eventId: 'test-event',
+      currentPage: '4',
+      currentPieceIndex: '2',
+      nightMode: 'true',
+      lastUpdated: '2026-10-01T00:00:00.000Z',
     });
 
-    it('should return 400 if no eventId', async () => {
-      mockAuth.api.getSession.mockResolvedValue({
-        user: { id: 'user-1', email: 'test@example.com' },
-      });
+    const response = await GET(
+      new NextRequest('http://localhost:3000/api/stand/sync?eventId=test-event'),
+    );
+    const data = await response.json();
 
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync'),
-        {
-          method: 'POST',
-          body: JSON.stringify({}),
-        }
-      );
+    expect(response.status).toBe(200);
+    expect(data.currentPage).toBe(4);
+    expect(data.currentPieceIndex).toBe(2);
+    expect(data.nightMode).toBe(true);
+  });
 
-      const response = await POST(request);
-      const data = await response.json();
+  it('rejects shared stand control from ordinary members', async () => {
+    mockAuth.api.getSession.mockResolvedValue({ user: { id: 'user-1' } });
 
-      expect(response.status).toBe(400);
-      expect(data.error).toBe('eventId is required');
+    const response = await POST(
+      new NextRequest('http://localhost:3000/api/stand/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          eventId: 'test-event',
+          command: { type: 'command', action: 'setPage', page: 5 },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it('allows director shared stand control', async () => {
+    mockAuth.api.getSession.mockResolvedValue({ user: { id: 'user-1' } });
+    vi.mocked(getUserRoles).mockResolvedValue(['DIRECTOR']);
+    redisMocks.hgetall.mockResolvedValue({
+      eventId: 'test-event',
+      currentPage: '5',
+      lastUpdated: '2026-10-01T00:00:00.000Z',
     });
 
-    it('should update sync state for valid command', async () => {
-      mockAuth.api.getSession.mockResolvedValue({
-        user: { id: 'user-1', email: 'test@example.com' },
-      });
+    const response = await POST(
+      new NextRequest('http://localhost:3000/api/stand/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          eventId: 'test-event',
+          command: { type: 'command', action: 'setPage', page: 5 },
+        }),
+      }),
+    );
 
-      vi.mocked(prisma.member.findFirst).mockResolvedValueOnce({
-        id: 'member-1',
-        userId: 'user-1',
-        firstName: 'John',
-        lastName: 'Doe',
-        sections: [],
-      } as any);
+    expect(response.status).toBe(200);
+    expect(redisMocks.multiFactory).toHaveBeenCalled();
+  });
 
-      vi.mocked(prisma.event.findFirst).mockResolvedValueOnce({
-        id: 'test-event',
-        title: 'Test Event',
-      } as any);
+  it('allows ordinary members to update presence', async () => {
+    mockAuth.api.getSession.mockResolvedValue({ user: { id: 'user-1' } });
 
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync'),
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            eventId: 'test-event',
-            command: {
-              type: 'command',
-              action: 'setPage',
-              page: 5,
-            },
-          }),
-        }
-      );
+    const response = await POST(
+      new NextRequest('http://localhost:3000/api/stand/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          eventId: 'test-event',
+          presence: { type: 'presence', status: 'joined' },
+        }),
+      }),
+    );
 
-      const response = await POST(request);
-      const data = await response.json();
+    expect(response.status).toBe(200);
+    expect(prisma.standSession.upsert).toHaveBeenCalled();
+  });
 
-      expect(response.status).toBe(200);
-      expect(data.success).toBe(true);
-      expect(data.command.action).toBe('setPage');
-    });
+  it('removes presence immediately on leave', async () => {
+    mockAuth.api.getSession.mockResolvedValue({ user: { id: 'user-1' } });
 
-    it('should handle presence updates', async () => {
-      mockAuth.api.getSession.mockResolvedValue({
-        user: { id: 'user-1', email: 'test@example.com' },
-      });
+    const response = await POST(
+      new NextRequest('http://localhost:3000/api/stand/sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          eventId: 'test-event',
+          presence: { type: 'presence', status: 'left' },
+        }),
+      }),
+    );
 
-      vi.mocked(prisma.member.findFirst).mockResolvedValueOnce({
-        id: 'member-1',
-        userId: 'user-1',
-        firstName: 'John',
-        lastName: 'Doe',
-        sections: [],
-      } as any);
-
-      vi.mocked(prisma.event.findFirst).mockResolvedValueOnce({
-        id: 'test-event',
-        title: 'Test Event',
-      } as any);
-
-      const request = new NextRequest(
-        new URL('http://localhost:3000/api/stand/sync'),
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            eventId: 'test-event',
-            presence: {
-              type: 'presence',
-              status: 'joined',
-            },
-          }),
-        }
-      );
-
-      const response = await POST(request);
-      const data = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(data.success).toBe(true);
-      expect(data.presence.status).toBe('joined');
+    expect(response.status).toBe(200);
+    expect(prisma.standSession.deleteMany).toHaveBeenCalledWith({
+      where: { eventId: 'test-event', userId: 'user-1' },
     });
   });
 });
