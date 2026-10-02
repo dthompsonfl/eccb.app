@@ -605,7 +605,7 @@ function StandViewerContent({ data }: StandViewerProps) {
   });
 
   useEffect(() => {
-    if (!standConfig?.enabled || !currentPiece) {
+    if (!standConfig?.enabled || !currentPiece || !isDirector) {
       return;
     }
 
@@ -630,7 +630,7 @@ function StandViewerContent({ data }: StandViewerProps) {
     }).catch(() => {
       /* sync broadcast is best-effort */
     });
-  }, [currentPage, currentPiece, currentPieceIndex, eventId, nightMode, standConfig?.enabled]);
+  }, [currentPage, currentPiece, currentPieceIndex, eventId, isDirector, nightMode, standConfig?.enabled]);
 
   const partOptions = (() => {
     if (!currentMusicEntry) return { fullScore: null, parts: [], activeId: null };

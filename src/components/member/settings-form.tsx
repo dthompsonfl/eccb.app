@@ -29,6 +29,11 @@ import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { Loader2, User, Shield, Bell, BellRing, Lock } from 'lucide-react';
 import { PushNotificationSettings } from '@/components/push/push-notification-settings';
+import { updateNotificationPreferences } from '@/app/(member)/member/settings/actions';
+import type {
+  NotificationPreferences,
+  NotificationPreferenceKey,
+} from '@/lib/notifications/preferences';
 
 const profileSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -54,12 +59,22 @@ interface MemberSettingsFormProps {
     emailVerified: boolean;
     twoFactorEnabled?: boolean;
   };
+  initialNotificationPreferences: NotificationPreferences;
 }
 
-export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
+export function MemberSettingsForm({
+  user,
+  initialNotificationPreferences,
+}: MemberSettingsFormProps) {
   const router = useRouter();
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [isSendingVerification, setIsSendingVerification] = useState(false);
+  const [savingPreference, setSavingPreference] =
+    useState<NotificationPreferenceKey | null>(null);
+  const [notificationPreferences, setNotificationPreferences] = useState(
+    initialNotificationPreferences,
+  );
 
   const profileForm = useForm<ProfileFormValues>({
     resolver: zodResolver(profileSchema),
@@ -109,6 +124,67 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
       setIsUpdatingPassword(false);
     }
   }
+
+  async function resendVerificationEmail() {
+    setIsSendingVerification(true);
+    try {
+      const result = await authClient.sendVerificationEmail({
+        email: user.email,
+        callbackURL: '/member/settings',
+      });
+      if (result.error) throw new Error(result.error.message);
+      toast.success('Verification email sent');
+    } catch (error) {
+      console.error('Failed to resend verification email:', error);
+      toast.error('Failed to send verification email');
+    } finally {
+      setIsSendingVerification(false);
+    }
+  }
+
+  async function setPreference(
+    key: NotificationPreferenceKey,
+    checked: boolean,
+  ) {
+    const previous = notificationPreferences;
+    const next = { ...notificationPreferences, [key]: checked };
+    setNotificationPreferences(next);
+    setSavingPreference(key);
+
+    try {
+      const result = await updateNotificationPreferences(next);
+      if (!result.success) throw new Error(result.error);
+      toast.success('Notification preferences saved');
+    } catch (error) {
+      console.error('Failed to update notification preference:', error);
+      setNotificationPreferences(previous);
+      toast.error('Failed to save notification preference');
+    } finally {
+      setSavingPreference(null);
+    }
+  }
+
+  const preferenceRows: Array<{
+    key: NotificationPreferenceKey;
+    label: string;
+    description: string;
+  }> = [
+    {
+      key: 'eventReminders',
+      label: 'Event Reminders',
+      description: 'Receive reminders before rehearsals and concerts',
+    },
+    {
+      key: 'musicAssignments',
+      label: 'New Music Assignments',
+      description: 'Get notified when new music is assigned to you',
+    },
+    {
+      key: 'announcements',
+      label: 'Band Announcements',
+      description: 'Receive important announcements from band leadership',
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -245,7 +321,15 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
                 : 'Your email address has not been verified. Please check your inbox for a verification link.'}
             </p>
             {!user.emailVerified && (
-              <Button variant="outline" size="sm">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={resendVerificationEmail}
+                disabled={isSendingVerification}
+              >
+                {isSendingVerification ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
                 Resend Verification Email
               </Button>
             )}
@@ -265,39 +349,28 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="font-medium">Event Reminders</span>
-              <p className="text-sm text-muted-foreground">
-                Receive email reminders before rehearsals and concerts
-              </p>
+          {preferenceRows.map((row, index) => (
+            <div key={row.key}>
+              {index > 0 ? <Separator className="mb-4" /> : null}
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <span className="font-medium">{row.label}</span>
+                  <p className="text-sm text-muted-foreground">{row.description}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {savingPreference === row.key ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : null}
+                  <Switch
+                    checked={notificationPreferences[row.key]}
+                    onCheckedChange={(checked) => setPreference(row.key, checked)}
+                    disabled={savingPreference !== null}
+                    aria-label={row.label}
+                  />
+                </div>
+              </div>
             </div>
-            <Switch defaultChecked />
-          </div>
-
-          <Separator />
-
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="font-medium">New Music Assignments</span>
-              <p className="text-sm text-muted-foreground">
-                Get notified when new music is assigned to you
-              </p>
-            </div>
-            <Switch defaultChecked />
-          </div>
-
-          <Separator />
-
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <span className="font-medium">Band Announcements</span>
-              <p className="text-sm text-muted-foreground">
-                Receive important announcements from band leadership
-              </p>
-            </div>
-            <Switch defaultChecked />
-          </div>
+          ))}
         </CardContent>
       </Card>
 

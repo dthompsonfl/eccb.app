@@ -52,8 +52,11 @@ export const ProviderValueSchema = z.enum(providerTuple);
 export type ProviderValue = z.infer<typeof ProviderValueSchema>;
 
 // OCR engine options
-const ocrEngineTuple = ['tesseract', 'ocrmypdf', 'vision_api', 'native'] as const;
-export const OcrEngineSchema = z.enum(ocrEngineTuple);
+const ocrEngineTuple = ['tesseract', 'ocrmypdf', 'native'] as const;
+export const OcrEngineSchema = z.preprocess(
+  (value) => (value === 'vision_api' ? 'tesseract' : value),
+  z.enum(ocrEngineTuple),
+);
 export type OcrEngineValue = z.infer<typeof OcrEngineSchema>;
 
 // OCR mode options

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { requireStandAccess } from '@/lib/stand/access';
 import { z } from 'zod';
+import { parseUserPreferenceSettings } from '@/lib/notifications/preferences';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest) {
     if (!preferences) {
       preferences = await prisma.userPreferences.create({
         data: {
-          userId: ctx.userId,
+          userId: targetUserId,
           nightMode: false,
         },
       });
@@ -98,8 +99,7 @@ export async function POST(request: NextRequest) {
       where: { userId: ctx.userId },
     });
 
-    const existingOther =
-      (existing?.otherSettings as Record<string, unknown> | null) ?? {};
+    const existingOther = parseUserPreferenceSettings(existing?.otherSettings);
 
     // Deep-merge: existing otherSettings ← new otherSettings ← sub-key overrides
     const mergedOtherSettings: Record<string, unknown> = {

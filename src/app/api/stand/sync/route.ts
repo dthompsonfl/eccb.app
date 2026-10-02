@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { redis } from '@/lib/redis';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { z } from 'zod';
 import { annotationVisibilityFilter, requireEventStandAccess } from '@/lib/stand/access';
@@ -52,67 +53,118 @@ const presenceSchema = z.object({
   status: z.enum(['joined', 'left']),
 });
 
+interface StandSyncState {
+  eventId: string;
+  musicId?: string;
+  currentPage?: number;
+  currentPieceIndex?: number;
+  nightMode?: boolean;
+  lastUpdated: string;
+}
+
 const ACTIVE_PRESENCE_WINDOW_MS = 30_000;
+const STATE_TTL_SECONDS = 12 * 60 * 60;
+const STATE_KEY_PREFIX = 'stand:sync:state:';
 
-// In-memory sync state (for simple polling and WebSocket state sharing)
-// In production with custom server, use Redis for distributed state
-const standStateMap = new Map<
-  string,
-  {
-    eventId: string;
-    musicId?: string;
-    currentPage?: number;
-    currentPieceIndex?: number;
-    nightMode?: boolean;
-    lastUpdated: Date;
-  }
->();
-
-// In-memory presence tracking
-const presenceMap = new Map<
-  string,
-  {
-    userId: string;
-    name: string;
-    section?: string;
-    eventId: string;
-    lastSeen: Date;
-  }
->();
-
-function getStandState(eventId: string) {
-  return standStateMap.get(eventId);
+function stateKey(eventId: string): string {
+  return `${STATE_KEY_PREFIX}${eventId}`;
 }
 
-function updateStandState(eventId: string, updates: Partial<{
-  musicId: string;
-  currentPage: number;
-  currentPieceIndex: number;
-  nightMode: boolean;
-}>) {
-  let state = standStateMap.get(eventId);
-  if (!state) {
-    state = {
-      eventId,
-      lastUpdated: new Date(),
-    };
-  }
+function parseInteger(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
-  state = {
-    ...state,
-    ...updates,
-    lastUpdated: new Date(),
+async function getStandState(eventId: string): Promise<StandSyncState | undefined> {
+  const raw = await redis.hgetall(stateKey(eventId));
+  if (Object.keys(raw).length === 0) return undefined;
+
+  return {
+    eventId,
+    musicId: raw.musicId || undefined,
+    currentPage: parseInteger(raw.currentPage),
+    currentPieceIndex: parseInteger(raw.currentPieceIndex),
+    nightMode:
+      raw.nightMode === undefined ? undefined : raw.nightMode === 'true',
+    lastUpdated: raw.lastUpdated || new Date().toISOString(),
   };
-
-  standStateMap.set(eventId, state);
-  return state;
 }
 
-function getActiveUsers(eventId: string) {
+async function updateStandState(
+  eventId: string,
+  updates: Partial<Pick<StandSyncState, 'musicId' | 'currentPage' | 'currentPieceIndex' | 'nightMode'>>,
+): Promise<StandSyncState> {
+  const now = new Date().toISOString();
+  const fields: string[] = ['eventId', eventId, 'lastUpdated', now];
+
+  if (updates.musicId !== undefined) fields.push('musicId', updates.musicId);
+  if (updates.currentPage !== undefined) fields.push('currentPage', String(updates.currentPage));
+  if (updates.currentPieceIndex !== undefined) {
+    fields.push('currentPieceIndex', String(updates.currentPieceIndex));
+  }
+  if (updates.nightMode !== undefined) fields.push('nightMode', String(updates.nightMode));
+
+  await redis
+    .multi()
+    .hset(stateKey(eventId), ...fields)
+    .expire(stateKey(eventId), STATE_TTL_SECONDS)
+    .exec();
+
+  return (await getStandState(eventId)) ?? {
+    eventId,
+    ...updates,
+    lastUpdated: now,
+  };
+}
+
+async function getActiveUsers(eventId: string) {
   const cutoff = new Date(Date.now() - ACTIVE_PRESENCE_WINDOW_MS);
-  return Array.from(presenceMap.values()).filter(
-    (p) => p.eventId === eventId && p.lastSeen > cutoff
+  const sessions = await prisma.standSession.findMany({
+    where: {
+      eventId,
+      lastSeenAt: { gte: cutoff },
+    },
+    select: {
+      userId: true,
+      section: true,
+      lastSeenAt: true,
+    },
+    orderBy: { lastSeenAt: 'desc' },
+  });
+
+  if (sessions.length === 0) return [];
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: sessions.map((session) => session.userId) } },
+    select: {
+      id: true,
+      name: true,
+      member: {
+        select: {
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
+  });
+
+  const names = new Map(
+    users.map((user) => [
+      user.id,
+      user.name ||
+        (user.member
+          ? `${user.member.firstName} ${user.member.lastName}`.trim()
+          : user.id),
+    ]),
   );
+
+  return sessions.map((session) => ({
+    userId: session.userId,
+    name: names.get(session.userId) ?? session.userId,
+    section: session.section ?? undefined,
+    lastSeenAt: session.lastSeenAt,
+  }));
 }
 
 /**
@@ -138,8 +190,10 @@ export async function GET(request: NextRequest) {
 
     recordTelemetry({ event: 'stand.sync.poll', userId: ctx.userId, eventId });
 
-    const state = getStandState(eventId);
-    const activeUsers = getActiveUsers(eventId);
+    const [state, activeUsers] = await Promise.all([
+      getStandState(eventId),
+      getActiveUsers(eventId),
+    ]);
 
     let recentAnnotations: unknown[] = [];
     if (musicId) {
@@ -162,7 +216,7 @@ export async function GET(request: NextRequest) {
       currentPage: state?.currentPage,
       currentPieceIndex: state?.currentPieceIndex,
       nightMode: state?.nightMode,
-      lastSyncAt: state?.lastUpdated?.toISOString() || new Date().toISOString(),
+      lastSyncAt: state?.lastUpdated || new Date().toISOString(),
       activeUsers: activeUsers.length,
       activeUserList: activeUsers.map((u) => ({
         userId: u.userId,
@@ -187,6 +241,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const rateLimited = await applyRateLimit(request, 'stand-sync');
+    if (rateLimited) return rateLimited;
+
     const body = await request.json();
     const { eventId, ...syncData } = body;
 
@@ -202,68 +259,18 @@ export async function POST(request: NextRequest) {
       include: { sections: { where: { isLeader: true }, include: { section: true } } },
     });
 
-    const userName = member
-      ? [member.firstName, member.lastName].filter(Boolean).join(' ').trim() || ctx.userId
-      : ctx.userId;
     const userSection = member?.sections[0]?.section.name;
-
-    if (syncData.command) {
-      const commandValidation = commandSchema.safeParse(syncData.command);
-      if (commandValidation.success) {
-        const { action, page, pieceIndex, value } = commandValidation.data;
-
-        if (action === 'setPage' && page) {
-          updateStandState(eventId, { currentPage: page });
-        } else if (action === 'setPiece' && pieceIndex !== undefined) {
-          updateStandState(eventId, { currentPieceIndex: pieceIndex });
-        } else if (action === 'toggleNightMode') {
-          const currentState = getStandState(eventId);
-          updateStandState(eventId, { nightMode: value ?? !currentState?.nightMode });
-        }
-
-        return NextResponse.json({
-          success: true,
-          command: commandValidation.data,
-          lastSyncAt: new Date().toISOString(),
-        });
-      }
-    }
-
-    if (syncData.mode) {
-      const modeValidation = modeSchema.safeParse(syncData.mode);
-      if (modeValidation.success) {
-        if (
-          modeValidation.data.name === 'nightMode' &&
-          typeof modeValidation.data.value === 'boolean'
-        ) {
-          updateStandState(eventId, { nightMode: modeValidation.data.value });
-        }
-
-        return NextResponse.json({
-          success: true,
-          mode: modeValidation.data,
-          lastSyncAt: new Date().toISOString(),
-        });
-      }
-    }
 
     if (syncData.presence) {
       const presenceValidation = presenceSchema.safeParse(syncData.presence);
-      if (presenceValidation.success) {
-        const { status } = presenceValidation.data;
+      if (!presenceValidation.success) {
+        return NextResponse.json(
+          { error: 'Validation error', details: presenceValidation.error.issues },
+          { status: 400 },
+        );
+      }
 
-        if (status === 'joined') {
-          presenceMap.set(`${eventId}:${ctx.userId}`, {
-            userId: ctx.userId,
-            name: userName,
-            section: userSection,
-            eventId,
-            lastSeen: new Date(),
-          });
-        } else {
-          presenceMap.delete(`${eventId}:${ctx.userId}`);
-        }
-
+      if (presenceValidation.data.status === 'joined') {
         await prisma.standSession.upsert({
           where: {
             eventId_userId: {
@@ -274,23 +281,89 @@ export async function POST(request: NextRequest) {
           create: {
             eventId,
             userId: ctx.userId,
+            section: userSection,
             lastSeenAt: new Date(),
           },
           update: {
+            section: userSection,
             lastSeenAt: new Date(),
           },
         });
-
-        return NextResponse.json({
-          success: true,
-          presence: presenceValidation.data,
+      } else {
+        await prisma.standSession.deleteMany({
+          where: { eventId, userId: ctx.userId },
         });
       }
+
+      return NextResponse.json({
+        success: true,
+        presence: presenceValidation.data,
+      });
+    }
+
+    // Shared page/piece/night-mode state is conductor/director control. Ordinary
+    // attendees may receive it, but they must never be able to drive it.
+    if (!ctx.isDirector) {
+      return NextResponse.json(
+        { error: 'Forbidden: stand sync control requires director access' },
+        { status: 403 },
+      );
+    }
+
+    if (syncData.command) {
+      const commandValidation = commandSchema.safeParse(syncData.command);
+      if (!commandValidation.success) {
+        return NextResponse.json(
+          { error: 'Validation error', details: commandValidation.error.issues },
+          { status: 400 },
+        );
+      }
+
+      const { action, page, pieceIndex, value } = commandValidation.data;
+
+      if (action === 'setPage' && page) {
+        await updateStandState(eventId, { currentPage: page });
+      } else if (action === 'setPiece' && pieceIndex !== undefined) {
+        await updateStandState(eventId, { currentPieceIndex: pieceIndex });
+      } else if (action === 'toggleNightMode') {
+        const currentState = await getStandState(eventId);
+        await updateStandState(eventId, {
+          nightMode: value ?? !currentState?.nightMode,
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        command: commandValidation.data,
+        lastSyncAt: new Date().toISOString(),
+      });
+    }
+
+    if (syncData.mode) {
+      const modeValidation = modeSchema.safeParse(syncData.mode);
+      if (!modeValidation.success) {
+        return NextResponse.json(
+          { error: 'Validation error', details: modeValidation.error.issues },
+          { status: 400 },
+        );
+      }
+
+      if (
+        modeValidation.data.name === 'nightMode' &&
+        typeof modeValidation.data.value === 'boolean'
+      ) {
+        await updateStandState(eventId, { nightMode: modeValidation.data.value });
+      }
+
+      return NextResponse.json({
+        success: true,
+        mode: modeValidation.data,
+        lastSyncAt: new Date().toISOString(),
+      });
     }
 
     const validated = syncStateSchema.parse({ eventId, ...syncData });
-
-    const state = updateStandState(eventId, {
+    const state = await updateStandState(eventId, {
       ...(validated.musicId !== undefined ? { musicId: validated.musicId } : {}),
       ...(validated.currentPage !== undefined ? { currentPage: validated.currentPage } : {}),
       ...(validated.currentPieceIndex !== undefined
@@ -309,28 +382,27 @@ export async function POST(request: NextRequest) {
       create: {
         eventId: validated.eventId,
         userId: ctx.userId,
+        section: userSection,
         lastSeenAt: new Date(),
       },
       update: {
+        section: userSection,
         lastSeenAt: new Date(),
       },
     });
 
     return NextResponse.json({
       success: true,
-      lastSyncAt: state.lastUpdated.toISOString(),
+      lastSyncAt: state.lastUpdated,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Validation error', details: error.issues },
-        { status: 400 }
+        { status: 400 },
       );
     }
     console.error('Error updating sync state:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

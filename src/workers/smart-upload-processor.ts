@@ -1043,7 +1043,6 @@ export async function processSmartUpload(
               | "pdf_text"
               | "tesseract"
               | "ocrmypdf"
-              | "vision_api"
               | "native"
               | undefined) ?? "native",
           ocrMode:

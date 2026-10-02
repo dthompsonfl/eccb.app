@@ -85,23 +85,6 @@ export const auth = betterAuth({
         text: `Reset your password by visiting: ${url}\n\nThis link expires in 15 minutes.`,
       });
     },
-    sendVerificationEmail: async ({ user, url }: { user: { email: string; name?: string | null }; url: string }) => {
-      const safeName = user.name ? htmlEscape(user.name) : 'there';
-      await sendEmail({
-        to: user.email,
-        subject: 'Verify your email - ECCB Platform',
-        html: `
-          <h2>Welcome to ECCB Platform!</h2>
-          <p>Hi ${safeName},</p>
-          <p>Thank you for registering. Please verify your email address by clicking the link below:</p>
-          <p><a href="${url}" style="padding: 12px 24px; background: #0f766e; color: white; text-decoration: none; border-radius: 6px;">Verify Email</a></p>
-          <p>Or copy this link: ${url}</p>
-          <p><strong>This link will expire in 24 hours.</strong></p>
-          <p>If you didn't create an account, please ignore this email.</p>
-        `,
-        text: `Verify your email by visiting: ${url}\n\nThis link expires in 24 hours.`,
-      });
-    },
     // Callback after password reset for logging/security
     onPasswordReset: async ({ user }: { user: { id: string; email: string } }) => {
       // Log the password reset event
@@ -110,8 +93,29 @@ export const auth = betterAuth({
     },
   },
   emailVerification: {
-    // Auto sign in after verification
+    sendVerificationEmail: async ({ user, url }: { user: { email: string; name?: string | null }; url: string }) => {
+      const safeName = user.name ? htmlEscape(user.name) : 'there';
+      void sendEmail({
+        to: user.email,
+        subject: 'Verify your email - ECCB Platform',
+        html: `
+          <h2>Welcome to ECCB Platform!</h2>
+          <p>Hi ${safeName},</p>
+          <p>Please verify your email address by clicking the link below:</p>
+          <p><a href="${url}" style="padding: 12px 24px; background: #0f766e; color: white; text-decoration: none; border-radius: 6px;">Verify Email</a></p>
+          <p>Or copy this link: ${url}</p>
+          <p><strong>This link will expire in 24 hours.</strong></p>
+          <p>If you didn't create an account, please ignore this email.</p>
+        `,
+        text: `Verify your email by visiting: ${url}\n\nThis link expires in 24 hours.`,
+      }).catch((error) => {
+        console.error('Failed to send verification email:', error);
+      });
+    },
+    sendOnSignUp: true,
+    sendOnSignIn: true,
     autoSignInAfterVerification: true,
+    expiresIn: SESSION_CONFIG.EMAIL_VERIFICATION_EXPIRATION,
   },
   socialProviders: {
     google: {
