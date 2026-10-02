@@ -4,9 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
-import { sendEmail } from '@/lib/email';
-import { sendPushToMembers } from '@/lib/communications/push/notify';
-import { env } from '@/lib/env';
+import { deliverAnnouncementNotifications } from '@/lib/notifications/announcement-delivery';
 import { z } from 'zod';
 import {
   ANNOUNCEMENT_CREATE,
@@ -80,7 +78,9 @@ export async function createAnnouncement(data: AnnouncementFormData) {
 
     // If published, send notifications to relevant users
     if (validated.status === 'PUBLISHED') {
-      await sendAnnouncementNotifications(announcement.id);
+      await deliverAnnouncementNotifications(announcement.id).catch((error) => {
+      console.error('Failed to deliver announcement notifications:', error);
+    });
     }
 
     revalidatePath('/admin/announcements');
@@ -145,7 +145,9 @@ export async function updateAnnouncement(id: string, data: Partial<AnnouncementF
 
     // If newly published, send notifications
     if (data.status === 'PUBLISHED' && existing.status !== 'PUBLISHED') {
-      await sendAnnouncementNotifications(announcement.id);
+      await deliverAnnouncementNotifications(announcement.id).catch((error) => {
+      console.error('Failed to deliver announcement notifications:', error);
+    });
     }
 
     revalidatePath('/admin/announcements');
@@ -251,7 +253,9 @@ export async function publishAnnouncement(id: string) {
     });
 
     // Send notifications
-    await sendAnnouncementNotifications(id);
+    await deliverAnnouncementNotifications(id).catch((error) => {
+      console.error('Failed to deliver announcement notifications:', error);
+    });
 
     revalidatePath('/admin/announcements');
     revalidatePath(`/admin/announcements/${id}`);
@@ -318,141 +322,3 @@ export async function getAnnouncement(id: string) {
   }
 }
 
-/**
- * Send notifications to relevant users when an announcement is published
- */
-async function sendAnnouncementNotifications(announcementId: string) {
-  try {
-    const announcement = await prisma.announcement.findUnique({
-      where: { id: announcementId },
-    });
-
-    if (!announcement) return;
-
-    // Determine which users should receive the notification
-    let users: Array<{ id: string; email: string | null; name: string | null }>;
-
-    if (announcement.audience === 'ALL') {
-      // All users with member profiles
-      users = await prisma.user.findMany({
-        where: {
-          member: { isNot: null },
-          emailVerified: true,
-          banned: false,
-        },
-        select: { id: true, email: true, name: true },
-      });
-    } else if (announcement.audience === 'MEMBERS') {
-      // Active members only
-      users = await prisma.user.findMany({
-        where: {
-          member: {
-            status: 'ACTIVE',
-          },
-          emailVerified: true,
-          banned: false,
-        },
-        select: { id: true, email: true, name: true },
-      });
-    } else {
-      // ADMINS - users with admin roles
-      users = await prisma.user.findMany({
-        where: {
-          roles: {
-            some: {
-              role: {
-                type: { in: ['SUPER_ADMIN', 'ADMIN', 'DIRECTOR', 'STAFF'] },
-              },
-            },
-          },
-          emailVerified: true,
-          banned: false,
-        },
-        select: { id: true, email: true, name: true },
-      });
-    }
-
-    // Create in-app notifications
-    const notifications = users.map((user) => ({
-      userId: user.id,
-      type: 'ANNOUNCEMENT' as const,
-      title: announcement.title,
-      message: announcement.content.substring(0, 200) + (announcement.content.length > 200 ? '...' : ''),
-      announcementId: announcement.id,
-    }));
-
-    await prisma.userNotification.createMany({
-      data: notifications,
-      skipDuplicates: true,
-    });
-
-    // Web push is the third channel on this event (in-app rows above + email
-    // below + push here). Push-only: the in-app createMany above already ran,
-    // and UserNotification has no uniqueness constraint, so routing through
-    // notifyUsers() would duplicate every row. Consent is enforced per member
-    // inside sendPushToUser(), so members who have not opted in get the in-app
-    // row and no push.
-    await sendPushToMembers(
-      users.map((u) => u.id),
-      {
-        title: announcement.title,
-        body:
-          announcement.content.substring(0, 200) +
-          (announcement.content.length > 200 ? '...' : ''),
-        url: '/member/notifications',
-        tag: `announcement-${announcement.id}`,
-      },
-    ).catch((err: unknown) => {
-      console.error('Failed to send announcement push notifications:', err);
-    });
-
-    // Send email notifications for urgent announcements
-    if (announcement.isUrgent || announcement.type === 'URGENT') {
-      const emails = users
-        .filter((u) => u.email)
-        .map((u) => ({
-          to: u.email!,
-          subject: `${announcement.isUrgent ? '[URGENT] ' : ''}${announcement.title}`,
-          html: `
-            <h2>${announcement.title}</h2>
-            <p><strong>Type:</strong> ${announcement.type}</p>
-            <div style="margin: 20px 0; padding: 20px; background-color: #f5f5f5; border-radius: 8px;">
-              ${announcement.content.replace(/\n/g, '<br>')}
-            </div>
-            <p>
-              <a href="${env.NEXT_PUBLIC_APP_URL}/member" class="button">
-                View Announcement
-              </a>
-            </p>
-          `,
-        }));
-
-      // Send emails in batches
-      if (emails.length > 0) {
-        // Don't await - send in background
-        sendEmailsInBatches(emails).catch((err) => {
-          console.error('Failed to send announcement emails:', err);
-        });
-      }
-    }
-  } catch (error) {
-    console.error('Failed to send announcement notifications:', error);
-  }
-}
-
-/**
- * Send emails in batches to avoid rate limiting
- */
-async function sendEmailsInBatches(
-  emails: Array<{ to: string; subject: string; html: string }>,
-  batchSize: number = 10
-) {
-  for (let i = 0; i < emails.length; i += batchSize) {
-    const batch = emails.slice(i, i + batchSize);
-    await Promise.all(batch.map((email) => sendEmail(email)));
-    // Add delay between batches
-    if (i + batchSize < emails.length) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
-}
