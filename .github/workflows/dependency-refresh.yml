@@ -54,11 +54,13 @@ jobs:
           };
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           NODE
-          # Rebuild the lockfile from the reviewed manifest rather than asking
-          # Arborist to mutate the old graph. npm 11 has a known edgesOut crash
-          # while reconciling some existing lock graphs.
+          # npm 11.1.0 currently crashes inside Arborist (edgesOut) while
+          # resolving this refreshed graph. Generate the v3 lockfile with the
+          # Node 22 runner's compatible npm 10 line, then immediately prove
+          # that the repository's required npm 11.1.0 can consume it.
           rm -f package-lock.json
-          npm install
+          npx --yes npm@10.9.9 install --package-lock-only --ignore-scripts
+          npm ci --ignore-scripts
 
       - name: Record remaining audit result
         run: npm audit --audit-level=moderate || true
