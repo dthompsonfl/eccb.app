@@ -1,10 +1,12 @@
-export default function AdminRouteLayout({
+import { requireAdminConsole } from '@/lib/auth/guards';
+
+export default async function AdminRouteLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // The parent /(admin)/layout.tsx owns the canonical guard and shell.
-  // Keeping this route-group layout transparent prevents nested sidebars,
-  // duplicated navigation, and conflicting responsive offsets.
+  // Keep the nested route structurally transparent so it does not duplicate the
+  // parent shell, but retain the canonical admin-console authorization guard.
+  await requireAdminConsole();
   return children;
 }
