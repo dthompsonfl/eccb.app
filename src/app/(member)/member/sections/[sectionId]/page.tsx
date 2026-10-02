@@ -8,19 +8,10 @@ export const metadata: Metadata = {
   title: 'Section Board',
 };
 
+export const dynamic = 'force-dynamic';
+
 interface PageProps {
   params: Promise<{ sectionId: string }>;
-}
-
-interface Message {
-  id: string;
-  content: string;
-  createdAt: string | Date;
-  member: {
-    firstName: string;
-    lastName: string;
-    profilePhoto: string | null;
-  };
 }
 
 export default async function SectionBoardPage({ params }: PageProps) {
@@ -34,6 +25,7 @@ export default async function SectionBoardPage({ params }: PageProps) {
 
   const member = await prisma.member.findFirst({
     where: { userId: session.user.id },
+    select: { id: true },
   });
 
   if (!member) return null;
@@ -41,7 +33,7 @@ export default async function SectionBoardPage({ params }: PageProps) {
   const membership = await prisma.memberSection.findFirst({
     where: {
       memberId: member.id,
-      sectionId: sectionId,
+      sectionId,
     },
     include: {
       section: true,
@@ -56,8 +48,27 @@ export default async function SectionBoardPage({ params }: PageProps) {
     );
   }
 
-  // Section messages not available - model missing from Prisma schema
-  const serializedMessages: Message[] = [];
+  const messages = await prisma.sectionMessage.findMany({
+    where: { sectionId },
+    include: {
+      member: {
+        select: {
+          firstName: true,
+          lastName: true,
+          profilePhoto: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 250,
+  });
+
+  const serializedMessages = messages.reverse().map((message) => ({
+    id: message.id,
+    content: message.content,
+    createdAt: message.createdAt.toISOString(),
+    member: message.member,
+  }));
 
   return (
     <div className="container mx-auto py-8">
