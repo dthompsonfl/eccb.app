@@ -1230,7 +1230,6 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
                         <SelectContent>
                           <SelectItem value="tesseract">Tesseract</SelectItem>
                           <SelectItem value="ocrmypdf">ocrmypdf</SelectItem>
-                          <SelectItem value="vision_api">Vision API</SelectItem>
                           <SelectItem value="native">Native</SelectItem>
                         </SelectContent>
                       </Select>
