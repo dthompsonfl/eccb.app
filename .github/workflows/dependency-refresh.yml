@@ -54,9 +54,11 @@ jobs:
           };
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           NODE
+          # Rebuild the lockfile from the reviewed manifest rather than asking
+          # Arborist to mutate the old graph. npm 11 has a known edgesOut crash
+          # while reconciling some existing lock graphs.
+          rm -f package-lock.json
           npm install
-          npm update
-          npm audit fix || true
 
       - name: Record remaining audit result
         run: npm audit --audit-level=moderate || true
