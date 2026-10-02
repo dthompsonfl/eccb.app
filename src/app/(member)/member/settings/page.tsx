@@ -2,11 +2,13 @@ import { requireAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { MemberSettingsForm } from '@/components/member/settings-form';
 import { TwoFactorSettings } from '@/components/auth/two-factor-settings';
+import { getNotificationPreferences } from '@/lib/notifications/preferences';
+
+export const dynamic = 'force-dynamic';
 
 export default async function MemberSettingsPage() {
   const session = await requireAuth();
 
-  // Get user details
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: {
@@ -15,12 +17,19 @@ export default async function MemberSettingsPage() {
       email: true,
       emailVerified: true,
       twoFactorEnabled: true,
+      userPreferences: {
+        select: { otherSettings: true },
+      },
     },
   });
 
   if (!user) {
     throw new Error('User not found');
   }
+
+  const notificationPreferences = getNotificationPreferences(
+    user.userPreferences?.otherSettings,
+  );
 
   return (
     <div className="space-y-6">
@@ -31,7 +40,10 @@ export default async function MemberSettingsPage() {
         </p>
       </div>
 
-      <MemberSettingsForm user={user} />
+      <MemberSettingsForm
+        user={user}
+        initialNotificationPreferences={notificationPreferences}
+      />
 
       <TwoFactorSettings enabled={user.twoFactorEnabled} />
     </div>
