@@ -10,11 +10,11 @@
 
 import { spawn, ChildProcess } from 'child_process';
 import { createServer } from 'http';
-import { existsSync } from 'fs';
 import net from 'net';
 import 'dotenv/config';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { prepareStandalone, PrepareStandaloneResult } from './prepare-standalone';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, '..');
@@ -46,11 +46,29 @@ function isPortFree(port: number, host = '127.0.0.1'): Promise<boolean> {
   });
 }
 
+/**
+ * Ports already claimed during this run, mapped to the consumer that claimed
+ * them.
+ *
+ * `isPortFree()` only observes what is currently *bound*. Between resolving the
+ * app port and binding the health server nothing is listening yet, so without
+ * this map two roll-forwards that land on the same number are handed out twice
+ * — the Next.js server and the process-manager health server then race for one
+ * port and the loser silently 404s. Recording the owner lets each consumer
+ * skip only the ports belonging to the *other* consumers.
+ */
+const reservedPorts = new Map<number, string>();
+
+const HEALTH_OWNER = 'process-manager-health';
+
 async function resolveFreePort(preferred: number, label: string): Promise<number> {
   let port = preferred;
   for (let i = 0; i < MAX_PORT_ATTEMPTS; i++, port++) {
     if (port > 65535) break;
+    const owner = reservedPorts.get(port);
+    if (owner !== undefined && owner !== label) continue;
     if (await isPortFree(port)) {
+      reservedPorts.set(port, label);
       if (port !== preferred) {
         log('info', `${label}: preferred port ${preferred} is busy — using next available port ${port}`);
       }
@@ -64,6 +82,16 @@ let PORT = parsePort(process.env.PORT, DEFAULT_APP_PORT);
 let WORKER_HEALTH_PORT = parsePort(process.env.WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT);
 let MANAGER_HEALTH_PORT = parsePort(process.env.PROCESS_MANAGER_HEALTH_PORT, DEFAULT_MANAGER_HEALTH_PORT);
 const RESTART_CRASHED_PROCESSES = process.env.RESTART_CRASHED_PROCESSES === 'true';
+
+/**
+ * Interface the Next.js server binds to.
+ *
+ * Defaults to 0.0.0.0 so the app is reachable on this machine's LAN address,
+ * its Tailscale address and (behind port forwarding) its public address — the
+ * same single origin the `ALLOWED_ORIGINS` allowlist covers. Set
+ * `BIND_HOST=127.0.0.1` to restrict the server to loopback.
+ */
+const BIND_HOST = process.env.BIND_HOST?.trim() || '0.0.0.0';
 
 // ============================================================================
 // Process State
@@ -169,22 +197,38 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
 /**
  * Start the Next.js server on the already-resolved PORT.
  *
- * Prefers the standalone build (`.next/standalone/server.js`, required when
- * `output: 'standalone'` is set) and falls back to `next start` when no
- * standalone build exists. NODE_ENV is forced to production: `next start`
- * is a production server and warns on any other value.
+ * `prepareStandalone()` has already synchronised `.next/static` and `public/`
+ * into `.next/standalone/`, so the standalone bundle serves a fully styled app.
+ * When standalone output is missing or stale the preparation step reports
+ * `next-start` and this function falls back to `next start`, which serves the
+ * full `.next` directory and needs no asset copy.
+ *
+ * NOTE: `src/server/socket-worker.ts` is deliberately NOT started here. The
+ * workers process already hosts the embedded Socket.IO stand server
+ * (src/workers/index.ts); a second bind would collide on SOCKET_PORT.
+ *
+ * NODE_ENV is forced to production for children because `.env` ships
+ * NODE_ENV=development, which makes Next warn and workers behave differently
+ * from a release build.
  */
-function startNextServer(): void {
-  const standalone = resolve(ROOT_DIR, '.next/standalone/server.js');
-  const useStandalone = existsSync(standalone);
+function startNextServer(prepared: PrepareStandaloneResult): void {
+  if (prepared.mode === 'missing') {
+    log('error', 'No production build available — run `npm run build` before `npm run start:all`');
+    return;
+  }
+
+  const useStandalone = prepared.mode === 'standalone';
   const managed: ManagedProcess = {
     name: 'next-server',
     process: null,
     command: useStandalone ? 'node' : 'npx',
-    args: useStandalone ? [standalone] : ['next', 'start', '-p', String(PORT)],
+    args: useStandalone
+      ? [prepared.standaloneServerPath as string]
+      : ['next', 'start', '-p', String(PORT)],
     env: {
       PORT: String(PORT),
-      ...(useStandalone ? { HOSTNAME: '0.0.0.0' } : {}),
+      ...(useStandalone ? { HOSTNAME: BIND_HOST } : {}),
+      BIND_HOST,
       NODE_ENV: 'production',
     },
     restartCount: 0,
@@ -192,8 +236,14 @@ function startNextServer(): void {
   };
 
   if (useStandalone) {
-    log('info', 'Using standalone server build (.next/standalone/server.js)');
+    log('info', 'Using standalone server build (.next/standalone/server.js)', {
+      assetsSynchronised: prepared.copied,
+      bindHost: BIND_HOST,
+    });
+  } else {
+    log('warn', 'Standalone output unusable — serving via `next start` from the full .next directory');
   }
+
   managed.process = spawnProcess(managed.name, managed.command, managed.args, managed.env);
   processes.set(managed.name, managed);
 }
@@ -209,6 +259,7 @@ function startWorkers(): void {
     args: ['tsx', 'src/workers/index.ts'],
     env: {
       WORKER_HEALTH_PORT: String(WORKER_HEALTH_PORT),
+      NODE_ENV: 'production',
     },
     restartCount: 0,
     lastRestart: 0,
@@ -326,9 +377,16 @@ function startHealthServer(): void {
   let port = preferred;
   const tryBind = (): void => {
     healthServer!.removeAllListeners('error');
+    // Skip only ports claimed by the *other* consumers; this server's own
+    // resolved port stays available so it keeps its preferred port.
+    while (port <= 65535 && reservedPorts.has(port) && reservedPorts.get(port) !== HEALTH_OWNER) {
+      reservedPorts.set(port, HEALTH_OWNER);
+      port++;
+    }
     healthServer!.once('error', (err: NodeJS.ErrnoException) => {
       if (err?.code === 'EADDRINUSE' && port - preferred < MAX_PORT_ATTEMPTS - 1) {
         log('info', `Process manager health port ${port} is busy — trying ${port + 1}`);
+        reservedPorts.set(port, HEALTH_OWNER);
         port++;
         tryBind();
       } else {
@@ -397,17 +455,35 @@ async function gracefulShutdown(signal: string): Promise<void> {
 async function main(): Promise<void> {
   log('info', 'Starting ECCB Process Manager...');
 
+  // Validate the build and copy .next/static + public/ into the standalone
+  // bundle BEFORE anything spawns. Without this the standalone server 404s on
+  // every stylesheet and the site renders unstyled.
+  const prepared = await prepareStandalone();
+  log('info', 'Build preparation complete', {
+    mode: prepared.mode,
+    copied: prepared.copied,
+  });
+  for (const warning of prepared.warnings) {
+    log('warn', warning);
+  }
+
+  if (prepared.mode === 'missing') {
+    log('error', 'Aborting: no production build found. Run `npm run build`, then `npm run start:all`.');
+    process.exit(1);
+  }
+
   // Resolve every port BEFORE spawning children so `next start -p` never
   // hits EADDRINUSE. Each child inherits the resolved value via env.
   PORT = await resolveFreePort(PORT, 'Next.js server');
   WORKER_HEALTH_PORT = await resolveFreePort(WORKER_HEALTH_PORT, 'Worker health server');
-  MANAGER_HEALTH_PORT = await resolveFreePort(MANAGER_HEALTH_PORT, 'Process manager health server');
+  MANAGER_HEALTH_PORT = await resolveFreePort(MANAGER_HEALTH_PORT, HEALTH_OWNER);
   process.env.PORT = String(PORT);
   process.env.WORKER_HEALTH_PORT = String(WORKER_HEALTH_PORT);
   process.env.PROCESS_MANAGER_HEALTH_PORT = String(MANAGER_HEALTH_PORT);
 
   log('info', 'Configuration', {
     port: PORT,
+    bindHost: BIND_HOST,
     workerHealthPort: WORKER_HEALTH_PORT,
     managerHealthPort: MANAGER_HEALTH_PORT,
     restartCrashedProcesses: RESTART_CRASHED_PROCESSES,
@@ -417,7 +493,7 @@ async function main(): Promise<void> {
   startHealthServer();
 
   // Start Next.js server
-  startNextServer();
+  startNextServer(prepared);
 
   // Wait a bit before starting workers
   await new Promise(resolve => setTimeout(resolve, 2000));

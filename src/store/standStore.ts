@@ -1,4 +1,17 @@
 import { create } from 'zustand';
+import {
+  getSpreadPages,
+  isSpreadable,
+  nextSpreadPage,
+  prevSpreadPage,
+  safeTotalPages,
+  scrollOffsetToHalf,
+  halfToScrollOffset,
+  stepHalfPage,
+  type HalfPage,
+  type NormalizedCropRect,
+  type SpreadPages,
+} from '@/lib/stand/navigation';
 
 // Roster member type used for presence overlay
 export interface StandRosterMember {
@@ -117,9 +130,31 @@ export interface StandState {
   // Setlist advance actions - automatically advance to next piece at end of current piece
   nextPageOrPiece: () => void;
   prevPageOrPiece: () => void;
-  scrollHalfPage: () => void;
+  /**
+   * Step half a page. Pass -1 to scroll back; the default of 1 scrolls forward.
+   * A no-op at either end of the piece.
+   */
+  scrollHalfPage: (direction?: 1 | -1) => void;
   nextTwoPages: () => void;
   prevTwoPages: () => void;
+  /** Directional spread advance, for callers that already know the sign. */
+  stepTwoPages: (direction: 1 | -1) => void;
+
+  // ── Spread / half-page / crop ───────────────────────────────────────────
+  /** True when two pages are shown side by side. */
+  twoPageMode: boolean;
+  setTwoPageMode: (on: boolean) => void;
+  /** Toggle two-page spread. */
+  toggleTwoPageMode: () => void;
+  /** The two pages currently displayed in spread mode. */
+  visibleSpreadPages: () => SpreadPages;
+  /** Which vertical half of the current page is in view. */
+  currentHalf: () => HalfPage;
+  /** Per-user crop rect in normalised page space, or null when uncropped. */
+  cropRect: NormalizedCropRect | null;
+  setCropRect: (rect: NormalizedCropRect | null) => void;
+  /** Clear the crop and return to the full page. */
+  resetCropRect: () => void;
   setScrollOffset: (offset: number) => void;
   setPieces: (pieces: StandPiece[]) => void;
   setIsFullscreen: (isFullscreen: boolean) => void;
@@ -284,6 +319,8 @@ const initialState = {
   _currentPage: 1,
   pieces: [],
   scrollOffset: 0,
+  twoPageMode: false,
+  cropRect: null as NormalizedCropRect | null,
   atEnd: false,
   isFullscreen: false,
   showControls: true,
@@ -488,34 +525,99 @@ export const useStandStore = create<StandState>((set, get) => ({
     set({ atEnd: false });
   },
 
-  // Action for scrolling half a page (used in portrait mode)
-  scrollHalfPage: () => {
+  // Half a page, in a known direction. The previous implementation was a plain
+  // 0 <-> 0.5 toggle that both gesture directions reached, so scrolling up and
+  // down were indistinguishable and neither end of the piece was reachable.
+  scrollHalfPage: (direction = 1) => {
     const { scrollOffset, _currentPage, pieces, currentPieceIndex } = get();
     const currentPiece = pieces[currentPieceIndex];
-
     if (!currentPiece) return;
 
-    // Toggle between 0 and 50% offset
-    const newOffset = scrollOffset === 0 ? 0.5 : 0;
-    set({ scrollOffset: newOffset });
+    const result = stepHalfPage(
+      { page: _currentPage, half: scrollOffsetToHalf(scrollOffset) },
+      direction === -1 ? -1 : 1,
+      currentPiece.totalPages,
+    );
+    if (!result.moved) return;
+
+    set({ _currentPage: result.page, scrollOffset: halfToScrollOffset(result.half) });
   },
 
-  // Action for turning two pages at once (used in landscape/two-up mode)
+  // Advance one spread. The stored page is always a recto, and StandCanvas
+  // renders `currentPage` and `currentPage + 1` together, so the page the
+  // musician lands on is the page they can actually see.
   nextTwoPages: () => {
     const { pieces, currentPieceIndex, _currentPage } = get();
     const currentPiece = pieces[currentPieceIndex];
-    if (currentPiece) {
-      const newPage = Math.min(_currentPage + 2, currentPiece.totalPages);
-      set({ _currentPage: newPage, scrollOffset: 0 });
-    }
+    if (!currentPiece) return;
+    set({
+      _currentPage: nextSpreadPage(_currentPage, currentPiece.totalPages),
+      scrollOffset: 0,
+    });
   },
 
-  // Action for turning back two pages at once (used in landscape/two-up mode)
   prevTwoPages: () => {
-    const { _currentPage } = get();
-    const newPage = Math.max(_currentPage - 2, 1);
-    set({ _currentPage: newPage, scrollOffset: 0 });
+    const { pieces, currentPieceIndex, _currentPage } = get();
+    const currentPiece = pieces[currentPieceIndex];
+    if (!currentPiece) return;
+    set({
+      _currentPage: prevSpreadPage(_currentPage, currentPiece.totalPages),
+      scrollOffset: 0,
+    });
   },
+
+  // Directional spread advance, for callers that already know the sign.
+  stepTwoPages: (direction: 1 | -1) => {
+    const { pieces, currentPieceIndex, _currentPage } = get();
+    const currentPiece = pieces[currentPieceIndex];
+    if (!currentPiece) return;
+    const total = safeTotalPages(currentPiece.totalPages);
+    set({
+      _currentPage:
+        direction === 1
+          ? nextSpreadPage(_currentPage, total)
+          : prevSpreadPage(_currentPage, total),
+      scrollOffset: 0,
+    });
+  },
+
+  // ── Spread mode ──────────────────────────────────────────────────────────
+
+  setTwoPageMode: (on: boolean) => {
+    const { pieces, currentPieceIndex, _currentPage } = get();
+    const currentPiece = pieces[currentPieceIndex];
+    // A one-page piece has nothing to spread; refuse rather than render a
+    // misleading second page.
+    if (on && currentPiece && !isSpreadable(currentPiece.totalPages)) {
+      set({ twoPageMode: false });
+      return;
+    }
+    // Re-align to a recto so the spread starts on a clean leaf.
+    const next: Partial<StandState> = { twoPageMode: on, scrollOffset: 0 };
+    if (on && currentPiece) {
+      next._currentPage = getSpreadPages(_currentPage, currentPiece.totalPages).left;
+    }
+    set(next);
+  },
+
+  toggleTwoPageMode: () => get().setTwoPageMode(!get().twoPageMode),
+
+  visibleSpreadPages: () => {
+    const { pieces, currentPieceIndex, _currentPage } = get();
+    const currentPiece = pieces[currentPieceIndex];
+    return getSpreadPages(
+      _currentPage,
+      currentPiece ? currentPiece.totalPages : 1,
+    );
+  },
+
+  currentHalf: () => scrollOffsetToHalf(get().scrollOffset),
+
+  // ── Crop ─────────────────────────────────────────────────────────────────
+
+  setCropRect: (rect: NormalizedCropRect | null) => set({ cropRect: rect }),
+
+  resetCropRect: () => set({ cropRect: null }),
 
   setScrollOffset: (offset: number) => {
     set({ scrollOffset: Math.max(0, Math.min(1, offset)) });

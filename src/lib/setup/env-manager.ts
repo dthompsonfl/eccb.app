@@ -134,6 +134,31 @@ const DEVELOPMENT_VARS: EnvVariable[] = [
     default: 'Emerald Coast Community Band',
   },
   {
+    key: 'ALLOWED_ORIGINS',
+    value: '',
+    required: false,
+    description:
+      'Extra origins this deployment answers on, space/comma separated (LAN IP, Tailscale IP, forwarded public IP), e.g. "http://192.168.1.10:3225 http://100.x.y.z:3225". Required for login to work on any interface other than NEXT_PUBLIC_APP_URL',
+    sensitive: false,
+  },
+  {
+    key: 'COOKIE_SECURE',
+    value: '',
+    required: false,
+    description:
+      'Session cookie Secure flag. Leave blank to derive from the scheme of NEXT_PUBLIC_APP_URL. Only set false while serving plain HTTP on a trusted network',
+    sensitive: false,
+  },
+  {
+    key: 'BIND_HOST',
+    value: '0.0.0.0',
+    required: false,
+    description:
+      'Interface the Next.js server binds to. 0.0.0.0 exposes the app on LAN/Tailscale/public addresses; 127.0.0.1 restricts it to this host',
+    sensitive: false,
+    default: '0.0.0.0',
+  },
+  {
     key: 'DATABASE_URL',
     value: '',
     required: true,

@@ -300,6 +300,9 @@ model MusicPiece {
   instrumentation     String?
   tags                String?            @db.LongText
   catalogNumber       String?            @unique
+  /// Copyright year of the work, extracted from the score (e.g. 1977).
+  /// Nullable: most library entries have no known year.
+  copyrightYear       Int?
   notes               String?
   performanceHistory  String?
   isArchived          Boolean            @default(false)

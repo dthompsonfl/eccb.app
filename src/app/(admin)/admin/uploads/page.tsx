@@ -19,6 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import { isAcceptedMediaType } from '@/lib/smart-upload/content-sniffing';
 
 // =============================================================================
 // Types
@@ -478,7 +479,8 @@ export default function SmartMusicUploadPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const updateItem = useCallback((id: string, update: Partial<UploadItem>) => {
+  
+const updateItem = useCallback((id: string, update: Partial<UploadItem>) => {
     setItems(prev =>
       prev.map(it => (it.id === id ? { ...it, ...update } : it))
     );
@@ -487,10 +489,13 @@ export default function SmartMusicUploadPage() {
   const addFiles = useCallback(
     (files: FileList | File[]) => {
       const fileArray = Array.from(files);
-      const pdfs = fileArray.filter(f => f.type === 'application/pdf');
-      if (pdfs.length === 0) return;
+      // PDF plus raster images. The server re-checks by content, so this is
+      // only a first filter that keeps obviously-wrong files out of the queue.
+      // First-pass client filter only; the server re-validates by magic bytes.
+      const accepted = fileArray.filter(f => isAcceptedMediaType(f.type));
+      if (accepted.length === 0) return;
 
-      const newItems: UploadItem[] = pdfs.map(file => ({
+      const newItems: UploadItem[] = accepted.map(file => ({
         id: crypto.randomUUID(),
         file,
         phase: 'idle',
@@ -650,7 +655,7 @@ export default function SmartMusicUploadPage() {
         id="uploadFiles"
         name="uploadFiles"
         type="file"
-        accept="application/pdf"
+        accept=".pdf,.png,.jpg,.jpeg,.tiff,application/pdf,image/png,image/jpeg,image/tiff"
         multiple
         className="hidden"
         onChange={handleFileInput}

@@ -335,7 +335,18 @@ export function useStandSync({
       return;
     }
 
-    const socketUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
+    // Resolve the socket endpoint from the origin the browser actually used.
+    //
+    // `NEXT_PUBLIC_APP_URL` is inlined at build time, so a client that reached
+    // the app via the LAN address, the Tailscale address or a forwarded public
+    // IP would otherwise dial `http://localhost:3225` — i.e. its own machine —
+    // and the stand would silently drop to polling. `window.location.origin`
+    // keeps the connection same-origin, which is also what the Socket.IO CORS
+    // allowlist and the CSP `connect-src 'self'` directive expect.
+    const socketUrl =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
 
     try {
       const socket = socketIoClient(socketUrl as string, {

@@ -6,6 +6,7 @@ import { prisma } from '@/lib/db';
 import { magicLink, twoFactor, admin, openAPI } from 'better-auth/plugins';
 import { sendEmail } from '@/lib/email';
 import { env } from '@/lib/env';
+import { getAllowedOrigins, shouldUseSecureCookies } from '@/lib/allowed-origins';
 import { IMPERSONATION_BA_ROLE } from '@/lib/auth/impersonation';
 
 /**
@@ -45,6 +46,15 @@ const SESSION_CONFIG = {
   // Email verification token expiration: 24 hours
   EMAIL_VERIFICATION_EXPIRATION: 60 * 60 * 24,
 } as const;
+
+/**
+ * Whether session cookies carry the `Secure` attribute.
+ *
+ * Derived from the deployed scheme (see `shouldUseSecureCookies`) rather than
+ * `NODE_ENV`, so an http:// deployment on any network interface still gets a
+ * usable session cookie while an https:// deployment keeps the strict default.
+ */
+const useSecureCookies = shouldUseSecureCookies();
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
@@ -175,31 +185,40 @@ export const auth = betterAuth({
   },
   secret: env.BETTER_AUTH_SECRET,
   baseURL: env.BETTER_AUTH_URL,
-  trustedOrigins: [env.NEXT_PUBLIC_APP_URL],
+  // Every origin this deployment answers on (canonical APP_URL + ALLOWED_ORIGINS).
+  // A single-entry list makes Better Auth reject sign-in POSTs from the LAN /
+  // Tailscale / public-IP origins as untrusted, which is what makes login
+  // "submit then bounce" on any interface but the canonical one.
+  trustedOrigins: [...getAllowedOrigins()],
   // Secure cookie configuration
   cookies: {
     sessionToken: {
       name: 'better-auth.session_token',
       attributes: {
         httpOnly: true,
-        // Use 'strict' in production to require same-site origin on every
-        // request carrying the session cookie (prevents CSRF on top-level nav).
-        sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
+        // 'lax' in every environment: 'strict' is fine for same-origin use,
+        // but it drops the cookie on the OAuth/SSO top-level navigations that
+        // Better Auth performs during password-reset and social sign-in.
+        sameSite: 'lax',
         path: '/',
-        secure: env.NODE_ENV === 'production',
-        // Set domain in production for subdomain sharing if needed
-        ...(env.NODE_ENV === 'production' && {
-          domain: new URL(env.NEXT_PUBLIC_APP_URL).hostname,
-        }),
+        secure: useSecureCookies,
+        // No `domain` attribute on purpose — host-only cookies.
+        //
+        // The reachable hosts (localhost, a LAN IP, a Tailscale IP, a public
+        // IP) share no registrable parent domain, so a `Domain=localhost`
+        // cookie would be REJECTED by the browser on every other host, leaving
+        // the user authenticated-but-stateless (every request 401s, login
+        // appears to loop). Host-only cookies work on all of them and are also
+        // the tighter default.
       },
     },
     csrfToken: {
       name: 'better-auth.csrf_token',
       attributes: {
         httpOnly: true,
-        sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
+        sameSite: 'lax',
         path: '/',
-        secure: env.NODE_ENV === 'production',
+        secure: useSecureCookies,
       },
     },
     state: {
@@ -208,7 +227,7 @@ export const auth = betterAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: env.NODE_ENV === 'production',
+        secure: useSecureCookies,
         maxAge: SESSION_CONFIG.PASSWORD_RESET_EXPIRATION, // 15 minutes
       },
     },
@@ -218,7 +237,7 @@ export const auth = betterAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: env.NODE_ENV === 'production',
+        secure: useSecureCookies,
         maxAge: SESSION_CONFIG.PASSWORD_RESET_EXPIRATION, // 15 minutes
       },
     },
@@ -228,23 +247,24 @@ export const auth = betterAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: env.NODE_ENV === 'production',
+        secure: useSecureCookies,
         maxAge: 60 * 60 * 24 * 365, // 1 year
       },
     },
   },
   // Advanced security settings
   advanced: {
-    // Use secure cookies in production
-    useSecureCookies: env.NODE_ENV === 'production',
+    // Secure cookies follow the deployed scheme, not NODE_ENV. Keying this off
+    // NODE_ENV sets `Secure` on an http:// origin, where browsers silently
+    // discard the cookie — which reads exactly like "login is broken".
+    useSecureCookies,
     // Disable debug in production
     debug: env.NODE_ENV === 'development',
-    // Cross-subdomain cookies in production
+    // Host-only cookies: cross-subdomain sharing is intentionally disabled
+    // because there is no common parent domain across the reachable hosts.
+    // See the sessionToken comment above.
     crossSubDomainCookies: {
-      enabled: env.NODE_ENV === 'production',
-      domain: env.NODE_ENV === 'production' 
-        ? new URL(env.NEXT_PUBLIC_APP_URL).hostname 
-        : undefined,
+      enabled: false,
     },
   },
   // Rate limiting configuration (handled at API level, but Better Auth has built-in)

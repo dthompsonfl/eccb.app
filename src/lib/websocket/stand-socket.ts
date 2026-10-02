@@ -17,6 +17,7 @@ import http from 'node:http';
 import { prisma } from '@/lib/db';
 import { canAccessEvent } from '@/lib/stand/access';
 import { logger } from '@/lib/logger';
+import { getSocketCorsOrigins } from '@/lib/allowed-origins';
 import { z } from 'zod';
 
 // =============================================================================
@@ -265,7 +266,7 @@ export function getStandSocketServer(): SocketIOServer {
  * @param httpServer  http.Server to attach Socket.IO to.
  * @param pubClient   ioredis publish client.
  * @param subClient   ioredis subscribe client (separate instance).
- * @param appUrl      Allowed CORS origin.
+ * @param appUrl      Optional single-origin override (canonical origin).
  */
 export function initializeStandSocketServer(
   httpServer: http.Server,
@@ -273,7 +274,10 @@ export function initializeStandSocketServer(
   subClient: Redis,
   appUrl?: string,
 ): SocketIOServer {
-  const origin = appUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3225';
+  // An explicit override pins the CORS list to one origin; otherwise every
+  // configured origin is allowed, so the stand works when reached over the LAN
+  // address, Tailscale address or a forwarded public IP — not just loopback.
+  const origin = appUrl ? [appUrl] : getSocketCorsOrigins();
 
   io = new SocketIOServer(httpServer, {
     path: '/api/stand/socket',

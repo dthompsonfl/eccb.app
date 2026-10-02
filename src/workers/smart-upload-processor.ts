@@ -65,6 +65,7 @@ import {
   buildPartFilename,
   buildPartStorageSlug,
   normalizeInstrumentLabel,
+  resolvePartTitle,
 } from "@/lib/smart-upload/part-naming";
 import {
   evaluateQualityGates,
@@ -685,6 +686,14 @@ export async function processSmartUpload(
         ocrEngine?: string;
         ocrConfidence: number;
         llmFallbackReasons: string[];
+      };
+      /**
+       * Populated for the "part-naming-fallback" attempt: which parts could not
+       * be named from an extracted canonical title.
+       */
+      details?: {
+        source: string;
+        parts: Array<{ instrument: string; partName: string; fileName: string }>;
       };
     }
 
@@ -1964,18 +1973,43 @@ export async function processSmartUpload(
 
     const parsedParts: ParsedPartRecord[] = [];
     const tempFiles: string[] = [];
+    /**
+     * Parts whose name fell back to the uploaded filename because no canonical
+     * title was extracted. Persisted so the fallback is queryable rather than
+     * silently producing "scan_00482_1st_Flute.pdf".
+     */
+    const titleFallbackParts: Array<{
+      instrument: string;
+      partName: string;
+      fileName: string;
+    }> = [];
 
     for (const result of splitResults) {
       const normalised = normalizeInstrumentLabel(
         result.instruction.instrument,
       );
-      const displayName = `${smartSession.fileName.replace(/\.pdf$/i, "")} ${normalised.instrument}`;
-      const slug = buildPartStorageSlug(displayName, {
+      // Prefer the extracted canonical piece title over the uploaded filename:
+      // "scan_00482.pdf" must not become "scan_00482_1st_Flute.pdf" when OCR
+      // correctly identified the work.
+      const resolvedTitle = resolvePartTitle({
+        extractedTitle: extraction.title,
+        uploadedFileName: smartSession.fileName,
+        part: normalised,
         partNumber: result.instruction.partNumber,
         pageRange: result.instruction.pageRange,
       });
+      const slug = resolvedTitle.slug;
       const partStorageKey = `smart-upload/${sessionId}/parts/${slug}.pdf`;
-      const partFileName = buildPartFilename(displayName);
+      const partFileName = resolvedTitle.fileName;
+
+      if (resolvedTitle.source === "upload-filename") {
+        // Explicit, queryable fallback: no usable title was extracted.
+        titleFallbackParts.push({
+          instrument: result.instruction.instrument,
+          partName: result.instruction.partName,
+          fileName: partFileName,
+        });
+      }
 
       await uploadFile(partStorageKey, result.buffer, {
         contentType: "application/pdf",
@@ -2047,6 +2081,22 @@ export async function processSmartUpload(
       durationMs: 0,
       timestamp: new Date().toISOString(),
     });
+
+    // Record how part names were derived. A part named from the upload
+    // filename instead of an extracted title is a degraded-but-usable outcome
+    // and must be visible to a human reviewer, not silent.
+    if (titleFallbackParts.length > 0) {
+      strategyHistory.push({
+        strategy: "part-naming-fallback",
+        confidence: 0,
+        failureReasons: [
+          `No canonical title extracted; ${titleFallbackParts.length} part name(s) derived from the uploaded filename`,
+        ],
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+        details: { parts: titleFallbackParts, source: "upload-filename" },
+      });
+    }
 
     if (
       gateResult.failed &&
@@ -2120,6 +2170,14 @@ export async function processSmartUpload(
               const normalised = normalizeInstrumentLabel(
                 result.instruction.instrument,
               );
+              // Must agree exactly with the main path naming rules.
+              const altResolvedTitle = resolvePartTitle({
+                extractedTitle: extraction.title,
+                uploadedFileName: smartSession.fileName,
+                part: normalised,
+                partNumber: result.instruction.partNumber,
+                pageRange: toOneIndexed(result.instruction.pageRange),
+              });
               return {
                 partName: result.instruction.partName,
                 instrument: result.instruction.instrument,
@@ -2127,9 +2185,7 @@ export async function processSmartUpload(
                 transposition: result.instruction.transposition,
                 partNumber: result.instruction.partNumber,
                 storageKey: "",
-                fileName: buildPartFilename(
-                  `${smartSession.fileName.replace(/\.pdf$/i, "")} ${normalised.instrument}`,
-                ),
+                fileName: altResolvedTitle.fileName,
                 fileSize: result.buffer.length,
                 pageCount: result.pageCount,
                 pageRange: toOneIndexed(result.instruction.pageRange),

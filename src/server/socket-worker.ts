@@ -7,7 +7,7 @@
  *   SOCKET_PORT          Port to listen on (default: 3226, auto-rolls to next
  *                        free port when busy; override via .env)
  *   REDIS_URL            Redis connection string
- *   NEXT_PUBLIC_APP_URL  Used for CORS origin
+ *   ALLOWED_ORIGINS      Extra origins allowed for CORS (see lib/allowed-origins.ts)
  *   ENABLE_WEBSOCKETS    Must be "true" for this process to start
  */
 
@@ -26,7 +26,6 @@ import { DEFAULT_PORTS, listenWithFallback } from '@/lib/ports';
 // ─── Config ────────────────────────────────────────────────────────────────
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
 
 // ─── Redis clients ──────────────────────────────────────────────────────────
 // The Redis adapter requires two separate clients: one for publishing and one
@@ -82,7 +81,9 @@ async function start(): Promise<void> {
   const pubClient = makeRedisClient(REDIS_URL, 'pub');
   const subClient = makeRedisClient(REDIS_URL, 'sub');
 
-  const io = initializeStandSocketServer(httpServer, pubClient, subClient, APP_URL);
+  // No explicit origin override: CORS is derived from the full allowlist so the
+  // stand is reachable over loopback, LAN, Tailscale and forwarded public IPs.
+  const io = initializeStandSocketServer(httpServer, pubClient, subClient);
 
   await listenWithFallback(httpServer, preferredPort, 'Socket.IO worker', 25, (m) =>
     logger.info(`[SocketWorker] ${m}`),

@@ -21,6 +21,7 @@ import type { ExtractedMetadata, ParsedPartRecord } from "@/types/smart-upload";
 import {
   normalizeExtractedMetadata,
   normalizePersonName,
+  normalizeCopyrightYear,
 } from "./metadata-normalizer";
 import { getSectionForLabel } from "./canonical-instruments";
 import { isForbiddenLabel } from "./quality-gates";
@@ -51,6 +52,10 @@ export interface CommitOverrides {
   keySignature?: string;
   timeSignature?: string;
   tempo?: string;
+  /** Manual subtitle from the review UI; falls back to the extracted value. */
+  subtitle?: string;
+  /** Manual notes from the review UI; falls back to the extracted value. */
+  notes?: string;
 }
 
 export interface CommitResult {
@@ -458,6 +463,12 @@ export async function commitSmartUploadSessionToLibrary(
           timeSignature:
             overrides.timeSignature ?? extractedMetadata?.timeSignature ?? null,
           tempo: overrides.tempo ?? extractedMetadata?.tempo ?? null,
+          // Promote the remaining extracted metadata into canonical columns so
+          // the library is queryable, rather than leaving it trapped in the
+          // MusicFile.extractedMetadata JSON blob.
+          subtitle: overrides.subtitle ?? extractedMetadata?.subtitle ?? null,
+          copyrightYear: normalizeCopyrightYear(extractedMetadata?.copyrightYear),
+          notes: overrides.notes ?? extractedMetadata?.notes ?? null,
         };
 
         let musicPiece: Awaited<ReturnType<typeof tx.musicPiece.create>>;
@@ -482,7 +493,15 @@ export async function commitSmartUploadSessionToLibrary(
           musicPiece = await tx.musicPiece.create({
             data: {
               ...pieceData,
-              notes: `Imported via Smart Upload on ${new Date().toISOString()}`,
+              // Append the provenance stamp to whatever notes we already have
+              // rather than replacing them: overwriting here silently discarded
+              // the extracted/overridden notes promoted into pieceData.
+              notes: [
+                pieceData.notes,
+                `Imported via Smart Upload on ${new Date().toISOString()}`,
+              ]
+                .filter((n): n is string => Boolean(n && n.trim()))
+                .join("\n\n"),
             },
           });
         }

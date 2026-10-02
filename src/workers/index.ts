@@ -354,7 +354,6 @@ async function main(): Promise<void> {
         socketHttpServer,
         socketPubClient,
         socketSubClient,
-        process.env.NEXT_PUBLIC_APP_URL,
       );
       // Auto-roll to the next free port when SOCKET_PORT is occupied.
       await listenWithFallback(socketHttpServer, socketPort, 'Embedded socket worker', 25, (m) =>

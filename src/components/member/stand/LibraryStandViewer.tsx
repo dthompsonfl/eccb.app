@@ -17,6 +17,7 @@ import { Toolbar } from './Toolbar';
 import { GestureHandler } from './GestureHandler';
 import { KeyboardHandler } from './KeyboardHandler';
 import { MidiHandler } from './MidiHandler';
+import { BluetoothHandler } from './BluetoothHandler';
 import { Metronome } from './Metronome';
 import { Tuner } from './Tuner';
 import { AudioPlayer } from './AudioPlayer';
@@ -259,6 +260,7 @@ export function LibraryStandViewer({ piece, userId, missingStorageKeys = [] }: L
       {/* Input handlers (renderless) */}
       <KeyboardHandler />
       <MidiHandler />
+      <BluetoothHandler />
 
       {/* Viewer area */}
       <div

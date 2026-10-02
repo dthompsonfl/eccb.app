@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth/guards";
 import { checkUserPermission } from "@/lib/auth/permissions";
-import { uploadFile, validateFileMagicBytes } from "@/lib/services/storage";
+import { uploadFile } from "@/lib/services/storage";
+import {
+  ACCEPTED_MEDIA_TYPES,
+  bufferMatchesMediaType,
+  imageToSinglePagePdf,
+  sniffContentType,
+} from "@/lib/smart-upload/content-sniffing";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { validateCSRF } from "@/lib/csrf";
 import { logger } from "@/lib/logger";
@@ -107,24 +113,85 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!allowedMimeTypes.includes(file.type)) {
+    // Accept PDF and raster images. The declared MIME type narrows the choice
+    // quickly, but the CONTENT is what decides — see the sniff below.
+    // Configuration may narrow the set (e.g. a PDF-only install), but the
+    // intake itself supports PDF plus raster images.
+    const configured = allowedMimeTypes.filter((t: string) => t !== "*/*");
+    const typeAllowed =
+      configured.length === 0
+        ? ACCEPTED_MEDIA_TYPES.includes(
+            file.type as (typeof ACCEPTED_MEDIA_TYPES)[number],
+          )
+        : configured.includes(file.type);
+    if (!typeAllowed) {
       return NextResponse.json(
         {
-          error: `Invalid file type. Allowed types: ${allowedMimeTypes.join(", ")}`,
+          error: `Invalid file type. Allowed types: ${ACCEPTED_MEDIA_TYPES.join(", ")}`,
         },
         { status: 400 },
       );
     }
 
     const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const originalBuffer = Buffer.from(arrayBuffer);
 
-    const isValidPdf = validateFileMagicBytes(buffer, "application/pdf");
-    if (!isValidPdf) {
-      logger.warn("Smart upload rejected: invalid PDF magic bytes", {
+    // Judge by magic bytes, not the client's claim. A PNG renamed to .pdf is
+    // still a PNG, and an unrecognised payload is rejected outright.
+    const sniffed = sniffContentType(originalBuffer);
+    if (!sniffed) {
+      logger.warn("Smart upload rejected: unrecognised content", {
         userId: session.user.id,
         filename: file.name,
+        declaredType: file.type,
       });
+      return NextResponse.json(
+        {
+          // Name PDF explicitly: a corrupted or renamed PDF is the common case
+          // an administrator hits, and "unsupported file" does not tell them
+          // what to do about it.
+          error: `File content could not be recognised as a PDF or image. Supported formats: ${ACCEPTED_MEDIA_TYPES.join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+
+    if (sniffed.mediaType !== file.type && !file.type.startsWith("image/")) {
+      logger.warn("Smart upload rejected: declared type does not match content", {
+        userId: session.user.id,
+        filename: file.name,
+        declaredType: file.type,
+        actualType: sniffed.mediaType,
+      });
+      return NextResponse.json(
+        { error: "File content does not match its declared type" },
+        { status: 400 },
+      );
+    }
+
+    // The downstream pipeline (OCR, segmentation, cutting) is PDF-oriented, so
+    // an image is normalised into a one-page PDF. The ORIGINAL bytes are still
+    // stored as the archival source; this is the working copy.
+    let workingBuffer: Buffer<ArrayBufferLike> = originalBuffer;
+    let normalizedFromImage = false;
+    if (sniffed.isImage) {
+      try {
+        workingBuffer = await imageToSinglePagePdf(originalBuffer, {
+          format: sniffed.imageFormat ?? "png",
+        });
+        normalizedFromImage = true;
+      } catch (err) {
+        logger.warn("Smart upload rejected: could not normalise image to PDF", {
+          userId: session.user.id,
+          filename: file.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return NextResponse.json(
+          { error: "The image could not be processed. Try re-exporting it as PDF." },
+          { status: 400 },
+        );
+      }
+    } else if (!bufferMatchesMediaType(originalBuffer, "application/pdf")) {
       return NextResponse.json(
         { error: "File content does not match PDF format" },
         { status: 400 },
@@ -142,7 +209,7 @@ export async function POST(request: NextRequest) {
     const storageKey = generateStorageKey(sessionId, extension);
 
     // Compute source SHA-256 before upload for dedup/idempotency
-    const sourceSha256 = computeSha256(buffer);
+    const sourceSha256 = computeSha256(originalBuffer);
 
     // ── Duplicate detection ──────────────────────────────────────────────────
     // Check for an existing session or committed MusicFile with the same hash.
@@ -246,15 +313,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upload file to storage
-    await uploadFile(storageKey, buffer, {
-      contentType: "application/pdf",
+    // Store the ORIGINAL bytes as the archival source. For an image upload this
+    // is the image itself, so the scan as delivered is never lost.
+    await uploadFile(storageKey, originalBuffer, {
+      contentType: sniffed.mediaType,
       metadata: {
         originalFilename: file.name,
         uploadedBy: session.user.id,
         sessionId,
       },
     });
+
+    // When an image was normalised, store the working PDF the worker will read.
+    // storageKey keeps pointing at the true original for audit and provenance.
+    let processingStorageKey = storageKey;
+    if (normalizedFromImage) {
+      processingStorageKey = generateStorageKey(sessionId, ".pdf");
+      await uploadFile(processingStorageKey, workingBuffer, {
+        contentType: "application/pdf",
+        metadata: {
+          originalFilename: file.name,
+          uploadedBy: session.user.id,
+          sessionId,
+          normalizedFrom: sniffed.mediaType,
+        },
+      });
+    }
 
     // Create smart upload session with canonical initial states
     // The worker will update this with actual metadata after processing
@@ -263,11 +347,13 @@ export async function POST(request: NextRequest) {
         uploadSessionId: sessionId,
         fileName: file.name,
         fileSize: file.size,
-        mimeType: "application/pdf",
-        storageKey,
+        mimeType: sniffed.mediaType,
+        // Points at the working PDF when an image was normalised; the original
+        // remains reachable via the original storage key recorded above.
+        storageKey: processingStorageKey,
         sourceSha256,
         extractedMetadata: serializeSmartUploadJsonField({
-          title: file.name.replace(/\.pdf$/i, ""),
+          title: file.name.replace(/\.(pdf|png|jpe?g|tiff?)$/i, ""),
           confidenceScore: 0,
           sourceSha256,
         }),

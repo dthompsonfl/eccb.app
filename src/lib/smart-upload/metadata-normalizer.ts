@@ -323,3 +323,31 @@ export function normalizeExtractedMetadata(
     parts,
   };
 }
+
+/**
+ * Coerce an extracted copyright year into a plausible year.
+ *
+ * The extractor returns `number | string` and models routinely produce things
+ * like "1977", "c. 1977", "1977-1980", or "19th century". A canonical Int column
+ * must not receive garbage, so anything not a defensible 4-digit year (or a
+ * range whose start is) becomes null rather than a misleading value.
+ */
+export function normalizeCopyrightYear(
+  raw: number | string | undefined | null,
+): number | null {
+  if (raw == null) return null;
+
+  if (typeof raw === "number") {
+    return Number.isInteger(raw) && raw >= 1450 && raw <= 2200 ? raw : null;
+  }
+
+  const text = String(raw).trim();
+  if (text === "") return null;
+
+  // Take the first plausible 4-digit year in the string ("c. 1977", "1977-80").
+  const match = text.match(/\b(1[4-9]\d{2}|20\d{2}|21\d{2})\b/);
+  if (!match) return null;
+
+  const year = Number.parseInt(match[1], 10);
+  return year >= 1450 && year <= 2200 ? year : null;
+}

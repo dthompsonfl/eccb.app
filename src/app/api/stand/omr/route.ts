@@ -4,7 +4,19 @@ import { headers } from 'next/headers';
 import { prisma } from '@/lib/db';
 import { getUserRoles } from '@/lib/auth/permissions';
 import { applyRateLimit } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 import { loadSmartUploadRuntimeConfig } from '@/lib/smart-upload/runtime-config';
+import { downloadFile } from '@/lib/services/storage';
+import { canAccessFile } from '@/lib/stand/access';
+import {
+  DEFAULT_MAX_OMR_PAGES,
+  imageBufferToBase64,
+  isPdfBuffer,
+  mergePageAnalyses,
+  readStoredFile,
+  renderFullScore,
+  type PageAnalysis,
+} from '@/lib/stand/omr';
 import { z } from 'zod';
 
 // Zod schema for OMR request validation
@@ -14,6 +26,17 @@ const omrRequestSchema = z.object({
 });
 
 // OMR metadata structure extracted from sheet music
+const GRADES = new Set([
+  'GRADE_1', 'GRADE_2', 'GRADE_3', 'GRADE_4', 'GRADE_5', 'GRADE_6',
+]);
+
+/** Drop the per-page provider/timestamp envelope before merging. */
+function stripEnvelope(result: object): PageAnalysis {
+  const { provider: _provider, processedAt: _processedAt, ...rest } =
+    result as Record<string, unknown>;
+  return rest as PageAnalysis;
+}
+
 interface OMRMetadata {
   tempo?: number;
   keySignature?: string;
@@ -133,6 +156,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Music file not found' }, { status: 404 });
     }
 
+    // Object-level authorization before the file is read or its bytes leave the
+    // server. The role check above is necessary but not sufficient.
+    const authorized = await canAccessFile(session.user.id, musicFile.storageKey, {
+      pieceId: musicFile.pieceId,
+    });
+    if (!authorized) {
+      return NextResponse.json({ error: 'Music file not found' }, { status: 404 });
+    }
+
     // Check if already processed (unless force reprocess)
     if (musicFile.extractedMetadata && !validated.forceReprocess) {
       return NextResponse.json({
@@ -142,15 +174,32 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Get file URL for processing
-    const fileUrl = `/api/files/${musicFile.storageKey}`;
+    // Read the bytes through the storage abstraction rather than self-fetching
+    // /api/files/<key>. That route correctly refuses non-public files without a
+    // session, so a self-fetch would 401 on exactly the private scores OMR is
+    // most often run against.
+    let fileBuffer: Buffer;
+    try {
+      const read = await readStoredFile(() => downloadFile(musicFile.storageKey));
+      fileBuffer = read.buffer;
+    } catch (readError) {
+      logger.error('OMR could not read the stored score', {
+        userId: session.user.id,
+        musicFileId: musicFile.id,
+        error: readError instanceof Error ? readError.message : String(readError),
+      });
+      return NextResponse.json(
+        { error: 'Could not read the score from storage' },
+        { status: 502 },
+      );
+    }
 
     // Call the appropriate AI provider for OMR (using DB-configured model)
     let metadata: OMRMetadata;
 
     try {
       metadata = await performOMRAnalysis(
-        fileUrl,
+        fileBuffer,
         omrApiKey,
         omrProvider,
         llmConfig.visionModel,
@@ -238,10 +287,24 @@ export async function GET(request: NextRequest) {
       select: {
         id: true,
         extractedMetadata: true,
+        storageKey: true,
+        pieceId: true,
       },
     });
 
     if (!musicFile) {
+      return NextResponse.json({ error: 'Music file not found' }, { status: 404 });
+    }
+
+    // Object-level authorization. Auth alone is not enough: OMR metadata
+    // describes a copyrighted score, and without this check any signed-in user
+    // who guessed or enumerated an id could read it.
+    const authorized = await canAccessFile(session.user.id, musicFile.storageKey, {
+      pieceId: musicFile.pieceId,
+    });
+    if (!authorized) {
+      // Deliberately the same shape as "not found" so this cannot be used to
+      // probe which file ids exist.
       return NextResponse.json({ error: 'Music file not found' }, { status: 404 });
     }
 
@@ -266,134 +329,129 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Convert the first page of a PDF buffer to a PNG base64 string.
- * Uses pdfjs-dist v5 (ESM) with the `canvas` package for server-side rendering.
- * Scale of 2.0 produces ~150 dpi equivalent which is sufficient for AI vision models.
+ * Render every page of a PDF buffer to PNG, or return the image as-is.
+ *
+ * This is whole-score: the previous implementation rendered only page 1, so
+ * tempo, key and duration were inferred from the opening page alone.
  */
-async function pdfBufferToPngBase64(pdfBuffer: Buffer): Promise<string> {
-  // Use dynamic import for pdfjs-dist v5 (ESM-only) and canvas
+async function resolveToPageImages(
+  fileBuffer: Buffer,
+): Promise<{ images: Array<{ base64: string; mimeType: 'image/png' | 'image/jpeg' }>; pageCount: number; truncated: boolean }> {
+  if (!isPdfBuffer(fileBuffer)) {
+    // Already an image: a one-page "score".
+    return { images: [imageBufferToBase64(fileBuffer)], pageCount: 1, truncated: false };
+  }
+
   const pdfjsLib = await import('pdfjs-dist');
-  // Disable worker for server-side Node.js usage
   pdfjsLib.GlobalWorkerOptions.workerSrc = '';
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { createCanvas } = require('canvas');
 
-  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) });
+  const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(fileBuffer) });
   const pdfDoc = await loadingTask.promise;
-  const page = await pdfDoc.getPage(1);
 
-  const SCALE = 2.0;
-  const viewport = page.getViewport({ scale: SCALE });
+  const rendered = await renderFullScore({
+    pageCount: pdfDoc.numPages,
+    getPage: async (pageNumber: number) => pdfDoc.getPage(pageNumber),
+    createCanvas: (width, height) => createCanvas(width, height),
+    // Whole-score, but bounded so a pathological upload cannot exhaust memory.
+    maxPages: DEFAULT_MAX_OMR_PAGES,
+  });
 
-  const canvas = createCanvas(Math.floor(viewport.width), Math.floor(viewport.height));
-  const ctx = canvas.getContext('2d');
-
-  // NodeCanvasFactory bridge for pdfjs-dist
-  const renderContext = {
-    canvasContext: ctx,
-    canvas: canvas as unknown as HTMLCanvasElement,
-    viewport,
+  return {
+    images: rendered.pages.map((p) => ({
+      base64: p.buffer.toString('base64'),
+      mimeType: 'image/png' as const,
+    })),
+    pageCount: rendered.totalPages,
+    truncated: rendered.truncated,
   };
-
-  await page.render(renderContext).promise;
-
-  // Convert to PNG buffer, then base64
-  const pngBuffer: Buffer = canvas.toBuffer('image/png');
-  return pngBuffer.toString('base64');
-}
-
-/**
- * Download a file from a URL (absolute or relative to app base) and return its buffer.
- */
-async function fetchFileBuffer(fileUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
-  // Prevent SSRF: only allow relative paths starting with /
-  if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://') || !fileUrl.startsWith('/')) {
-    throw new Error('Invalid file URL: must be a relative path');
-  }
-
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
-  // Ensure we don't end up with // if baseUrl ends with /
-  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  const fullUrl = `${cleanBaseUrl}${fileUrl}`;
-
-  const res = await fetch(fullUrl);
-  if (!res.ok) throw new Error(`Failed to fetch file: ${res.status} ${res.statusText}`);
-
-  const contentType = res.headers.get('content-type') || '';
-  const buffer = Buffer.from(await res.arrayBuffer());
-  return { buffer, mimeType: contentType };
-}
-
-/**
- * Resolve file to a base64 PNG image, converting PDFs on the fly.
- * Returns { base64: string, mimeType: 'image/png' | 'image/jpeg' }
- */
-async function resolveToBase64Image(
-  fileUrl: string
-): Promise<{ base64: string; mimeType: 'image/png' | 'image/jpeg' }> {
-  const { buffer, mimeType } = await fetchFileBuffer(fileUrl);
-
-  // Check if the content is a PDF by magic bytes (%PDF)
-  const isPdf =
-    mimeType.includes('pdf') ||
-    (buffer.length > 4 && buffer.slice(0, 4).toString('ascii') === '%PDF');
-
-  if (isPdf) {
-    const base64 = await pdfBufferToPngBase64(buffer);
-    return { base64, mimeType: 'image/png' };
-  }
-
-  // It's already an image; detect format from magic bytes
-  const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8;
-  const imgMime = isJpeg ? 'image/jpeg' : 'image/png';
-  return { base64: buffer.toString('base64'), mimeType: imgMime };
 }
 
 /**
  * Perform OMR analysis using the database-configured AI provider.
  * Supports: openai, anthropic, google/gemini, openrouter (OpenAI-compatible),
  * mistral, groq, custom (OpenAI-compatible).
+ *
+ * Every page of the score is analysed and the per-page results are merged, so
+ * the response describes the whole score rather than its first page.
  */
 async function performOMRAnalysis(
-  fileUrl: string,
+  fileBuffer: Buffer,
   apiKey: string,
   provider: string,
   visionModel?: string,
   endpointUrl?: string,
 ): Promise<OMRMetadata> {
-  // Resolve the file to a base64-encoded PNG/JPEG, converting PDFs automatically
-  const { base64, mimeType } = await resolveToBase64Image(fileUrl);
+  const { images, pageCount, truncated } = await resolveToPageImages(fileBuffer);
 
   const p = provider.toLowerCase();
 
-  // OpenAI-compatible providers (openai, openrouter, mistral, groq, custom)
-  if (p === 'openai' || p === 'openrouter' || p === 'mistral' || p === 'groq' || p === 'custom') {
-    const endpoint =
-      endpointUrl ||
-      (p === 'openrouter' ? 'https://openrouter.ai/api/v1' :
-       p === 'mistral'    ? 'https://api.mistral.ai/v1' :
-       p === 'groq'       ? 'https://api.groq.com/openai/v1' :
-       'https://api.openai.com/v1');
-    const model =
-      visionModel ||
-      (p === 'openrouter' ? 'google/gemini-2.0-flash-exp:free' :
-       p === 'mistral'    ? 'pixtral-12b-2409' :
-       p === 'groq'       ? 'llama-3.2-11b-vision-preview' :
-       'gpt-4o');
-    return analyzeWithOpenAI(base64, mimeType, apiKey, endpoint, model);
-  }
+  const analyzeOne = (image: { base64: string; mimeType: 'image/png' | 'image/jpeg' }) => {
+    if (p === 'openai' || p === 'openrouter' || p === 'mistral' || p === 'groq' || p === 'custom') {
+      const endpoint =
+        endpointUrl ||
+        (p === 'openrouter' ? 'https://openrouter.ai/api/v1' :
+         p === 'mistral'    ? 'https://api.mistral.ai/v1' :
+         p === 'groq'       ? 'https://api.groq.com/openai/v1' :
+         'https://api.openai.com/v1');
+      const model =
+        visionModel ||
+        (p === 'openrouter' ? 'google/gemini-2.0-flash-exp:free' :
+         p === 'mistral'    ? 'pixtral-12b-2409' :
+         p === 'groq'       ? 'llama-3.2-11b-vision-preview' :
+         'gpt-4o');
+      return analyzeWithOpenAI(image.base64, image.mimeType, apiKey, endpoint, model);
+    }
+    if (p === 'anthropic') {
+      const model = visionModel || 'claude-opus-4-5';
+      return analyzeWithAnthropic(image.base64, image.mimeType, apiKey, model);
+    }
+    if (p === 'google' || p === 'gemini') {
+      const model = visionModel || 'gemini-1.5-flash';
+      return analyzeWithGoogle(image.base64, image.mimeType, apiKey, model);
+    }
+    throw new Error(`Unsupported OMR provider: ${provider}`);
+  };
 
-  if (p === 'anthropic') {
-    const model = visionModel || 'claude-opus-4-5';
-    return analyzeWithAnthropic(base64, mimeType, apiKey, model);
-  }
+  // Analyse every page, then merge. A page that fails is skipped rather than
+  // failing the whole score: partial metadata beats none.
+  const perPage = await Promise.all(
+    images.map(async (image) => {
+      try {
+        return await analyzeOne(image);
+      } catch (err) {
+        logger.warn('OMR page analysis failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return null;
+      }
+    }),
+  );
 
-  if (p === 'google' || p === 'gemini') {
-    const model = visionModel || 'gemini-1.5-flash';
-    return analyzeWithGoogle(base64, mimeType, apiKey, model);
-  }
+  const merged = mergePageAnalyses(
+    perPage.map((r) => (r ? stripEnvelope(r) : null)),
+  );
 
-  throw new Error(`Unsupported OMR provider: ${provider}`);
+  // Difficulty is validated: a provider returning an unexpected grade must not
+  // poison the whole response.
+  const difficulty =
+    merged.difficulty && GRADES.has(merged.difficulty)
+      ? (merged.difficulty as OMRMetadata['difficulty'])
+      : undefined;
+
+  return {
+    ...merged,
+    difficulty,
+    pageCount,
+    ...(truncated
+      ? {
+          notes: `${merged.notes ? `${merged.notes} ` : ''}Analysis covered the first ${images.length} of ${pageCount} pages.`,
+        }
+      : {}),
+    processedAt: new Date().toISOString(),
+    provider: p,
+  };
 }
 
 /**

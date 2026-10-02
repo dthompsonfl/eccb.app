@@ -14,6 +14,70 @@ import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
 import { AnnotationLayer } from './AnnotationLayer';
 
+
+/**
+ * The right-hand page of a two-page spread.
+ *
+ * Rendered as a real, visible canvas — not an opacity-0 preload target — so the
+ * spread shows both pages the navigation math says are on screen. The page is
+ * drawn by the parent's `usePdf` document via `renderPageInto`, so both halves
+ * of the spread come from one loaded PDF.
+ */
+const SpreadPageCanvas = React.memo(function SpreadPageCanvas({
+  pageNumber,
+  totalPages,
+  title,
+  renderPageInto,
+  nightModeStyles,
+  onPageClick,
+}: {
+  pageNumber: number;
+  totalPages: number;
+  title: string;
+  renderPageInto: (pageNumber: number, target: HTMLCanvasElement) => Promise<void>;
+  nightModeStyles?: React.CSSProperties;
+  onPageClick?: (page: number, x: number, y: number) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let cancelled = false;
+    void renderPageInto(pageNumber, canvas).then(() => {
+      if (cancelled) return;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [renderPageInto, pageNumber]);
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (!onPageClick) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      onPageClick(pageNumber, e.clientX - rect.left, e.clientY - rect.top);
+    },
+    [onPageClick, pageNumber],
+  );
+
+  return (
+    <canvas
+      ref={canvasRef}
+      data-testid="stand-spread-right-page"
+      className="block shadow-lg"
+      onClick={handleClick}
+      style={{
+        maxWidth: '50%',
+        height: 'auto',
+        ...nightModeStyles,
+      }}
+      aria-label={`Page ${pageNumber} of ${totalPages} of ${title}`}
+      role="img"
+    />
+  );
+});
+
 export interface StandCanvasProps {
   className?: string;
   enableAutoCrop?: boolean;
@@ -81,10 +145,23 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
       setCurrentPage,
       scrollOffset,
       nightMode,
+      twoPageMode,
+      visibleSpreadPages,
+      cropRect: persistedCrop,
+      setCropRect,
     } = useStandStore();
 
     const prefersReducedMotion = usePrefersReducedMotion();
     const currentPiece = pieces[currentPieceIndex];
+
+    /**
+     * In spread mode two pages are shown side by side. The right page is null
+     * for an odd-length piece's final page, which is centred rather than padded.
+     */
+    const spread = useMemo(
+      () => (twoPageMode ? visibleSpreadPages() : { left: currentPage, right: null }),
+      [twoPageMode, visibleSpreadPages, currentPage],
+    );
 
     const scale = useMemo(() => zoom / 100, [zoom]);
 
@@ -96,6 +173,7 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
       prevPageCanvas,
       nextPageCanvas,
       renderCurrentPage,
+      renderPageInto,
       canvasRef,
     } = usePdf({
       url: currentPiece?.pdfUrl ?? null,
@@ -103,6 +181,7 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
       scale,
       enablePreload,
       enableAutoCrop,
+      cropRect: persistedCrop,
     });
 
     // Notify parent of crop changes
@@ -311,7 +390,7 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
         )}
         <div
           id="stand-canvas-main"
-          className="relative"
+          className={cn('relative', twoPageMode && 'flex items-start gap-4 justify-center')}
           style={{
             marginTop: scrollOffset > 0 ? `-${scrollOffset * 100}%` : undefined,
           }}
@@ -322,13 +401,32 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
             className="block shadow-lg"
             onClick={handleCanvasClick}
             style={{
-              maxWidth: '100%',
+              maxWidth: twoPageMode ? '50%' : '100%',
               height: 'auto',
               ...nightModeCanvasStyles,
             }}
-            aria-label={`Page ${currentPage} of ${numPages} of ${currentPiece.title}`}
+            aria-label={
+              twoPageMode && spread.right != null
+                ? `Pages ${spread.left} and ${spread.right} of ${numPages} of ${currentPiece.title}`
+                : `Page ${currentPage} of ${numPages} of ${currentPiece.title}`
+            }
             role="img"
           />
+          {/*
+            The second page of a spread. Previously both neighbours were rendered
+            at opacity-0 purely as preload targets, so "two page" mode advanced
+            two pages at a time while displaying one of them.
+          */}
+          {twoPageMode && spread.right != null && (
+            <SpreadPageCanvas
+              pageNumber={spread.right}
+              totalPages={numPages}
+              title={currentPiece.title}
+              renderPageInto={renderPageInto}
+              nightModeStyles={nightModeCanvasStyles}
+              onPageClick={onPageClick}
+            />
+          )}
           {prevPageCanvas && (
             <canvas
               ref={(el) => {
@@ -362,6 +460,47 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
             />
           )}
           <AnnotationLayer />
+          {/*
+            Crop controls. The crop is functional: it is applied to the PDF
+            render itself (see renderPageToCanvas), stored in normalised space
+            so it survives reloads on a different device, and can be reset.
+          */}
+          <div
+            className="absolute top-2 right-2 flex items-center gap-1"
+            role="group"
+            aria-label="Page crop"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (persistedCrop) {
+                  setCropRect(null);
+                } else {
+                  // A conservative default that trims typical blank margins.
+                  setCropRect({ top: 0.05, left: 0.05, width: 0.9, height: 0.9 });
+                }
+              }}
+              aria-pressed={Boolean(persistedCrop)}
+              className={cn(
+                'px-2 py-1 rounded text-xs border',
+                persistedCrop
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-background/80 text-muted-foreground',
+              )}
+            >
+              {persistedCrop ? 'Cropped' : 'Crop page'}
+            </button>
+            {persistedCrop && (
+              <button
+                type="button"
+                onClick={() => setCropRect(null)}
+                className="px-2 py-1 rounded text-xs bg-background/80 text-muted-foreground border"
+                aria-label="Reset page crop"
+              >
+                Reset
+              </button>
+            )}
+          </div>
           <div
             className={cn(
               'absolute bottom-2 right-2 px-2 py-1 rounded text-xs',

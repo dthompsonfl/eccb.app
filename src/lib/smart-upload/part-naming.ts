@@ -207,3 +207,91 @@ export function buildPartStorageSlug(
   }
   return parts.join('_');
 }
+
+// =============================================================================
+// Canonical Piece Title Resolution
+// =============================================================================
+
+/**
+ * Titles that are not real titles. An OCR/LLM pass will happily return one of
+ * these when it fails to read the title block, and committing
+ * "Untitled_1st_Flute.pdf" is worse than falling back to the uploaded filename
+ * because it looks canonical to a human reviewer.
+ */
+const NON_CANONICAL_TITLES = new Set([
+  'untitled',
+  'unknown',
+  'none',
+  'null',
+  'n/a',
+  'na',
+  'document',
+  'scan',
+  'scanned',
+  'page',
+  'untitled piece',
+  'untitled score',
+]);
+
+/** Where the committed piece/part name came from. Persisted for audit. */
+export type TitleSource = 'extracted' | 'upload-filename';
+
+export interface ResolvedPartTitle {
+  /** The title used to build the part name. */
+  title: string;
+  /** Whether it came from extraction or from the uploaded filename. */
+  source: TitleSource;
+  /** Human-readable display name, e.g. "Lincolnshire Posy 1st Bb Clarinet". */
+  displayName: string;
+  /** Safe filename, e.g. "Lincolnshire_Posy_1st_Bb_Clarinet.pdf". */
+  fileName: string;
+  /** Storage-safe slug, unique per part. */
+  slug: string;
+}
+
+/** True when a title string is usable as a canonical piece title. */
+export function isCanonicalTitle(title: unknown): title is string {
+  if (typeof title !== 'string') return false;
+  const trimmed = title.trim();
+  if (trimmed.length === 0) return false;
+  if (trimmed.length > 200) return false;
+  if (NON_CANONICAL_TITLES.has(trimmed.toLowerCase())) return false;
+  // A title made entirely of digits is a scan id, not a work name.
+  if (/^\d+$/.test(trimmed)) return false;
+  return true;
+}
+
+/**
+ * Resolve the title to use for a part name, preferring the extracted canonical
+ * piece title over the uploaded filename.
+ *
+ * The uploaded filename is only a fallback, and the caller is told which was
+ * used so the fallback can be surfaced rather than being silent.
+ */
+export function resolvePartTitle(args: {
+  /** Title from OCR/LLM extraction. */
+  extractedTitle?: string | null;
+  /** Original uploaded filename, e.g. "scan_00482.pdf". */
+  uploadedFileName: string;
+  /** Normalised instrument for this part. */
+  part: Pick<NormalisedInstrument, 'instrument'>;
+  partNumber?: number;
+  pageRange?: [number, number];
+}): ResolvedPartTitle {
+  const { extractedTitle, uploadedFileName, part, partNumber, pageRange } = args;
+
+  const useExtracted = isCanonicalTitle(extractedTitle);
+  const title = useExtracted
+    ? (extractedTitle as string)
+    : uploadedFileName.replace(/\.(pdf|png|jpe?g|tiff?)$/i, '').trim();
+
+  const displayName = buildPartDisplayName(title, part);
+
+  return {
+    title,
+    source: useExtracted ? 'extracted' : 'upload-filename',
+    displayName,
+    fileName: buildPartFilename(displayName),
+    slug: buildPartStorageSlug(displayName, { partNumber, pageRange }),
+  };
+}

@@ -35,6 +35,25 @@ vi.mock('@/lib/rate-limit', () => ({
   applyRateLimit: vi.fn().mockResolvedValue(null),
 }));
 
+// The route performs object-level authorization before reading a score. Mock
+// it so these tests exercise the OMR path, not the access-control database.
+vi.mock('@/lib/stand/access', () => ({
+  canAccessFile: vi.fn().mockResolvedValue(true),
+}));
+
+// OMR now reads the score through the storage abstraction instead of
+// self-fetching /api/files/<key>.
+vi.mock('@/lib/services/storage', () => ({
+  // A PNG rather than a PDF: the endpoint skips pdfjs conversion for images,
+  // and this keeps the test focused on the OMR request/response path.
+  downloadFile: vi.fn().mockResolvedValue({
+    stream: (async function* () {
+      yield Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    })(),
+    metadata: { contentType: 'image/png' },
+  }),
+}));
+
 vi.mock('next/headers', () => ({
   headers: vi.fn().mockResolvedValue(new Headers()),
 }));

@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { env } from '@/lib/env';
+import { resolveOriginForHost } from '@/lib/allowed-origins';
 
 /**
  * CSRF Validation Result
@@ -106,39 +107,33 @@ export function validateCSRF(request: NextRequest): CSRFResult {
 }
 
 /**
- * Get the expected origin based on host header and environment
+ * Get the expected origin based on the request Host header.
+ *
+ * The expected origin is resolved from the configured allowlist
+ * (`NEXT_PUBLIC_APP_URL` + `ALLOWED_ORIGINS`, see lib/allowed-origins.ts) and
+ * never from attacker-controllable request data. A `Host` outside the
+ * allowlist yields `null`, which callers treat as a hard rejection — this is
+ * what stops the classic bypass of sending `Host: evil.com` together with
+ * `Origin: https://evil.com`.
+ *
+ * Returning an allowlisted origin for a known host is what lets the same
+ * build serve loopback, the LAN address, a Tailscale address and a forwarded
+ * public IP without weakening CSRF protection.
  */
 function getExpectedOrigin(host: string | null): string | null {
-  if (!host) {
-    return null;
+  const fromAllowlist = resolveOriginForHost(host);
+  if (fromAllowlist) {
+    return fromAllowlist;
   }
-  
-  // In production, use the configured APP_URL
-  if (env.NODE_ENV === 'production') {
-    try {
-      const appUrl = new URL(env.NEXT_PUBLIC_APP_URL);
-      // Strictly require the host to match the configured APP_URL.
-      // Accepting unverified Host header values is a CSRF bypass vector —
-      // an attacker could send Host: evil.com with Origin: https://evil.com
-      // and the constructed expected origin would equal the supplied origin.
-      if (appUrl.host !== host) {
-        return null;
-      }
-      return appUrl.origin;
-    } catch {
-      return null;
+
+  if (env.NODE_ENV !== 'production') {
+    // Development convenience only: loopback hosts on plain http.
+    if (host && (host.startsWith('localhost:') || host.startsWith('127.0.0.1:'))) {
+      return `http://${host}`;
     }
   }
-  
-  // In development, allow localhost variants
-  const isLocalhost = host.startsWith('localhost:') || host.startsWith('127.0.0.1:');
-  if (isLocalhost) {
-    // Determine protocol - assume http for localhost in dev
-    return `http://${host}`;
-  }
-  
-  // For other hosts in development, use https
-  return `https://${host}`;
+
+  return null;
 }
 
 /**

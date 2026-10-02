@@ -15,6 +15,7 @@ import {
   createOffscreenCanvas,
 } from '@/lib/pdf';
 import { calculateAutoCrop } from '@/lib/autoCrop';
+import { normalizedCropToPixels, type NormalizedCropRect } from '@/lib/stand/navigation';
 
 export interface UsePdfOptions {
   url: string | null;
@@ -22,10 +23,24 @@ export interface UsePdfOptions {
   scale: number;
   enablePreload?: boolean;
   enableAutoCrop?: boolean;
+  /**
+   * A crop the user has already chosen (e.g. persisted per-user). When set it
+   * takes precedence over the auto-computed crop, so a musician's deliberate
+   * framing survives reloads and re-renders.
+   */
+  cropRect?: NormalizedCropRect | null;
 }
 
 export interface UsePdfResult {
   document: PdfDocument | null;
+  /** The caller-supplied crop in normalised (0..1) space, for persistence. */
+  normalizedCropRect: NormalizedCropRect | null;
+  /**
+   * Render an arbitrary page into a caller-supplied canvas. Used by the
+   * two-page spread, which needs the second visible page drawn into its own
+   * canvas rather than into the main one.
+   */
+  renderPageInto: (pageNumber: number, target: HTMLCanvasElement) => Promise<void>;
   currentPage: PdfPage | null;
   isLoading: boolean;
   error: Error | null;
@@ -47,7 +62,14 @@ export interface UsePdfReturn extends UsePdfResult {
  * Handles document loading, page rendering, and preloading
  */
 export function usePdf(options: UsePdfOptions): UsePdfReturn {
-  const { url, pageNumber, scale, enablePreload = true, enableAutoCrop = false } = options;
+  const {
+    url,
+    pageNumber,
+    scale,
+    enablePreload = true,
+    enableAutoCrop = false,
+    cropRect: externalCrop = null,
+  } = options;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -58,11 +80,31 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [numPages, setNumPages] = useState(0);
-  const [cropRect, setCropRect] = useState<CropRect | null>(null);
+  const [computedCropRect, setComputedCropRect] = useState<CropRect | null>(null);
+  // An explicit user crop always wins over the auto-computed one.
+  // The resolved crop is reported in pixel space from pixelCrop() below.
   const [prevPageCanvas, setPrevPageCanvas] = useState<HTMLCanvasElement | null>(null);
   const [nextPageCanvas, setNextPageCanvas] = useState<HTMLCanvasElement | null>(null);
 
   const renderRef = useRef<{ cancel: () => void } | null>(null);
+  /**
+   * The active crop in PIXEL space for a given page.
+   *
+   * `computedCropRect` is already in pixels (calculateAutoCrop measures the
+   * rendered viewport); a user-persisted crop is NORMALISED so it survives a
+   * different device, and is converted against this page's viewport here.
+   */
+  const pixelCrop = useCallback(
+    (page: PdfPage | null): CropRect | null => {
+      if (!page) return null;
+      if (externalCrop) {
+        const vp = page.getViewport({ scale });
+        return normalizedCropToPixels(externalCrop, vp.width, vp.height);
+      }
+      return computedCropRect;
+    },
+    [externalCrop, computedCropRect, scale],
+  );
 
   // Load PDF document when URL changes
   useEffect(() => {
@@ -137,7 +179,7 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
         if (enableAutoCrop) {
           const crop = await calculateAutoCrop(page);
           if (!cancelled) {
-            setCropRect(crop);
+            setComputedCropRect(crop);
           }
         }
 
@@ -145,7 +187,13 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
         if (canvasRef.current) {
           const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
           try {
-            const handle = await renderPageToCanvas(page, canvasRef.current, scale, dpr);
+            const handle = await renderPageToCanvas(
+            page,
+            canvasRef.current,
+            scale,
+            dpr,
+            pixelCrop(currentPage),
+          );
             if (!cancelled) {
               renderRef.current = handle;
             } else {
@@ -174,7 +222,7 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
         renderRef.current = null;
       }
     };
-  }, [document, pageNumber, scale, numPages, enableAutoCrop]);
+  }, [document, pageNumber, scale, numPages, enableAutoCrop, currentPage, pixelCrop]);
 
   // Preload adjacent pages
   useEffect(() => {
@@ -243,12 +291,39 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
         renderRef.current.cancel();
         renderRef.current = null;
       }
-      const handle = await renderPageToCanvas(currentPage, canvasRef.current, scale, dpr);
+      const handle = await renderPageToCanvas(
+        currentPage,
+        canvasRef.current,
+        scale,
+        dpr,
+        pixelCrop(currentPage),
+      );
       renderRef.current = handle;
     } catch (err) {
       console.error('Error re-rendering page:', err);
     }
-  }, [currentPage, scale]);
+  }, [currentPage, scale, pixelCrop]);
+
+  /**
+   * Render any page of the loaded document into a caller-supplied canvas.
+   * The two-page spread uses this to draw its right-hand page for real instead
+   * of advancing the current page and displaying only one of them.
+   */
+  const renderPageInto = useCallback(
+    async (targetPageNumber: number, target: HTMLCanvasElement) => {
+      if (!document) return;
+      if (targetPageNumber < 1 || targetPageNumber > numPages) return;
+
+      try {
+        const page = await document.getPage(targetPageNumber);
+        const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+        await renderPageToCanvas(page, target, scale, dpr, pixelCrop(page));
+      } catch (err) {
+        console.error(`Error rendering spread page ${targetPageNumber}:`, err);
+      }
+    },
+    [document, numPages, scale, pixelCrop],
+  );
 
   const preloadAdjacentPages = useCallback(async () => {
     if (!document || !enablePreload) return;
@@ -277,14 +352,18 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
 
   return {
     document,
+    normalizedCropRect: externalCrop,
     currentPage,
     isLoading,
     error,
     numPages,
-    cropRect,
+    // Always PIXEL space, regardless of whether the active crop was computed
+    // here or supplied by the caller in normalised form.
+    cropRect: pixelCrop(currentPage),
     prevPageCanvas,
     nextPageCanvas,
     renderCurrentPage,
+    renderPageInto,
     preloadAdjacentPages,
     canvasRef: canvasRef as React.RefObject<HTMLCanvasElement | null>,
     containerRef: containerRef as React.RefObject<HTMLDivElement | null>,

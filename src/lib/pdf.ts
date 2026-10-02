@@ -18,7 +18,7 @@ export interface PdfDocument {
 }
 
 export interface PdfPage {
-  getViewport: (options: { scale: number }) => PdfViewport;
+  getViewport: (options: ViewportOptions) => PdfViewport;
   render: (options: PdfRenderOptions) => PdfRenderTask;
   getTextContent: () => Promise<PdfTextContent>;
 }
@@ -31,6 +31,17 @@ export interface PdfViewport {
   offsetY: number;
   transform: number[];
   clone: (options?: Partial<PdfViewportOptions>) => PdfViewport;
+}
+
+/**
+ * pdf.js `getViewport` options. `offsetX`/`offsetY` shift the rendered origin,
+ * which is how a crop removes surrounding margin instead of hiding it.
+ */
+export interface ViewportOptions {
+  scale: number;
+  offsetX?: number;
+  offsetY?: number;
+  rotation?: number;
 }
 
 export interface PdfViewportOptions {
@@ -157,22 +168,53 @@ export async function renderPageToCanvas(
   page: PdfPage,
   canvas: HTMLCanvasElement,
   scale: number,
-  dpr: number = 1
+  dpr: number = 1,
+  /**
+   * Optional crop, in the same pixel space as the un-cropped viewport.
+   * When provided, only this region of the page is rendered and the canvas is
+   * sized to the crop, so surrounding blank margin is genuinely removed rather
+   * than hidden behind an overlay. This is what makes auto-crop functional
+   * instead of dormant.
+   */
+  crop?: CropRect | null,
 ): Promise<{ cancel: () => void }> {
-  const viewport = page.getViewport({ scale });
+  const fullViewport = page.getViewport({ scale });
   const context = canvas.getContext('2d');
 
   if (!context) {
     throw new Error('Failed to get canvas context');
   }
 
-  // Set canvas buffer size to viewport × DPR for crisp rendering
-  canvas.width = Math.floor(viewport.width * dpr);
-  canvas.height = Math.floor(viewport.height * dpr);
+  const hasCrop =
+    crop != null &&
+    Number.isFinite(crop.width) &&
+    Number.isFinite(crop.height) &&
+    crop.width > 0 &&
+    crop.height > 0;
 
-  // Set CSS display size to viewport (only applies to on-screen canvases)
-  canvas.style.width = `${Math.floor(viewport.width)}px`;
-  canvas.style.height = `${Math.floor(viewport.height)}px`;
+  // With a crop, shift the viewport origin so only the cropped area is rendered.
+  const viewport = hasCrop
+    ? page.getViewport({
+        scale,
+        offsetX: -(crop!.x ?? 0),
+        offsetY: -(crop!.y ?? 0),
+      })
+    : fullViewport;
+
+  const displayWidth = hasCrop
+    ? Math.min(crop!.width, fullViewport.width)
+    : fullViewport.width;
+  const displayHeight = hasCrop
+    ? Math.min(crop!.height, fullViewport.height)
+    : fullViewport.height;
+
+  // Set canvas buffer size to the display area × DPR for crisp rendering
+  canvas.width = Math.floor(displayWidth * dpr);
+  canvas.height = Math.floor(displayHeight * dpr);
+
+  // Set CSS display size (only applies to on-screen canvases)
+  canvas.style.width = `${Math.floor(displayWidth)}px`;
+  canvas.style.height = `${Math.floor(displayHeight)}px`;
 
   // Scale context so PDF renders at DPR resolution
   if (dpr !== 1) {

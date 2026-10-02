@@ -55,6 +55,36 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url().default("http://localhost:3225"),
   NEXT_PUBLIC_APP_NAME: z.string().default("Emerald Coast Community Band"),
 
+  /**
+   * Additional origins this deployment legitimately answers on, in addition to
+   * `NEXT_PUBLIC_APP_URL` (comma or whitespace separated), e.g.
+   *   "http://192.168.1.152:3225 http://100.122.110.124:3225 http://45.30.217.57:3225"
+   * Consumed by `src/lib/allowed-origins.ts` and fed to Better Auth
+   * `trustedOrigins`, the CSRF host allowlist and Socket.IO CORS. Without it,
+   * reaching the app on any interface other than `NEXT_PUBLIC_APP_URL` is
+   * rejected as a cross-origin request and login bounces.
+   */
+  ALLOWED_ORIGINS: z.string().optional(),
+
+  /**
+   * Explicit override for the session cookie `Secure` flag. When unset the
+   * value is derived from the scheme of `NEXT_PUBLIC_APP_URL`, because a
+   * `Secure` cookie is discarded by browsers on a plain-http origin.
+   */
+  COOKIE_SECURE: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (val === undefined || val.trim() === '') return undefined;
+      const normalized = val.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+      console.warn(
+        `⚠️  COOKIE_SECURE must be "true" or "false" (received "${val}") — falling back to scheme detection.`,
+      );
+      return undefined;
+    }),
+
   // Setup Configuration
   SETUP_MODE: z.string().default('false').transform((val) => `${val}`.trim().split(/\s+/)[0].toLowerCase() === 'true'),
   SETUP_TOKEN: z.string().optional(),
