@@ -11,6 +11,7 @@ import {
   invalidateMusicAssignmentCache,
   invalidateMusicDashboardCache,
 } from '@/lib/cache';
+import { deliverMusicAssignmentNotifications } from '@/lib/notifications/music-assignment-delivery';
 
 /**
  * Bulk assign music to all members of one or more sections
@@ -84,6 +85,10 @@ export async function assignMusicToSections(
       entityType: 'MusicPiece',
       entityId: pieceId,
       newValues: { sectionIds, memberCount: result.count },
+    });
+
+    await deliverMusicAssignmentNotifications(pieceId, memberIds).catch((error) => {
+      console.error('Failed to deliver music assignment notifications:', error);
     });
 
     // Invalidate caches
@@ -738,6 +743,10 @@ export async function assignMusicToMembers(
       entityType: 'MusicPiece',
       entityId: pieceId,
       newValues: { memberCount: memberIds.length },
+    });
+
+    await deliverMusicAssignmentNotifications(pieceId, memberIds).catch((error) => {
+      console.error('Failed to deliver music assignment notifications:', error);
     });
 
     // Invalidate caches
