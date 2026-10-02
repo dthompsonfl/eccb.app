@@ -10,9 +10,21 @@ import {
 } from '@/lib/jobs/definitions';
 import { logger } from '@/lib/logger';
 import { sendEmail } from '@/lib/email';
+import { sendPushToMembers } from '@/lib/communications/push/notify';
+import { deliverAnnouncementNotifications } from '@/lib/notifications/announcement-delivery';
+import { isNotificationPreferenceEnabled } from '@/lib/notifications/preferences';
 import { invalidatePageCache } from '@/lib/cache';
 import { getEffectivePublishAt } from '@/lib/cms/page-visibility';
 import { subDays, subHours, addHours, format } from 'date-fns';
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
 
 // ============================================================================
 // Scheduled Publishing
@@ -96,23 +108,24 @@ async function processScheduledPublish(job: Job<PublishScheduledJobData>): Promi
         throw new Error(`Announcement not found: ${data.contentId}`);
       }
 
-      if (announcement.status !== 'SCHEDULED') {
-        logger.warn('Announcement is not in SCHEDULED status', { 
-          announcementId: announcement.id, 
-          status: announcement.status 
+      if (announcement.status === 'SCHEDULED') {
+        await prisma.announcement.update({
+          where: { id: data.contentId },
+          data: {
+            status: 'PUBLISHED',
+            publishedAt: new Date(),
+            publishAt: null,
+          },
+        });
+      } else if (announcement.status !== 'PUBLISHED') {
+        logger.warn('Announcement is not publishable', {
+          announcementId: announcement.id,
+          status: announcement.status,
         });
         return;
       }
 
-      await prisma.announcement.update({
-        where: { id: data.contentId },
-        data: {
-          status: 'PUBLISHED',
-          publishedAt: new Date(),
-          publishAt: null,
-        },
-      });
-
+      await deliverAnnouncementNotifications(announcement.id);
       logger.info('Announcement published', { announcementId: announcement.id, title: announcement.title });
     }
 
@@ -284,7 +297,11 @@ async function processEventReminder(job: Job<EventReminderJobData>): Promise<voi
       status: 'ACTIVE',
     },
     include: {
-      user: true,
+      user: {
+        include: {
+          userPreferences: true,
+        },
+      },
     },
   });
 
@@ -295,8 +312,65 @@ async function processEventReminder(job: Job<EventReminderJobData>): Promise<voi
   const formattedDate = format(eventDate, 'EEEE, MMMM d, yyyy');
   const formattedTime = format(eventDate, 'h:mm a');
 
+  const eligibleMembers = members.filter((member) =>
+    isNotificationPreferenceEnabled(
+      member.user?.userPreferences?.otherSettings,
+      'eventReminders',
+    ),
+  );
+
+  const notificationTitle = `Reminder (${data.reminderType}): ${data.eventTitle}`;
+  const notificationCandidates = eligibleMembers
+    .filter((member) => Boolean(member.user?.id))
+    .map((member) => ({
+      userId: member.user!.id,
+      type: 'EVENT_REMINDER' as const,
+      title: notificationTitle,
+      message: `${data.reminderType} reminder for ${formattedDate} at ${formattedTime}.`,
+      eventId: data.eventId,
+      linkUrl: `/member/events/${data.eventId}`,
+      linkText: 'View event',
+    }));
+
+  if (notificationCandidates.length > 0) {
+    const existingNotifications = await prisma.userNotification.findMany({
+      where: {
+        eventId: data.eventId,
+        type: 'EVENT_REMINDER',
+        title: notificationTitle,
+        userId: { in: notificationCandidates.map((row) => row.userId) },
+      },
+      select: { userId: true },
+    });
+    const alreadyNotified = new Set(existingNotifications.map((row) => row.userId));
+    const notificationRows = notificationCandidates.filter(
+      (row) => !alreadyNotified.has(row.userId),
+    );
+
+    if (notificationRows.length > 0) {
+      await prisma.userNotification.createMany({
+        data: notificationRows,
+        skipDuplicates: true,
+      });
+      await sendPushToMembers(
+        notificationRows.map((row) => row.userId),
+        {
+          title: notificationTitle,
+          body: `${formattedDate} at ${formattedTime}`,
+          url: `/member/events/${data.eventId}`,
+          tag: `event-reminder-${data.eventId}-${data.reminderType}`,
+        },
+      ).catch((error: unknown) => {
+        logger.error('Failed to send event reminder push notifications', {
+          eventId: data.eventId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+  }
+
   // Send reminder emails
-  const emailPromises = members
+  const emailPromises = eligibleMembers
     .filter((m: { user?: { email?: string } | null; email?: string | null }) => m.user?.email || m.email)
     .map((member: { firstName: string; user?: { email?: string } | null; email?: string | null }) => {
       const email = member.user?.email || member.email;
@@ -307,17 +381,17 @@ async function processEventReminder(job: Job<EventReminderJobData>): Promise<voi
         subject: `Reminder: ${data.eventTitle} - ${formattedDate}`,
         html: `
           <h2>Event Reminder</h2>
-          <p>Hello ${member.firstName},</p>
+          <p>Hello ${escapeHtml(member.firstName)},</p>
           <p>This is a reminder for the upcoming event:</p>
           <div style="background: #f5f5f5; padding: 16px; border-radius: 8px; margin: 16px 0;">
-            <h3 style="margin: 0 0 8px 0;">${data.eventTitle}</h3>
+            <h3 style="margin: 0 0 8px 0;">${escapeHtml(data.eventTitle)}</h3>
             <p style="margin: 0;"><strong>Date:</strong> ${formattedDate}</p>
             <p style="margin: 0;"><strong>Time:</strong> ${formattedTime}</p>
-            ${event.location ? `<p style="margin: 0;"><strong>Location:</strong> ${event.location}</p>` : ''}
-            ${event.venue ? `<p style="margin: 0;"><strong>Venue:</strong> ${event.venue.name}</p>` : ''}
+            ${event.location ? `<p style="margin: 0;"><strong>Location:</strong> ${escapeHtml(event.location)}</p>` : ''}
+            ${event.venue ? `<p style="margin: 0;"><strong>Venue:</strong> ${escapeHtml(event.venue.name)}</p>` : ''}
             ${event.callTime ? `<p style="margin: 0;"><strong>Call Time:</strong> ${format(new Date(event.callTime), 'h:mm a')}</p>` : ''}
           </div>
-          ${data.customMessage ? `<p>${data.customMessage}</p>` : ''}
+          ${data.customMessage ? `<p>${escapeHtml(data.customMessage)}</p>` : ''}
           <p>Please make sure to arrive on time${event.callTime ? ` by ${format(new Date(event.callTime), 'h:mm a')}` : ''}.</p>
           <p>See you there!</p>
         `,
@@ -490,7 +564,7 @@ export async function checkScheduledContent(): Promise<void> {
       contentType: 'announcement',
       contentId: announcement.id,
       scheduledFor: announcement.publishAt!.toISOString(),
-    });
+    }, { jobId: `publish-announcement-${announcement.id}-${announcement.publishAt!.getTime()}` });
     logger.info('Queued scheduled announcement for publishing', { 
       announcementId: announcement.id, 
       title: announcement.title 
@@ -524,7 +598,7 @@ export async function checkEventReminders(): Promise<void> {
     eventTitle: event.title,
     eventDate: event.startTime.toISOString(),
     reminderType: '24h',
-  })));
+  }, { jobId: `event-reminder-${event.id}-${event.startTime.getTime()}-24h` })));
 
   // 1-hour reminders
   const oneHourFromNow = addHours(now, 1);
@@ -543,7 +617,7 @@ export async function checkEventReminders(): Promise<void> {
     eventTitle: event.title,
     eventDate: event.startTime.toISOString(),
     reminderType: '1h',
-  })));
+  }, { jobId: `event-reminder-${event.id}-${event.startTime.getTime()}-1h` })));
 }
 
 /**
