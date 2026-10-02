@@ -8,6 +8,9 @@ const globalForRedis = global as unknown as { redis: Redis | undefined };
 function createRedis(): Redis {
   const client = new Redis({
     ...buildRedisOptionsFromUrl(env.REDIS_URL),
+    // Importing a module during `next build` must not open a network
+    // connection. ioredis connects automatically on the first real command.
+    lazyConnect: true,
     maxRetriesPerRequest: null,
     retryStrategy: (times: number) => {
       const delay = Math.min(times * 1000, 30_000);
