@@ -78,8 +78,8 @@ export interface LLMRuntimeConfig {
   textProbePages: number;
   /** Store raw OCR text in session for provenance (can be large) */
   storeRawOcrText: boolean;
-  /** OCR engine to use: 'tesseract' | 'ocrmypdf' | 'vision_api' | 'native' */
-  ocrEngine: 'tesseract' | 'ocrmypdf' | 'vision_api' | 'native';
+  /** OCR engine to use. Legacy vision_api values are normalized to tesseract. */
+  ocrEngine: 'tesseract' | 'ocrmypdf' | 'native';
   /** Rate limit for OCR engine (requests per minute) */
   ocrRateLimitRpm: number;
   /** Maximum pages to send to LLM for vision processing */
@@ -297,7 +297,11 @@ export async function loadLLMConfig(): Promise<LLMRuntimeConfig> {
   const ocrMaxPages = Number(db['smart_upload_ocr_max_pages'] ?? 3);
   const textProbePages = Number(db['smart_upload_text_probe_pages'] ?? 10);
   const storeRawOcrText = (db['smart_upload_store_raw_ocr_text'] ?? 'false') === 'true';
-  const ocrEngine = (db['smart_upload_ocr_engine'] || 'tesseract') as 'tesseract' | 'ocrmypdf' | 'vision_api' | 'native';
+  const rawOcrEngine = db['smart_upload_ocr_engine'] || 'tesseract';
+  const ocrEngine: 'tesseract' | 'ocrmypdf' | 'native' =
+    rawOcrEngine === 'ocrmypdf' || rawOcrEngine === 'native'
+      ? rawOcrEngine
+      : 'tesseract';
   const ocrRateLimitRpm = Number(db['smart_upload_ocr_rate_limit_rpm'] ?? 6);
   const llmMaxPages = Number(db['smart_upload_llm_max_pages'] ?? 10);
   const llmMaxHeaderBatches = Number(db['smart_upload_llm_max_header_batches'] ?? 2);
