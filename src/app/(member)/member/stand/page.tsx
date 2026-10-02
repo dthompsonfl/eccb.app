@@ -22,6 +22,8 @@ export const metadata: Metadata = {
   title: 'Music Stand',
 };
 
+export const dynamic = 'force-dynamic';
+
 export default async function StandHubPage() {
   // Kill-switch: if the stand feature is disabled, show 404
   if (!(await isStandEnabled())) {
