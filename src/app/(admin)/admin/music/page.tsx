@@ -17,6 +17,7 @@ import {
   Plus,
   Search,
   Download,
+  ShieldCheck,
 } from 'lucide-react';
 import { type MusicPieceWithRelations } from '@/components/admin/MusicLibraryTable';
 import { RealTimeMusicLibrary } from '@/components/admin/RealTimeMusicLibrary';
@@ -244,6 +245,12 @@ export default async function AdminMusicPage({
             <Button variant="outline" type="button">
               <Download className="mr-2 h-4 w-4" />
               Export CSV
+            </Button>
+          </a>
+          <a href="/api/admin/music/licensing-report?format=csv">
+            <Button variant="outline" type="button">
+              <ShieldCheck className="mr-2 h-4 w-4" />
+              Licensing Report
             </Button>
           </a>
           <Button asChild>

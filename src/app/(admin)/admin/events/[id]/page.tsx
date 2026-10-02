@@ -15,6 +15,7 @@ import {
   Clock,
   Users,
   Music,
+  FileText,
   Shirt,
   AlertCircle,
 } from 'lucide-react';
@@ -243,12 +244,20 @@ export default async function EventDetailPage({ params }: PageProps) {
                     Pieces scheduled for this event
                   </CardDescription>
                 </div>
-                <Link href={`/admin/events/${id}/music`}>
-                  <Button variant="outline">
-                    <Music className="mr-2 h-4 w-4" />
-                    Manage Program
-                  </Button>
-                </Link>
+                <div className="flex gap-2">
+                  <Link href={`/admin/events/${id}/program`}>
+                    <Button>
+                      <FileText className="mr-2 h-4 w-4" />
+                      Program
+                    </Button>
+                  </Link>
+                  <Link href={`/admin/events/${id}/music`}>
+                    <Button variant="outline">
+                      <Music className="mr-2 h-4 w-4" />
+                      Manage Program
+                    </Button>
+                  </Link>
+                </div>
               </div>
             </CardHeader>
             <CardContent>

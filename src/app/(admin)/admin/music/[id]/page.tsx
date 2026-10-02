@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { MusicFilesList } from '@/components/admin/music/music-files-list';
 import { MusicAssignments } from '@/components/admin/music/music-assignments';
+import { WatermarkToggle } from '@/components/admin/music/watermark-toggle';
 
 import { MUSIC_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
@@ -219,6 +220,33 @@ export default async function MusicDetailPage({ params }: PageProps) {
           </Card>
         </div>
       </div>
+
+      {/* Copyright licensing */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Copyright &amp; licensing</CardTitle>
+          <CardDescription>
+            This work is copyrighted. Recipient watermarking keeps every issued copy traceable.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <WatermarkToggle
+            pieceId={piece.id}
+            enabled={piece.watermarkEnabled}
+            disabledBy={piece.watermarkDisabledBy}
+            disabledAt={piece.watermarkDisabledAt}
+            disabledReason={piece.watermarkDisabledReason}
+          />
+          <p className="mt-4 text-xs text-muted-foreground">
+            <a
+              href={`/api/admin/music/licensing-report?format=csv&pieceId=${piece.id}`}
+              className="underline"
+            >
+              Download the licensing report for this work (CSV)
+            </a>
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Tabs */}
       <Tabs defaultValue="files" className="space-y-4">

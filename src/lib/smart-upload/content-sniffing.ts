@@ -13,7 +13,7 @@
  * must handle that explicitly.
  */
 
-import { randomUUID } from 'node:crypto';
+
 
 export type SniffedImageFormat = 'jpeg' | 'png' | 'tiff';
 
@@ -126,60 +126,3 @@ export function bufferIsPdfOrImage(buffer: Buffer): boolean {
   return detected !== null;
 }
 
-// =============================================================================
-// Image -> single-page PDF normalisation
-// =============================================================================
-
-/**
- * Convert a raster image into a single-page PDF.
- *
- * The downstream Smart Upload pipeline (OCR, page segmentation, cutting) is
- * PDF-oriented, so an uploaded image is wrapped as a one-page PDF sized to the
- * image's own dimensions. The original image bytes are still retained in
- * storage as the archival source; this is a working copy, not a replacement.
- */
-export async function imageToSinglePagePdf(
-  imageBuffer: Buffer,
-  opts?: { format?: SniffedImageFormat; maxDimension?: number },
-): Promise<Buffer> {
-  void opts?.format; // accepted for call-site clarity; conversion is uniform
-  // The detected format is not needed for the conversion itself: every input
-  // is re-encoded to PNG before embedding, so only the pixel dimensions matter.
-  const maxDimension = opts?.maxDimension ?? 5000;
-
-  // sharp is already a dependency; it handles JPEG/PNG/TIFF uniformly and
-  // gives us the real pixel dimensions.
-  const { default: sharp } = await import('sharp');
-  const image = sharp(imageBuffer, { animated: false });
-
-  const metadata = await image.metadata();
-  const srcWidth = metadata.width ?? 0;
-  const srcHeight = metadata.height ?? 0;
-
-  if (!srcWidth || !srcHeight) {
-    throw new Error('Could not determine image dimensions');
-  }
-
-  // Keep the page within a sane PDF point size while preserving aspect ratio.
-  const scale = Math.min(1, maxDimension / Math.max(srcWidth, srcHeight));
-  const width = Math.max(1, Math.round(srcWidth * scale));
-  const height = Math.max(1, Math.round(srcHeight * scale));
-
-  // Normalise to PNG for embedding: it is lossless and handles alpha, so an
-  // OCR pass reading the score sees the original pixels.
-  const pngBuffer = await image.png().toBuffer();
-
-  const { PDFDocument } = await import('pdf-lib');
-  const pdf = await PDFDocument.create();
-  const pngImage = await pdf.embedPng(pngBuffer);
-  const page = pdf.addPage([width, height]);
-  page.drawImage(pngImage, { x: 0, y: 0, width, height });
-
-  const bytes = await pdf.save();
-  return Buffer.from(bytes);
-}
-
-/** A stable id for a generated storage key segment. */
-export function newSessionId(): string {
-  return randomUUID();
-}

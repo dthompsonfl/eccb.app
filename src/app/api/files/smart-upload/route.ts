@@ -6,9 +6,10 @@ import { uploadFile } from "@/lib/services/storage";
 import {
   ACCEPTED_MEDIA_TYPES,
   bufferMatchesMediaType,
-  imageToSinglePagePdf,
   sniffContentType,
 } from "@/lib/smart-upload/content-sniffing";
+// Server-only: sharp/pdf-lib are Node-native and must not enter a client bundle.
+import { imageToSinglePagePdf } from "@/lib/smart-upload/image-to-pdf";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { validateCSRF } from "@/lib/csrf";
 import { logger } from "@/lib/logger";

@@ -142,6 +142,14 @@ export default async function EventDetailPage({ params }: EventPageProps) {
                         </div>
                       </div>
                     ))}
+                    <p className="pt-4 text-center text-sm">
+                      <Link
+                        href={`/events/${event.id}/program`}
+                        className="text-primary underline underline-offset-4"
+                      >
+                        View the full concert program
+                      </Link>
+                    </p>
                   </div>
                 </div>
               )}

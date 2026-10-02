@@ -10,6 +10,8 @@ import {
 } from '@/lib/jobs/definitions';
 import { logger } from '@/lib/logger';
 import { sendEmail } from '@/lib/email';
+import { invalidatePageCache } from '@/lib/cache';
+import { getEffectivePublishAt } from '@/lib/cms/page-visibility';
 import { subDays, subHours, addHours, format } from 'date-fns';
 
 // ============================================================================
@@ -17,7 +19,16 @@ import { subDays, subHours, addHours, format } from 'date-fns';
 // ============================================================================
 
 /**
- * Publish scheduled pages and announcements
+ * Publish scheduled pages and announcements.
+ *
+ * Publishing flips the row to PUBLISHED and clears the schedule. It must also
+ * invalidate the Redis page cache: the public route reads pages through a
+ * cached record, and a stale cache entry would keep serving (or keep hiding) the
+ * page until the TTL expired. `revalidatePath` is deliberately NOT used here —
+ * this runs in the standalone BullMQ worker process, which has no Next.js
+ * request scope and no Data Cache to revalidate, so it would be a silent no-op.
+ * Cache invalidation in Redis is the mechanism that actually crosses the
+ * process boundary.
  */
 async function processScheduledPublish(job: Job<PublishScheduledJobData>): Promise<void> {
   const data = job.data;
@@ -40,8 +51,20 @@ async function processScheduledPublish(job: Job<PublishScheduledJobData>): Promi
         throw new Error(`Page not found: ${data.contentId}`);
       }
 
-      if (page.status !== 'SCHEDULED') {
-        logger.warn('Page is not in SCHEDULED status', { pageId: page.id, status: page.status });
+      // A page whose schedule has not yet arrived must not be published early.
+      // This makes the worker safe against a stale or replayed job: it publishes
+      // due pages only, and leaves future-scheduled ones for a later tick.
+      const publishAt = getEffectivePublishAt(page);
+      if (publishAt && publishAt.getTime() > Date.now()) {
+        logger.warn('Page is not due yet, skipping publish', {
+          pageId: page.id,
+          publishAt: publishAt.toISOString(),
+        });
+        return;
+      }
+
+      if (page.status !== 'SCHEDULED' && page.status !== 'PUBLISHED') {
+        logger.warn('Page is not in a publishable status', { pageId: page.id, status: page.status });
         return;
       }
 
@@ -49,12 +72,21 @@ async function processScheduledPublish(job: Job<PublishScheduledJobData>): Promi
         where: { id: data.contentId },
         data: {
           status: 'PUBLISHED',
-          publishedAt: new Date(),
+          publishedAt: page.publishedAt ?? new Date(),
+          publishAt: null,
           scheduledFor: null,
         },
       });
 
-      logger.info('Page published', { pageId: page.id, title: page.title });
+      // Cross-process cache invalidation: drop the page record and its metadata
+      // so the next public request reads the freshly published row.
+      await invalidatePageCache(page.slug);
+
+      logger.info('Page published', {
+        pageId: page.id,
+        title: page.title,
+        slug: page.slug,
+      });
     } else if (data.contentType === 'announcement') {
       const announcement = await prisma.announcement.findUnique({
         where: { id: data.contentId },
@@ -395,26 +427,53 @@ function mapNotificationType(type: NotificationJobData['type']): 'ANNOUNCEMENT' 
 // ============================================================================
 
 /**
- * Check for scheduled content that needs to be published
- * This should be run every minute
+ * Check for scheduled content that needs to be published.
+ * This should be run every minute.
+ *
+ * Runs on an interval AND once immediately at worker startup (see
+ * startSchedulerIntervals), so a page whose publish instant passed while the
+ * worker was down is published on the next boot without operator action.
+ *
+ * Scans on the raw due predicate (publishAt <= now, else legacy scheduledFor)
+ * rather than on `status: 'SCHEDULED'`, because a page can legitimately carry a
+ * publish instant while already being PUBLISHED — that is the "already live,
+ * but withhold until then" case the admin UI allows. Matching on status alone
+ * would strand those pages with a stale schedule forever.
  */
 export async function checkScheduledContent(): Promise<void> {
   const now = new Date();
 
-  // Check scheduled pages
+  // Check scheduled pages. Either schedule column being due makes the page due;
+  // getEffectivePublishAt in processScheduledPublish applies the same precedence
+  // when it decides whether to actually publish.
   const scheduledPages = await prisma.page.findMany({
     where: {
-      status: 'SCHEDULED',
-      scheduledFor: { lte: now },
+      status: { in: ['SCHEDULED', 'PUBLISHED'] },
+      deletedAt: null,
+      OR: [
+        { publishAt: { lte: now } },
+        { scheduledFor: { lte: now } },
+      ],
     },
+    select: { id: true, title: true, slug: true, publishAt: true, scheduledFor: true },
   });
 
   await Promise.all(scheduledPages.map(async (page) => {
-    await addJob('publish.scheduled', {
-      contentType: 'page',
-      contentId: page.id,
-      scheduledFor: page.scheduledFor!.toISOString(),
-    });
+    const dueAt = page.publishAt ?? page.scheduledFor!;
+    // Deterministic jobId per page per due instant: the interval fires every
+    // minute and the row stays due until the job runs, so without this the same
+    // page would be enqueued once per minute. The instant is part of the id, so
+    // genuinely rescheduling a page still produces a fresh job.
+    const jobId = `publish-page-${page.id}-${dueAt.getTime()}`;
+    await addJob(
+      'publish.scheduled',
+      {
+        contentType: 'page',
+        contentId: page.id,
+        scheduledFor: dueAt.toISOString(),
+      },
+      { jobId },
+    );
     logger.info('Queued scheduled page for publishing', { pageId: page.id, title: page.title });
   }));
 

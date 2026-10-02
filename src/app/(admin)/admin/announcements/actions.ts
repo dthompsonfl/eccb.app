@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { sendEmail } from '@/lib/email';
+import { sendPushToMembers } from '@/lib/communications/push/notify';
 import { env } from '@/lib/env';
 import { z } from 'zod';
 import {
@@ -383,6 +384,26 @@ async function sendAnnouncementNotifications(announcementId: string) {
     await prisma.userNotification.createMany({
       data: notifications,
       skipDuplicates: true,
+    });
+
+    // Web push is the third channel on this event (in-app rows above + email
+    // below + push here). Push-only: the in-app createMany above already ran,
+    // and UserNotification has no uniqueness constraint, so routing through
+    // notifyUsers() would duplicate every row. Consent is enforced per member
+    // inside sendPushToUser(), so members who have not opted in get the in-app
+    // row and no push.
+    await sendPushToMembers(
+      users.map((u) => u.id),
+      {
+        title: announcement.title,
+        body:
+          announcement.content.substring(0, 200) +
+          (announcement.content.length > 200 ? '...' : ''),
+        url: '/member/notifications',
+        tag: `announcement-${announcement.id}`,
+      },
+    ).catch((err: unknown) => {
+      console.error('Failed to send announcement push notifications:', err);
     });
 
     // Send email notifications for urgent announcements

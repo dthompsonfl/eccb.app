@@ -30,6 +30,7 @@ model User {
   standBookmarks    StandBookmark[]
   standSetlists     StandSetlist[]
   notifications     UserNotification[]
+  pushSubscriptions PushSubscription[]
   customPermissions UserPermission[]
   userPreferences   UserPreferences?
   roles             UserRole[]
@@ -303,6 +304,16 @@ model MusicPiece {
   /// Copyright year of the work, extracted from the score (e.g. 1977).
   /// Nullable: most library entries have no known year.
   copyrightYear       Int?
+  /// Deliver this work with a recipient-identifying watermark. DEFAULT TRUE:
+  /// copyrighted sheet music may only be issued traceably to a named member, so
+  /// disabling the watermark is an explicit, audited admin decision.
+  watermarkEnabled    Boolean            @default(true)
+  /// Admin who last set watermarkEnabled to false (null while enabled).
+  watermarkDisabledBy String?
+  /// When the watermark was disabled (null while enabled).
+  watermarkDisabledAt DateTime?
+  /// Justification supplied by the admin who disabled it (licensing evidence).
+  watermarkDisabledReason String?        @db.VarChar(500)
   notes               String?
   performanceHistory  String?
   isArchived          Boolean            @default(false)
@@ -713,6 +724,12 @@ model Page {
   status          ContentStatus @default(DRAFT)
   publishedAt     DateTime?
   scheduledFor    DateTime?
+  // Canonical future publish instant for a page. A page whose publishAt is in
+  // the future is withheld from the public site until the instant passes; a
+  // null publishAt means "no schedule", so visibility is governed by status
+  // alone. scheduledFor is the legacy column and is kept in sync for
+  // backwards compatibility with existing rows and callers.
+  publishAt       DateTime?
   version         Int           @default(1)
   parentVersionId String?
   createdAt       DateTime      @default(now())
@@ -725,6 +742,7 @@ model Page {
   @@index([slug])
   @@index([status])
   @@index([publishedAt])
+  @@index([publishAt])
 }
 
 model PageVersion {
@@ -1173,10 +1191,39 @@ model UserPreferences {
   metronomeSettings String?  @db.LongText
   midiMappings      String?  @db.LongText
   otherSettings     String?  @db.LongText
+  /// Web push consent. DEFAULT FALSE — push is strictly opt-in (GDPR).
+  /// "Push enabled" is personal data: a row here means this member
+  /// affirmatively asked to be reached on this account. Never flip the
+  /// default to true.
+  pushEnabled       Boolean  @default(false)
+  /// When the member granted consent (null = never consented).
+  pushConsentedAt   DateTime?
   updatedAt         DateTime @updatedAt
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// A registered browser push endpoint for one member.
+///
+/// `endpoint` is the URL handed out by the browser's push service and is
+/// UNIQUE: it is the push service's own identifier for a (browser, profile)
+/// pair, so the same browser cannot accumulate duplicate rows for one account.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  /// True when the browser still reports permission === 'granted'.
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastSeen  DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([active])
 }
 
 model PracticeLog {

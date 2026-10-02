@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { normalizePageContent } from '@/lib/cms/page-content';
+import { isPagePubliclyVisible } from '@/lib/cms/page-visibility';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,11 +69,15 @@ export default async function DynamicPage({ params }: PageProps) {
   }
 
   const page = await CmsService.getPageBySlug(slug, true);
-  if (!page || page.status !== 'PUBLISHED') {
-    notFound();
-  }
 
-  if (page.scheduledFor && page.scheduledFor > new Date()) {
+  // Single source of truth for public visibility: must be PUBLISHED, not
+  // deleted, and carry no future publish instant. Because this route is
+  // `force-dynamic` (see above) this runs on every request against the current
+  // clock, so a scheduled page starts serving the moment its publishAt passes —
+  // no rebuild, no restart, no cache flush. Re-checking here (in addition to the
+  // service's own filter) keeps the guarantee even if the cached record for a
+  // page is stale, e.g. one cached while the page was still DRAFT.
+  if (!page || !isPagePubliclyVisible(page, new Date())) {
     notFound();
   }
 

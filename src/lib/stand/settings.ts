@@ -22,21 +22,26 @@ export interface StandGlobalSettings {
   maxStrokeDataBytes: number;
   maxAnnotationsPerPage: number;
   /**
-   * NOT IMPLEMENTED. There is no working PWA: `public/sw.js` deliberately
-   * unregisters itself and `public/manifest.json` uses `display: "browser"`,
-   * so nothing is cached for offline use. Nothing reads this flag outside its
-   * own unit test. Kept in the schema only so an existing SystemSetting row
-   * does not break loading. Either implement offline support or delete these
-   * three fields — do not surface an admin toggle for them.
+   * Offline score availability. When enabled, scores the musician chooses can be
+   * pre-cached by the service worker for offline reading.
+   *
+   * The worker namespaces every cache by user id and purges them on sign-out, so
+   * one musician's music is never shown to another on a shared tablet. See
+   * src/lib/stand/offline.ts for the policy and public/sw.js for the plumbing.
    */
   offlineEnabled: boolean;
   practiceTrackingEnabled: boolean;
-  /** NOT IMPLEMENTED. No audio link editor exists. See `offlineEnabled`. */
+  /** NOT IMPLEMENTED. No audio link editor exists. */
   audioSyncEnabled: boolean;
   defaultAutoTurnDelay: number;
   maxPdfSizeBytes: number;
   maxFileSizeMb: number;
-  /** NOT IMPLEMENTED. No offline annotation queue exists. See `offlineEnabled`. */
+  /**
+   * Queue annotations made while offline and replay them on reconnect.
+   *
+   * Implemented in src/lib/stand/use-offline-annotations.ts. Replay is
+   * idempotent by client-generated id, so a retry cannot duplicate a stroke.
+   */
   allowOfflineSync: boolean;
   accessPolicy: 'any_member' | 'rsvp_only';
   maintenanceMessage: string | null;

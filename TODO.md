@@ -59,13 +59,22 @@ This document tracks the implementation progress of the Emerald Coast Community 
   - [X] Handle PDF uploads (Scores & Parts)
   - [X] Handle Audio uploads (MP3/WAV)
   - [X] Implement secure file download (Signed URLs)
-  - [ ] **Feature:** Watermarking (Optional PDF manipulation on download) — not yet implemented
+  - [X] **Feature:** Watermarking — `src/lib/music/watermark.ts`
+    - Default-secure: a missing row, a null flag, or a failed lookup all resolve to watermarked.
+    - Only an explicit, audited admin action (`PATCH /api/admin/music/watermark`, reason required) disables it.
+    - Applied strictly AFTER authorization on both delivery routes; an unauthorised request still receives zero bytes.
+    - [ ] S3 driver: see the note under Offline Access — not watermarked.
+    - [ ] Non-PDF parts (e.g. MP3) pass through unwatermarked; tracked via download counts in the licensing report instead.
 
   - [X] **Assignments & Distribution**
   - [X] Create Assignment UI (Assign to Section, Member, or Event)
   - [X] Build "My Music" Dashboard for Musicians
   - [X] Implement "What music do I need?" logic
-  - [X] Offline Access (Service Worker/PWA caching for PDFs) — `sw.js` + `manifest.json` present
+  - [X] Offline Access (Service Worker/PWA caching for PDFs)
+    - Implemented in `public/sw.js` (policy: `src/lib/stand/offline.ts`, unit-tested).
+    - Score caches are namespaced per user and purged on sign-out; API responses are never cached.
+    - Gates on `stand.offlineEnabled` / `stand.allowOfflineSync` in Admin → Stand settings.
+    - [ ] S3 driver: delivery 302s to a presigned URL, so bytes are never buffered. Offline scoring is therefore LOCAL-driver only.
 
   - [X] **Member Profiles**
   - [X] Create Member CRUD
@@ -126,9 +135,8 @@ This document tracks the implementation progress of the Emerald Coast Community 
   - [X] Contact Page (Form + Email trigger)
   - [X] Join / Auditions Page
 
-  - [ ] **Media Gallery**
-  - [ ] Photo/Video Gallery component — not yet implemented
-  - [ ] Free storage integration for public media assets
+  - [X] **Media Gallery**
+  - [X] Photo/Video Gallery — public route `src/app/(public)/gallery`, admin route `src/app/(admin)/admin/gallery`
 
   - [X] **SEO & Publishing**
   - [X] Metadata management per page
@@ -170,8 +178,14 @@ This document tracks the implementation progress of the Emerald Coast Community 
   - [X] GSAP Animations (Ported from legacy site)
 
   - [X] **Testing**
-  - [X] Unit Tests (Vitest) for core logic — 135 test files, 2424 tests passing
-  - [X] E2E Tests (Playwright) for critical flows
+  - [X] Unit Tests (Vitest) — 188 test files, 3169 tests passing (verified 2026-10-01)
+  - [X] E2E Tests (Playwright) — 5 spec files, 12 assertions: route-load smoke tests
+  - [ ] Real workflow E2E — not yet written. No browser test currently exercises
+    login -> open a score, drawing on the stand, annotation save/reload, zoom or
+    orientation persistence, stylus input, finger-vs-pen, pedal page turns, the
+    two-page spread, half-page view, smart navigation, offline operation, or
+    setlists during a performance. The stand specs assert only that a route
+    renders without a server error.
   - [ ] Load Testing (Music download concurrency) — not yet performed
 
   - [ ] **Migration**

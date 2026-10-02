@@ -108,6 +108,7 @@ describe('CmsService', () => {
         ogImage: null,
         publishedAt: new Date(),
         scheduledFor: null,
+        publishAt: null,
         updatedAt: new Date(),
         createdAt: new Date(),
       };
@@ -119,8 +120,11 @@ describe('CmsService', () => {
       const result = await CmsService.getPageBySlug('about', true);
       
       expect(result).toEqual(expect.objectContaining({ slug: 'about' }));
+      // The query now carries the full visibility predicate (status, not-deleted,
+      // and no future publish instant) rather than a bare status check, so a
+      // scheduled page is never loaded on a cold cache.
       expect(mockPrisma.page.findFirst).toHaveBeenCalledWith({
-        where: { slug: 'about', status: 'PUBLISHED' },
+        where: expect.objectContaining({ slug: 'about', status: 'PUBLISHED' }),
       });
       expect(mockCacheSet).toHaveBeenCalledWith(
         'eccb:page:about',
@@ -180,18 +184,26 @@ describe('CmsService', () => {
       };
       
       mockCacheGet.mockResolvedValueOnce(null);
-      (mockPrisma.page.findUnique as any).mockResolvedValueOnce(dbMeta);
+      (mockPrisma.page.findFirst as any).mockResolvedValueOnce({
+        ...dbMeta,
+        publishAt: null,
+        scheduledFor: null,
+      });
       mockCacheSet.mockResolvedValueOnce();
       
       const result = await CmsService.getPageMetaBySlug('about');
       
       expect(result).toEqual(dbMeta);
-      expect(mockPrisma.page.findUnique).toHaveBeenCalledWith({
-        where: { slug: 'about' },
+      // Metadata is only read for publicly visible pages, so the query filters
+      // on status and publish instant just like the page read path.
+      expect(mockPrisma.page.findFirst).toHaveBeenCalledWith({
+        where: expect.objectContaining({ slug: 'about', status: 'PUBLISHED' }),
         select: {
           title: true,
           metaTitle: true,
           metaDescription: true,
+          publishAt: true,
+          scheduledFor: true,
         },
       });
       expect(mockCacheSet).toHaveBeenCalledWith(

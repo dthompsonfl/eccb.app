@@ -146,7 +146,13 @@ export default async function EditPagePage({ params }: EditPageProps) {
                 <dd className="font-medium">{formatDate(page.publishedAt)}</dd>
               </div>
             )}
-            {page.scheduledFor && (
+            {page.publishAt && (
+              <div>
+                <dt className="text-muted-foreground">Scheduled Publish</dt>
+                <dd className="font-medium">{formatDate(page.publishAt)}</dd>
+              </div>
+            )}
+            {page.scheduledFor && !page.publishAt && (
               <div>
                 <dt className="text-muted-foreground">Scheduled For</dt>
                 <dd className="font-medium">{formatDate(page.scheduledFor)}</dd>
@@ -173,6 +179,7 @@ export default async function EditPagePage({ params }: EditPageProps) {
           metaDescription: page.metaDescription || '',
           ogImage: page.ogImage || '',
           scheduledFor: page.scheduledFor?.toISOString().slice(0, 16) || '',
+          publishAt: (page.publishAt ?? page.scheduledFor)?.toISOString().slice(0, 16) || '',
         }}
         onSubmit={handleUpdatePage}
         isEdit

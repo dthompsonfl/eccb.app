@@ -48,6 +48,9 @@ export const RATE_LIMIT_CONFIGS = {
   'stand-preferences': { limit: 30, window: 60 }, // 30 per minute
   // Stand practice log writes
   'stand-practice': { limit: 30, window: 60 }, // 30 per minute
+  // Push subscribe/unsubscribe — a member re-registering on every page load
+  // must not be able to hammer the subscription table
+  'push-subscribe': { limit: 20, window: 60 }, // 20 per minute
 } as const;
 
 export type RateLimitType = keyof typeof RATE_LIMIT_CONFIGS;

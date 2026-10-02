@@ -27,7 +27,8 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { Loader2, User, Shield, Bell, Lock } from 'lucide-react';
+import { Loader2, User, Shield, Bell, BellRing, Lock } from 'lucide-react';
+import { PushNotificationSettings } from '@/components/push/push-notification-settings';
 
 const profileSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -297,6 +298,22 @@ export function MemberSettingsForm({ user }: MemberSettingsFormProps) {
             </div>
             <Switch defaultChecked />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Web push — strictly opt-in, per device */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <BellRing className="h-5 w-5" />
+            <CardTitle>Device Notifications</CardTitle>
+          </div>
+          <CardDescription>
+            Receive alerts on this device. Off until you turn them on.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PushNotificationSettings />
         </CardContent>
       </Card>
     </div>

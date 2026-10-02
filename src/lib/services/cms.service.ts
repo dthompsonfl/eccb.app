@@ -10,6 +10,11 @@ import {
   CACHE_CONFIG,
 } from '@/lib/cache';
 import { normalizePageContent } from '@/lib/cms/page-content';
+import {
+  isPagePubliclyVisible,
+  getEffectivePublishAt,
+  publicPageVisibilityWhere,
+} from '@/lib/cms/page-visibility';
 
 export interface CreatePageData {
   slug: string;
@@ -35,6 +40,7 @@ interface CachedPageData {
   ogImage: string | null;
   publishedAt: Date | null;
   scheduledFor: Date | null;
+  publishAt: Date | null;
   updatedAt: Date | null;
   createdAt: Date;
 }
@@ -56,18 +62,27 @@ export class CmsService {
   static async getPageBySlug(slug: string, onlyPublished: boolean = true): Promise<CachedPageData | null> {
     // Only cache published pages
     if (onlyPublished) {
+      const now = new Date();
       const cacheKey = cacheKeys.page(slug);
       
       const cached = await cacheGet<CachedPageData>(cacheKey);
       if (cached) {
+        // Re-check visibility against the *current* clock. The cached entry is a
+        // snapshot of the row, not a pre-baked decision, so a page whose
+        // publishAt was still in the future when this entry was written becomes
+        // readable the moment the instant passes — no restart, no cache flush.
+        if (!isPagePubliclyVisible(cached, now)) {
+          return null;
+        }
         return cached;
       }
       
-      // Fetch from database
+      // Fetch from database, applying the same visibility rule in SQL so an
+      // unpublished page is never even loaded on a cold cache.
       const page = await prisma.page.findFirst({
         where: {
           slug,
-          status: ContentStatus.PUBLISHED,
+          ...publicPageVisibilityWhere(now),
         },
       });
       
@@ -85,12 +100,20 @@ export class CmsService {
           ogImage: page.ogImage,
           publishedAt: page.publishedAt,
           scheduledFor: page.scheduledFor,
+          publishAt: page.publishAt,
           updatedAt: page.updatedAt,
           createdAt: page.createdAt,
         };
-        
-        // Cache for 5 minutes
-        await cacheSet(cacheKey, pageData, CACHE_CONFIG.PAGE_TTL);
+
+        // Never cache a page past its own publish instant: cap the TTL at the
+        // remaining wait so the entry expires on its own schedule even if no
+        // request arrives after the page goes live.
+        const publishAt = getEffectivePublishAt(page);
+        const ttl = publishAt
+          ? Math.max(1, Math.min(CACHE_CONFIG.PAGE_TTL, Math.ceil((publishAt.getTime() - now.getTime()) / 1000)))
+          : CACHE_CONFIG.PAGE_TTL;
+
+        await cacheSet(cacheKey, pageData, ttl);
         return pageData;
       }
       
@@ -118,19 +141,33 @@ export class CmsService {
    * Get page metadata by slug (lighter weight, cached longer)
    */
   static async getPageMetaBySlug(slug: string): Promise<CachedPageMeta | null> {
+    const now = new Date();
     const cacheKey = cacheKeys.pageMeta(slug);
     
     const cached = await cacheGet<CachedPageMeta>(cacheKey);
     if (cached) {
+      // The cached entry is a bare {title, metaTitle, metaDescription} projection
+      // with no status column, so it cannot carry its own visibility. Metadata
+      // is only ever written for pages that were already visible (see the query
+      // below), so a cache hit is safe to return; the visibility decision that
+      // mattered happened at write time against the same rule.
       return cached;
     }
     
-    const page = await prisma.page.findUnique({
-      where: { slug },
+    // Only emit metadata for pages that are actually publicly visible. Without
+    // this filter a DRAFT or still-scheduled page leaked its title and
+    // description into <head> (and to crawlers) for the metadata TTL.
+    const page = await prisma.page.findFirst({
+      where: {
+        slug,
+        ...publicPageVisibilityWhere(now),
+      },
       select: {
         title: true,
         metaTitle: true,
         metaDescription: true,
+        publishAt: true,
+        scheduledFor: true,
       },
     });
     
@@ -141,8 +178,17 @@ export class CmsService {
         metaDescription: page.metaDescription,
       };
       
-      // Cache metadata for 10 minutes
-      await cacheSet(cacheKey, metaData, CACHE_CONFIG.PAGE_META_TTL);
+      // Never cache metadata past the page's own publish instant.
+      const publishAt = getEffectivePublishAt({
+        status: ContentStatus.PUBLISHED,
+        publishAt: page.publishAt,
+        scheduledFor: page.scheduledFor,
+      });
+      const ttl = publishAt
+        ? Math.max(1, Math.min(CACHE_CONFIG.PAGE_META_TTL, Math.ceil((publishAt.getTime() - now.getTime()) / 1000)))
+        : CACHE_CONFIG.PAGE_META_TTL;
+
+      await cacheSet(cacheKey, metaData, ttl);
       return metaData;
     }
     

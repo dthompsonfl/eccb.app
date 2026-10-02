@@ -15,7 +15,8 @@
  * verify the resulting PDF is genuinely parseable, not just non-empty bytes.
  */
 import { describe, expect, it } from 'vitest';
-import { imageToSinglePagePdf, sniffContentType } from '../content-sniffing';
+import { imageToSinglePagePdf } from '../image-to-pdf';
+import { sniffContentType } from '../content-sniffing';
 
 async function makeImage(
   format: 'png' | 'jpeg' | 'tiff',

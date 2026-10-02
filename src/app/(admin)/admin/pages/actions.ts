@@ -25,7 +25,40 @@ const pageSchema = z.object({
   metaDescription: z.string().optional(),
   ogImage: z.string().optional(),
   scheduledFor: z.string().optional(),
+  publishAt: z.string().optional(),
 });
+
+/**
+ * Resolve the (status, publishAt, scheduledFor) triple an admin's form input
+ * implies.
+ *
+ * Setting a future publish instant means "withhold until then", so the page is
+ * stored as SCHEDULED regardless of which status the select showed — otherwise a
+ * PUBLISHED page with a future instant and the legacy `status: 'SCHEDULED'`
+ * check in the worker would disagree with what the public site serves. Clearing
+ * the instant restores live visibility for an already-published page, but must
+ * NOT silently publish a draft: an explicit DRAFT stays a draft.
+ */
+function resolvePageSchedule(
+  status: string,
+  rawPublishAt: string | undefined,
+): { status: ContentStatus; publishAt: Date | null; scheduledFor: Date | null } {
+  const parsed = rawPublishAt ? new Date(rawPublishAt) : null;
+  const hasValidInstant = parsed !== null && !Number.isNaN(parsed.getTime());
+  const publishAt = hasValidInstant ? parsed : null;
+
+  if (publishAt) {
+    return { status: ContentStatus.SCHEDULED, publishAt, scheduledFor: publishAt };
+  }
+
+  // No instant: an explicit SCHEDULED status would leave a page permanently
+  // unpublished with nothing to unstick it, so fall back to PUBLISHED unless the
+  // admin deliberately chose DRAFT or ARCHIVED.
+  const resolvedStatus =
+    status === 'SCHEDULED' ? ContentStatus.PUBLISHED : (status as ContentStatus);
+
+  return { status: resolvedStatus, publishAt: null, scheduledFor: null };
+}
 
 export async function createPage(formData: FormData) {
   const session = await requirePermission(CMS_EDIT);
@@ -45,9 +78,11 @@ export async function createPage(formData: FormData) {
       metaDescription: formData.get('metaDescription') as string || undefined,
       ogImage: formData.get('ogImage') as string || undefined,
       scheduledFor: formData.get('scheduledFor') as string || undefined,
+      publishAt: formData.get('publishAt') as string || undefined,
     };
 
     const validated = pageSchema.parse(data);
+    const schedule = resolvePageSchedule(validated.status, validated.publishAt);
 
     // Check if slug is already taken
     const existingPage = await prisma.page.findUnique({
@@ -65,13 +100,14 @@ export async function createPage(formData: FormData) {
         content: validated.content || '',
         rawMarkdown: validated.rawMarkdown,
         description: validated.description,
-        status: validated.status as ContentStatus,
+        status: schedule.status,
         metaTitle: validated.metaTitle,
         metaDescription: validated.metaDescription,
         ogImage: validated.ogImage,
         createdBy: session.user.id,
-        publishedAt: validated.status === 'PUBLISHED' ? new Date() : null,
-        scheduledFor: validated.scheduledFor ? new Date(validated.scheduledFor) : null,
+        publishedAt: schedule.status === ContentStatus.PUBLISHED ? new Date() : null,
+        publishAt: schedule.publishAt,
+        scheduledFor: schedule.scheduledFor,
       },
     });
 
@@ -116,9 +152,11 @@ export async function updatePage(id: string, formData: FormData) {
       metaDescription: formData.get('metaDescription') as string || undefined,
       ogImage: formData.get('ogImage') as string || undefined,
       scheduledFor: formData.get('scheduledFor') as string || undefined,
+      publishAt: formData.get('publishAt') as string || undefined,
     };
 
     const validated = pageSchema.parse(data);
+    const schedule = resolvePageSchedule(validated.status, validated.publishAt);
 
     // Check if slug is already taken by another page
     const existingPage = await prisma.page.findFirst({
@@ -134,7 +172,7 @@ export async function updatePage(id: string, formData: FormData) {
 
     const currentPage = await prisma.page.findUnique({ where: { id } });
     const wasPublished = currentPage?.status === 'PUBLISHED';
-    const isNowPublished = validated.status === 'PUBLISHED';
+    const isNowPublished = schedule.status === ContentStatus.PUBLISHED;
 
     const page = await prisma.page.update({
       where: { id },
@@ -144,13 +182,16 @@ export async function updatePage(id: string, formData: FormData) {
         content: validated.content || '',
         rawMarkdown: validated.rawMarkdown,
         description: validated.description,
-        status: validated.status as ContentStatus,
+        status: schedule.status,
         metaTitle: validated.metaTitle,
         metaDescription: validated.metaDescription,
         ogImage: validated.ogImage,
         updatedBy: session.user.id,
+        // Stamp the first publication only. Re-scheduling a page that was
+        // already published, or clearing its schedule, must not rewrite history.
         publishedAt: !wasPublished && isNowPublished ? new Date() : undefined,
-        scheduledFor: validated.scheduledFor ? new Date(validated.scheduledFor) : null,
+        publishAt: schedule.publishAt,
+        scheduledFor: schedule.scheduledFor,
       },
     });
 

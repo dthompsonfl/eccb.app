@@ -5,7 +5,12 @@ import { logger } from '@/lib/logger';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { Readable } from 'stream';
 import { requireStandAccess, canAccessEvent } from '@/lib/stand/access';
-import { canReadPieceFile } from '@/lib/music/access';
+import { canReadPieceFile, resolveMusicFileScope } from '@/lib/music/access';
+import {
+  applyDeliveryWatermarkStream,
+  needsWatermark,
+  WatermarkError,
+} from '@/lib/music/watermark-delivery';
 import { recordTelemetry } from '@/lib/stand/telemetry';
 
 /**
@@ -53,6 +58,10 @@ export async function GET(
     recordTelemetry({ event: 'stand.file.denied', userId: ctx.userId, meta: { reason: 'no-scope', storageKey } });
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
+
+  // The piece this file belongs to, needed for watermarking below. Resolved
+  // separately from authorization so it is available on the privileged path too.
+  const scope = await resolveMusicFileScope(storageKey);
 
   // Privileged roles skip the per-file ownership check
   if (!ctx.isPrivileged) {
@@ -147,11 +156,47 @@ export async function GET(
 
     // Local — stream inline
     const { stream, metadata } = result;
-    const webStream = Readable.toWeb(stream as Readable) as ReadableStream;
+
+    // Stamp the viewer's copy AFTER the access checks above have passed. If
+    // stamping fails we return an error rather than the clean original, so a
+    // broken watermark can never quietly become "no watermark".
+    let body: Uint8Array | null = null;
+    let deliverySize = metadata.size;
+    if (needsWatermark(metadata.contentType) && scope?.pieceId) {
+      try {
+        const stamped = await applyDeliveryWatermarkStream({
+          stream,
+          contentType: metadata.contentType,
+          pieceId: scope.pieceId,
+          userId: ctx.userId,
+        });
+        body = stamped.bytes;
+        deliverySize = stamped.size;
+      } catch (error) {
+        if (error instanceof WatermarkError) {
+          logger.error('Refusing to serve unstamped copyrighted PDF to the stand', {
+            error,
+            storageKey,
+            userId: ctx.userId,
+          });
+          return NextResponse.json({ error: 'Failed to retrieve file' }, { status: 500 });
+        }
+        throw error;
+      }
+    }
+
+    const webStream = body
+      ? new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        })
+      : (Readable.toWeb(stream as Readable) as ReadableStream);
 
     const headers = new Headers();
     headers.set('Content-Type', metadata.contentType);
-    headers.set('Content-Length', String(metadata.size));
+    headers.set('Content-Length', String(deliverySize));
     headers.set('Content-Disposition', 'inline');
     headers.set('Cache-Control', 'private, max-age=86400, immutable');
 

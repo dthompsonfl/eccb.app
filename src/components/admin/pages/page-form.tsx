@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,8 +19,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Loader2, Save, Eye, FileText, Settings } from 'lucide-react';
+import { Loader2, Save, Eye, FileText, Settings, CalendarClock, CheckCircle2, Archive } from 'lucide-react';
 import { normalizePageContent } from '@/lib/cms/page-content';
+import { cn } from '@/lib/utils';
+import type { PagePublishState } from '@/lib/cms/page-visibility';
 
 const pageSchema = z.object({
   title: z.string().min(1, 'Title is required'),
@@ -33,6 +35,7 @@ const pageSchema = z.object({
   metaDescription: z.string().optional(),
   ogImage: z.string().optional(),
   scheduledFor: z.string().optional(),
+  publishAt: z.string().optional(),
 });
 
 type PageFormData = z.infer<typeof pageSchema>;
@@ -81,11 +84,37 @@ export function PageForm({
       metaDescription: initialData?.metaDescription || '',
       ogImage: initialData?.ogImage || '',
       scheduledFor: initialData?.scheduledFor || '',
+      publishAt: initialData?.publishAt || '',
     },
   });
 
   const watchedContent = watch('content');
   const watchedStatus = watch('status');
+  const watchedPublishAt = watch('publishAt');
+  const watchedScheduledFor = watch('scheduledFor');
+
+  // The single instant the public visibility check reads: the canonical field
+  // when set, otherwise the legacy one. Kept client-side purely so the banner
+  // below reflects the true publish state — the server re-derives everything.
+  const effectivePublishAt = useMemo(() => {
+    const raw = watchedPublishAt || watchedScheduledFor;
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, [watchedPublishAt, watchedScheduledFor]);
+
+  // Mirrors getPagePublishState so the badge can never disagree with what the
+  // public site will serve.
+  const publishState: PagePublishState = useMemo(() => {
+    if (watchedStatus === 'ARCHIVED') return 'archived';
+    if (watchedStatus === 'DRAFT') return 'draft';
+    if (watchedStatus === 'SCHEDULED') return 'scheduled';
+    if (effectivePublishAt && effectivePublishAt.getTime() > Date.now()) {
+      return 'scheduled';
+    }
+    if (watchedStatus === 'PUBLISHED') return 'published';
+    return 'draft';
+  }, [watchedStatus, effectivePublishAt]);
 
   // Generate slug from title
   const generateSlug = useCallback(() => {
@@ -269,8 +298,10 @@ Write your content here using Markdown...
               <div className="space-y-2">
                 <Label htmlFor="status">Publish Status</Label>
                 <Select
-                  defaultValue={initialData?.status || 'DRAFT'}
-                  onValueChange={(value) => setValue('status', value as any)}
+                  value={watchedStatus}
+                  onValueChange={(value) =>
+                    setValue('status', value as PageFormData['status'])
+                  }
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -290,16 +321,73 @@ Write your content here using Markdown...
                 </Select>
               </div>
 
-              {watchedStatus === 'SCHEDULED' && (
-                <div className="space-y-2">
-                  <Label htmlFor="scheduledFor">Publish Date</Label>
-                  <Input
-                    id="scheduledFor"
-                    type="datetime-local"
-                    {...register('scheduledFor')}
-                  />
-                </div>
-              )}
+              <div className="space-y-2">
+                <Label htmlFor="publishAt">Publish Date &amp; Time</Label>
+                <Input
+                  id="publishAt"
+                  type="datetime-local"
+                  aria-describedby="publishAt-help"
+                  {...register('publishAt')}
+                />
+                <p id="publishAt-help" className="text-xs text-muted-foreground">
+                  Leave empty to publish immediately. A future date withholds the
+                  page from the public site until that moment, then it goes live on
+                  its own — no redeploy needed.
+                </p>
+                {effectivePublishAt && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto px-0 text-xs"
+                    onClick={() => {
+                      setValue('publishAt', '');
+                      setValue('scheduledFor', '');
+                    }}
+                  >
+                    Clear scheduled publish date
+                  </Button>
+                )}
+              </div>
+
+              {/* Explicit statement of what the public site will do with this page
+                  right now, derived from the same rules the public route uses. */}
+              <div
+                role="status"
+                aria-live="polite"
+                data-testid="publish-state"
+                data-state={publishState}
+                className={cn(
+                  'flex items-start gap-2 rounded-md border p-3 text-sm',
+                  publishState === 'published' &&
+                    'border-green-200 bg-green-50 text-green-900 dark:border-green-900 dark:bg-green-950 dark:text-green-100',
+                  publishState === 'scheduled' &&
+                    'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100',
+                  (publishState === 'draft' || publishState === 'archived') &&
+                    'border-border bg-muted/40 text-muted-foreground',
+                )}
+              >
+                {publishState === 'published' && (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                )}
+                {publishState === 'scheduled' && (
+                  <CalendarClock className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                )}
+                {publishState === 'archived' && (
+                  <Archive className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                )}
+                <span>
+                  {publishState === 'published' && 'Live now — visible to everyone.'}
+                  {publishState === 'scheduled' &&
+                    effectivePublishAt &&
+                    `Scheduled — goes live automatically on ${effectivePublishAt.toLocaleString()}. Not visible to the public until then.`}
+                  {publishState === 'scheduled' &&
+                    !effectivePublishAt &&
+                    'Scheduled — set a publish date and time to choose when it goes live.'}
+                  {publishState === 'draft' && 'Draft — not visible to the public.'}
+                  {publishState === 'archived' && 'Archived — not visible to the public.'}
+                </span>
+              </div>
             </CardContent>
           </Card>
 

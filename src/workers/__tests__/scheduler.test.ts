@@ -59,14 +59,16 @@ describe('Scheduler Workers', () => {
 
       expect(mockPageFindMany).toHaveBeenCalled();
       expect(addJob).toHaveBeenCalledTimes(2);
+      // A deterministic jobId is passed as the third argument so the per-minute
+      // tick cannot re-queue a page that is still due.
       expect(addJob).toHaveBeenCalledWith('publish.scheduled', expect.objectContaining({
         contentType: 'page',
         contentId: 'page-1',
-      }));
+      }), expect.objectContaining({ jobId: expect.stringContaining('page-1') }));
       expect(addJob).toHaveBeenCalledWith('publish.scheduled', expect.objectContaining({
         contentType: 'page',
         contentId: 'page-2',
-      }));
+      }), expect.objectContaining({ jobId: expect.stringContaining('page-2') }));
     });
 
     it('should queue jobs for scheduled announcements', async () => {

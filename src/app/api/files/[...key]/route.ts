@@ -8,7 +8,16 @@ import { logger } from '@/lib/logger';
 import { Readable } from 'stream';
 
 import { MUSIC_DOWNLOAD_ALL, MUSIC_DOWNLOAD_ASSIGNED } from '@/lib/auth/permission-constants';
-import { authorizeMusicFileAccess, hasGlobalMusicAccess } from '@/lib/music/access';
+import {
+  authorizeMusicFileAccess,
+  hasGlobalMusicAccess,
+  resolveMusicFileScope,
+} from '@/lib/music/access';
+import {
+  applyDeliveryWatermarkStream,
+  needsWatermark,
+  WatermarkError,
+} from '@/lib/music/watermark-delivery';
 // =============================================================================
 // Authorization Helpers
 // =============================================================================
@@ -18,6 +27,8 @@ interface AuthResult {
   reason: string;
   userId?: string;
   memberId?: string;
+  /** Piece this delivery belongs to, when known. Used for watermarking. */
+  pieceId?: string;
 }
 
 /**
@@ -127,6 +138,7 @@ async function checkDownloadAuthorization(
     reason: `assigned_${access.scope}`,
     userId,
     memberId: user.member?.id,
+    pieceId: access.pieceId,
   };
 }
 
@@ -258,19 +270,61 @@ export async function GET(
     
     // LOCAL: stream the file
     const { stream, metadata } = result;
-    
+
+    // Watermark PDFs on the way out. This runs ONLY after authorization has
+    // already succeeded above — it stamps bytes that are already proven
+    // deliverable and never widens access. A stamping failure must not fall
+    // back to the clean original, so it is caught and turned into a 500 below.
+    let body: Uint8Array | null = null;
+    let deliverySize = metadata.size;
+    if (needsWatermark(metadata.contentType)) {
+      const pieceId = authResult.pieceId ?? (await resolveMusicFileScope(storageKey))?.pieceId;
+      if (pieceId) {
+        try {
+          const stamped = await applyDeliveryWatermarkStream({
+            stream,
+            contentType: metadata.contentType,
+            pieceId,
+            userId: authResult.userId,
+          });
+          body = stamped.bytes;
+          deliverySize = stamped.size;
+        } catch (error) {
+          if (error instanceof WatermarkError) {
+            logger.error('Refusing to deliver unstamped copyrighted PDF', {
+              error,
+              storageKey,
+              userId: authResult.userId,
+            });
+            return NextResponse.json(
+              { error: 'File could not be watermarked for delivery' },
+              { status: 500 }
+            );
+          }
+          throw error;
+        }
+      }
+    }
+
     // Log the download
     if (file) {
-      await logDownload(file.id, authResult.userId, request, metadata.size);
+      await logDownload(file.id, authResult.userId, request, deliverySize);
     }
-    
-    // Convert Node.js stream to Web ReadableStream
-    const webStream = Readable.toWeb(stream as Readable) as ReadableStream;
-    
+
+    // Convert to a Web stream, unless the file was already buffered to stamp it.
+    const webStream = body
+      ? new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        })
+      : (Readable.toWeb(stream as Readable) as ReadableStream);
+
     // Build response headers
     const headers = new Headers();
     headers.set('Content-Type', metadata.contentType);
-    headers.set('Content-Length', String(metadata.size));
+    headers.set('Content-Length', String(deliverySize));
     headers.set('Content-Disposition', `attachment; filename="${file?.fileName || 'download'}"`);
     headers.set('Cache-Control', 'private, max-age=3600');
     
@@ -281,7 +335,8 @@ export async function GET(
       userId: session?.user?.id, 
       storageKey,
       contentType: metadata.contentType,
-      size: metadata.size,
+      size: deliverySize,
+      watermarked: body !== null,
     });
     
     return new Response(webStream, {

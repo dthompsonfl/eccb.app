@@ -19,6 +19,7 @@ import { GestureHandler } from './GestureHandler';
 import { KeyboardHandler } from './KeyboardHandler';
 import { MidiHandler } from './MidiHandler';
 import { BluetoothHandler } from './BluetoothHandler';
+import { StandOfflineStatus } from './OfflineStatus';
 import { RosterOverlay } from './RosterOverlay';
 import { Metronome } from './Metronome';
 import { Tuner } from './Tuner';
@@ -716,6 +717,7 @@ function StandViewerContent({ data }: StandViewerProps) {
       <KeyboardHandler />
       <MidiHandler />
       <BluetoothHandler />
+      <StandOfflineStatus />
 
       <div className="flex-1 bg-muted/20 relative overflow-hidden flex">
         <SetlistManager />
