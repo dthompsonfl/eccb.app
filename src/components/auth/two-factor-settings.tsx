@@ -74,7 +74,7 @@ export function TwoFactorSettings({ enabled }: { enabled: boolean }) {
     }
     setBusy(true);
     try {
-      const { data, error } = await authClient.twoFactor.enable({ password });
+      const { data, error } = await authClient.twoFactor.enable({ password, method: 'totp' });
       // Clear the password from state the moment it has been used.
       setPassword('');
 
@@ -82,7 +82,12 @@ export function TwoFactorSettings({ enabled }: { enabled: boolean }) {
         toast.error(error.message || 'Could not start two-factor setup');
         return;
       }
-      if (!data?.totpURI || !data?.backupCodes?.length) {
+      if (
+        !data ||
+        data.method !== 'totp' ||
+        !data.totpURI ||
+        !data.backupCodes.length
+      ) {
         toast.error('Setup did not return the expected enrolment details');
         return;
       }
