@@ -36,18 +36,22 @@ export function RSVPButtons({ eventId, memberId, currentStatus }: RSVPButtonsPro
         throw new Error('Failed to update RSVP');
       }
 
-      toast.success('RSVP updated');
+      toast.success('Thank you — the band office can see your answer now.');
       router.refresh();
     } catch (error) {
       console.error('Error updating RSVP:', error);
-      toast.error('Failed to update RSVP');
+      toast.error('We could not save your answer. Please check your connection and try again.');
     } finally {
       setIsLoading(null);
     }
   }
 
   return (
-    <div className="flex gap-2">
+    <div className="space-y-3">
+      {/* Lead with the action, not the acronym. "RSVP" means nothing to someone
+          who has never been to one of these things. */}
+      <p className="text-sm font-medium">Let us know if you can come</p>
+      <div className="flex flex-wrap gap-2">
       <Button
         variant={currentStatus === 'YES' ? 'default' : 'outline'}
         className={cn(
@@ -62,7 +66,7 @@ export function RSVPButtons({ eventId, memberId, currentStatus }: RSVPButtonsPro
         ) : (
           <CheckCircle2 className="mr-2 h-4 w-4" />
         )}
-        Yes
+        Yes, I can come
       </Button>
       <Button
         variant={currentStatus === 'MAYBE' ? 'default' : 'outline'}
@@ -78,7 +82,7 @@ export function RSVPButtons({ eventId, memberId, currentStatus }: RSVPButtonsPro
         ) : (
           <HelpCircle className="mr-2 h-4 w-4" />
         )}
-        Maybe
+        Not sure yet
       </Button>
       <Button
         variant={currentStatus === 'NO' ? 'default' : 'outline'}
@@ -94,8 +98,9 @@ export function RSVPButtons({ eventId, memberId, currentStatus }: RSVPButtonsPro
         ) : (
           <XCircle className="mr-2 h-4 w-4" />
         )}
-        No
+        No, I cannot come
       </Button>
+      </div>
     </div>
   );
 }

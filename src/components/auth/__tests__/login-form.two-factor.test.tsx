@@ -88,7 +88,7 @@ describe('LoginForm two-factor challenge', () => {
 
     await submitPassword();
 
-    expect(await screen.findByText(/two-factor verification/i)).toBeTruthy();
+    expect(await screen.findByText(/one more step to keep your account safe/i)).toBeTruthy();
     // Critically, we must NOT have navigated as if sign-in succeeded.
     expect(mockPush).not.toHaveBeenCalled();
   });
@@ -97,7 +97,7 @@ describe('LoginForm two-factor challenge', () => {
     mockSignInEmail.mockResolvedValue({ data: { twoFactorRedirect: true }, error: null });
     render(<LoginForm />);
     await submitPassword();
-    await screen.findByText(/two-factor verification/i);
+    await screen.findByText(/one more step to keep your account safe/i);
 
     enterCode('123456');
     clickVerify();
@@ -111,7 +111,7 @@ describe('LoginForm two-factor challenge', () => {
     mockSignInEmail.mockResolvedValue({ data: { twoFactorRedirect: true }, error: null });
     render(<LoginForm />);
     await submitPassword();
-    await screen.findByText(/two-factor verification/i);
+    await screen.findByText(/one more step to keep your account safe/i);
 
     clickVerify();
 
@@ -122,10 +122,10 @@ describe('LoginForm two-factor challenge', () => {
     mockSignInEmail.mockResolvedValue({ data: { twoFactorRedirect: true }, error: null });
     render(<LoginForm />);
     await submitPassword();
-    await screen.findByText(/two-factor verification/i);
+    await screen.findByText(/one more step to keep your account safe/i);
 
-    fireEvent.click(screen.getByRole('button', { name: /use a backup code/i }));
-    fireEvent.change(await screen.findByLabelText(/backup code/i), {
+    fireEvent.click(screen.getByRole('button', { name: /use a spare code instead/i }));
+    fireEvent.change(await screen.findByLabelText(/spare code/i), {
       target: { value: 'ABCDE-FGHIJ' },
     });
     clickVerify();
@@ -142,9 +142,9 @@ describe('LoginForm two-factor challenge', () => {
     mockSignInEmail.mockResolvedValue({ data: { twoFactorRedirect: true }, error: null });
     render(<LoginForm />);
     await submitPassword();
-    await screen.findByText(/two-factor verification/i);
+    await screen.findByText(/one more step to keep your account safe/i);
 
-    fireEvent.click(screen.getByLabelText(/don't ask again/i));
+    fireEvent.click(screen.getByLabelText(/don't ask me for this code again/i));
     enterCode('123456');
     clickVerify();
 
@@ -158,26 +158,26 @@ describe('LoginForm two-factor challenge', () => {
     mockVerifyTotp.mockResolvedValue({ data: null, error: { message: 'Invalid code' } });
     render(<LoginForm />);
     await submitPassword();
-    await screen.findByText(/two-factor verification/i);
+    await screen.findByText(/one more step to keep your account safe/i);
 
     enterCode('000000');
     clickVerify();
 
     // Must not navigate on a rejected code.
     await waitFor(() => expect(mockVerifyTotp).toHaveBeenCalled());
-    expect(screen.getByText(/two-factor verification/i)).toBeTruthy();
+    expect(screen.getByText(/one more step to keep your account safe/i)).toBeTruthy();
   });
 
   it('lets the user back out of the challenge', async () => {
     mockSignInEmail.mockResolvedValue({ data: { twoFactorRedirect: true }, error: null });
     render(<LoginForm />);
     await submitPassword();
-    await screen.findByText(/two-factor verification/i);
+    await screen.findByText(/one more step to keep your account safe/i);
 
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
 
     expect(await screen.findByLabelText(/email address/i)).toBeTruthy();
-    expect(screen.queryByText(/two-factor verification/i)).toBeNull();
+    expect(screen.queryByText(/one more step to keep your account safe/i)).toBeNull();
   });
 
   it('signs in normally when no second factor is required', async () => {
@@ -187,7 +187,7 @@ describe('LoginForm two-factor challenge', () => {
     await submitPassword();
 
     await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/'));
-    expect(screen.queryByText(/two-factor verification/i)).toBeNull();
+    expect(screen.queryByText(/one more step to keep your account safe/i)).toBeNull();
   });
 
   it('surfaces a plain sign-in error without showing a challenge', async () => {
@@ -199,7 +199,7 @@ describe('LoginForm two-factor challenge', () => {
 
     await submitPassword();
 
-    expect(screen.queryByText(/two-factor verification/i)).toBeNull();
+    expect(screen.queryByText(/one more step to keep your account safe/i)).toBeNull();
     expect(mockPush).not.toHaveBeenCalled();
   });
 });

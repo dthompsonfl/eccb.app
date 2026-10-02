@@ -210,7 +210,7 @@ export default function Hero() {
               <div ref={ctaRef} className="flex flex-col sm:flex-row gap-4">
                 <Button
                   onClick={() => scrollToSection('#join')}
-                  className="cta-primary bg-teal-600 hover:bg-teal-500 text-white font-semibold px-8 py-6 text-lg glow-pulse-enhanced transition-all duration-300 hover:scale-105 group"
+                  className="cta-primary bg-teal-700 hover:bg-teal-600 text-white font-semibold px-8 py-6 text-lg glow-pulse-enhanced transition-all duration-300 hover:scale-105 group"
                 >
                   <Play className="mr-2 w-5 h-5 transition-transform group-hover:scale-110" />
                   Join The Band
@@ -218,8 +218,7 @@ export default function Hero() {
                 </Button>
                 <Button
                   onClick={() => scrollToSection('#about')}
-                  variant="outline"
-                  className="cta-secondary border-white/30 text-white hover:bg-white/10 hover:border-white/50 px-8 py-6 text-lg backdrop-blur-sm transition-all duration-300 group"
+                  className="cta-secondary border border-white/40 bg-transparent text-white hover:bg-white/10 hover:border-white/60 px-8 py-6 text-lg backdrop-blur-sm transition-all duration-300 group"
                 >
                   Learn More
                   <ChevronRight className="ml-2 w-5 h-5 transition-transform group-hover:translate-x-1" />
@@ -291,10 +290,17 @@ export default function Hero() {
 
                 {/* Carousel indicators */}
                 <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 flex gap-3">
-                  {instruments.map((_, index) => (
+                  {instruments.map((instrument, index) => (
                     <button
                       key={index}
+                      type="button"
                       onClick={() => setCurrentInstrument(index)}
+                      /* WCAG 4.1.2 / 2.4.6: these dots are icon-only controls, so
+                         each needs a discernible name and its selected state
+                         exposed. Without this they are announced as bare
+                         "button" to a screen reader. */
+                      aria-label={`Show ${instrument.name}`}
+                      aria-current={index === currentInstrument ? 'true' : undefined}
                       className={`relative h-2 rounded-full transition-all duration-500 ${
                         index === currentInstrument
                           ? 'w-10 bg-gradient-to-r from-teal-400 to-teal-300 shadow-lg shadow-teal-400/50'

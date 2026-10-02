@@ -6,6 +6,7 @@ import { auth } from '@/lib/auth/config';
 import { isStandEnabled } from '@/lib/stand/settings';
 import { headers } from 'next/headers';
 import { formatDate, formatTime } from '@/lib/date';
+import { eventTypeLabel } from '@/lib/accessibility/plain-language';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +20,7 @@ import {
 import { StandLibrarySearch } from '@/components/member/stand/StandLibrarySearch';
 
 export const metadata: Metadata = {
-  title: 'Music Stand',
+  title: 'My Music Stand',
 };
 
 export default async function StandHubPage() {
@@ -93,10 +94,11 @@ export default async function StandHubPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
           <BookOpen className="h-8 w-8 text-teal-600" />
-          Music Stand
+          My Music Stand
         </h1>
         <p className="text-muted-foreground mt-1">
-          Open your digital music stand for rehearsals, concerts, or personal practice.
+          Tap a piece of music to open it. You can zoom in and write on it with your
+          finger or stylus — it works at rehearsal, at a concert, and at home.
         </p>
       </div>
 
@@ -104,11 +106,11 @@ export default async function StandHubPage() {
         <TabsList>
           <TabsTrigger value="events" className="gap-2">
             <Calendar className="h-4 w-4" />
-            Events
+            Coming Up
           </TabsTrigger>
           <TabsTrigger value="library" className="gap-2">
             <Library className="h-4 w-4" />
-            Library ({allPieces.length})
+            All Music ({allPieces.length})
           </TabsTrigger>
           <TabsTrigger value="past" className="gap-2">
             <Clock className="h-4 w-4" />
@@ -122,9 +124,10 @@ export default async function StandHubPage() {
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Calendar className="h-12 w-12 text-muted-foreground/30 mb-4" />
-                <h3 className="text-lg font-medium">No upcoming events with music</h3>
+                <h3 className="text-lg font-medium">Nothing has been set out for a
+                  concert yet</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Browse the library tab to practice on your own time.
+                  Have a look under &quot;All Music&quot; to practise on your own time.
                 </p>
               </CardContent>
             </Card>
@@ -135,7 +138,9 @@ export default async function StandHubPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-2">
-                        <Badge variant={eventTypeColors[event.type]}>{event.type}</Badge>
+                        <Badge variant={eventTypeColors[event.type]}>
+                          {eventTypeLabel(event.type)}
+                        </Badge>
                         <Badge variant="outline" className="text-teal-700 border-teal-300">
                           {event._count.music} piece{event._count.music !== 1 ? 's' : ''}
                         </Badge>

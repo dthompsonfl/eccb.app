@@ -17,20 +17,31 @@ import { StandCanvas } from '../StandCanvas';
 // pdf.js is not available in jsdom; renderPageInto is the seam the spread uses
 // to draw its second page, so mocking it proves the wiring without a real PDF.
 const renderPageInto = vi.fn().mockResolvedValue(undefined);
-
+//
+// `numPages` must be derived from the store's piece rather than hardcoded.
+// StandCanvas now treats PDF.js's page count as the authority and pushes it into
+// the store (the DB column is NULL for real pieces, which previously left page
+// navigation permanently disabled). A fixed `numPages: 8` therefore overwrote
+// whatever page count a test set up, so a test asserting "an odd-length 5-page
+// piece shows no phantom second page" had the store rewritten to 8 underneath it
+// and the assertion became untestable. Reading the store keeps the mock and the
+// component in agreement, exactly as a real loaded PDF would be.
 vi.mock('../usePdf', () => ({
-  usePdf: () => ({
-    isLoading: false,
-    error: null,
-    numPages: 8,
-    cropRect: null,
-    prevPageCanvas: null,
-    nextPageCanvas: null,
-    renderCurrentPage: vi.fn().mockResolvedValue(undefined),
-    renderPageInto,
-    canvasRef: { current: null },
-    containerRef: { current: null },
-  }),
+  usePdf: () => {
+    const piece = useStandStore.getState().pieces[0];
+    return {
+      isLoading: false,
+      error: null,
+      numPages: piece?.totalPages ?? 0,
+      cropRect: null,
+      prevPageCanvas: null,
+      nextPageCanvas: null,
+      renderCurrentPage: vi.fn().mockResolvedValue(undefined),
+      renderPageInto,
+      canvasRef: { current: null },
+      containerRef: { current: null },
+    };
+  },
 }));
 
 vi.mock('../AnnotationLayer', () => ({

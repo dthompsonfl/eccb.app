@@ -21,8 +21,10 @@ import {
   ListMusicIcon,
   TimerIcon,
   MusicIcon,
+  BookOpen as BookOpenIcon,
 } from 'lucide-react';
 import { useStandStore, Tool } from '@/store/standStore';
+import { isSpreadable } from '@/lib/stand/navigation';
 import { useFullscreen } from './useFullscreen';
 import { PerformanceModeToggle } from './PerformanceModeToggle';
 import { Toggle } from '@/components/ui/toggle';
@@ -92,6 +94,8 @@ export function Toolbar({
     _currentPage: currentPage,
     zoom,
     setZoom,
+    twoPageMode,
+    toggleTwoPageMode,
     nextPage,
     prevPage,
     setCurrentPage,
@@ -379,6 +383,42 @@ export function Toolbar({
           className="min-w-[44px] min-h-[44px]"
         >
           <ZoomIn className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
+
+      {/*
+        Two-page spread.
+
+        The store has always supported this and StandCanvas has always rendered
+        it, but nothing in the UI ever called setTwoPageMode — so the feature
+        was unreachable for a musician and could only be exercised from unit
+        tests. This is the control that makes it real.
+
+        It is disabled (not silently inert) for a one-page piece, so the reason
+        it cannot be turned on is discoverable rather than mysterious.
+      */}
+      <div className="flex items-center gap-1 border-l pl-2 ml-1" role="group" aria-label="Page layout">
+        <Button
+          variant={twoPageMode ? 'secondary' : 'ghost'}
+          size="icon"
+          onClick={toggleTwoPageMode}
+          disabled={!isSpreadable(totalPages)}
+          title={
+            isSpreadable(totalPages)
+              ? twoPageMode
+                ? 'Show a single page'
+                : 'Show two pages side by side'
+              : 'Two-page view needs a score of at least 2 pages'
+          }
+          aria-label={
+            isSpreadable(totalPages)
+              ? 'Toggle two-page spread view'
+              : 'Toggle two-page spread view (unavailable for a one-page score)'
+          }
+          aria-pressed={twoPageMode}
+          className="min-w-[44px] min-h-[44px]"
+        >
+          <BookOpenIcon className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
 

@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { requireAuth } from '@/lib/auth/guards';
 import { formatDate } from '@/lib/date';
+import { memberStatusLabel } from '@/lib/accessibility/plain-language';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,9 +60,9 @@ export default async function MemberProfilePage() {
     return (
       <div className="text-center py-12">
         <User className="mx-auto h-12 w-12 text-muted-foreground" />
-        <h2 className="mt-4 text-xl font-semibold">Profile Not Found</h2>
+        <h2 className="mt-4 text-xl font-semibold">We do not have your details yet</h2>
         <p className="text-muted-foreground">
-          Your member profile hasn&apos;t been set up yet.
+          Please fill in your details so the band office can reach you.
         </p>
       </div>
     );
@@ -103,11 +104,11 @@ export default async function MemberProfilePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold tracking-tight">My Profile</h1>
+        <h1 className="text-3xl font-bold tracking-tight">About Me</h1>
         <Link href="/member/profile/edit">
           <Button variant="outline">
             <Edit className="mr-2 h-4 w-4" />
-            Edit Profile
+            Change my details
           </Button>
         </Link>
       </div>
@@ -127,11 +128,11 @@ export default async function MemberProfilePage() {
                 {member.user?.name || `${member.firstName} ${member.lastName}`}
               </h2>
               <p className="text-muted-foreground">
-                {member.sections[0]?.section.name || 'No Section'}
+                {member.sections[0]?.section.name || 'Section not chosen yet'}
               </p>
               <div className="mt-4 flex items-center gap-2">
                 <Badge variant={statusColors[member.status]}>
-                  {member.status}
+                  {memberStatusLabel(member.status)}
                 </Badge>
               </div>
               <div className="mt-6 w-full space-y-3 text-sm">
@@ -153,11 +154,11 @@ export default async function MemberProfilePage() {
         {/* Details */}
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>Member Details</CardTitle>
+            <CardTitle>My Details</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <div>
-              <p className="text-sm text-muted-foreground">Primary Instrument</p>
+              <p className="text-sm text-muted-foreground">My main instrument</p>
               <p className="font-medium">
                 {member.instruments[0]?.instrument.name || 'Not set'}
               </p>
@@ -167,18 +168,18 @@ export default async function MemberProfilePage() {
               <p className="font-medium">{member.sections[0]?.section.name || 'Not assigned'}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Join Date</p>
+              <p className="text-sm text-muted-foreground">When I joined</p>
               <p className="font-medium">
                 {member.joinDate ? formatDate(member.joinDate) : 'Not set'}
               </p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Attendance Rate</p>
+              <p className="text-sm text-muted-foreground">Rehearsals I came to</p>
               <p className="font-medium">{attendanceRate}%</p>
             </div>
             {member.instruments.length > 1 && (
               <div className="sm:col-span-2">
-                <p className="text-sm text-muted-foreground">Other Instruments</p>
+                <p className="text-sm text-muted-foreground">I can also play</p>
                 <div className="mt-1 flex flex-wrap gap-2">
                   {member.instruments.slice(1).map((mi) => (
                     <Badge key={mi.id} variant="outline">
@@ -202,7 +203,7 @@ export default async function MemberProfilePage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{member.musicAssignments.length}</p>
-                <p className="text-sm text-muted-foreground">Assigned Music</p>
+                <p className="text-sm text-muted-foreground">Pieces given to me</p>
               </div>
             </div>
           </CardContent>
@@ -215,7 +216,7 @@ export default async function MemberProfilePage() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{presentCount}</p>
-                <p className="text-sm text-muted-foreground">Events Attended</p>
+                <p className="text-sm text-muted-foreground">Rehearsals I came to</p>
               </div>
             </div>
           </CardContent>
@@ -242,26 +243,24 @@ export default async function MemberProfilePage() {
         <TabsList>
           <TabsTrigger value="music">
             <Music className="mr-2 h-4 w-4" />
-            Recent Music
+            Music I Have
           </TabsTrigger>
           <TabsTrigger value="attendance">
             <Calendar className="mr-2 h-4 w-4" />
-            Attendance History
+            Rehearsals I Came To
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="music">
           <Card>
             <CardHeader>
-              <CardTitle>Recently Assigned Music</CardTitle>
-              <CardDescription>
-                Your most recently assigned pieces
-              </CardDescription>
+              <CardTitle>Music I Was Given Most Recently</CardTitle>
+              <CardDescription>Your newest pieces, first.</CardDescription>
             </CardHeader>
             <CardContent>
               {member.musicAssignments.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">
-                  No music assigned to you yet.
+                  You have not been given any music yet.
                 </p>
               ) : (
                 <div className="space-y-4">

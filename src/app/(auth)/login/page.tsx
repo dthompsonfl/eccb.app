@@ -8,10 +8,12 @@ import { ChevronLeft } from 'lucide-react';
 import { LoginForm } from '@/components/auth/login-form';
 import { Button } from '@/components/ui/button';
 import { getSetupState } from '@/lib/setup/state';
+import { HelpControl } from '@/components/accessibility/help-control';
+import { TextSizeControl } from '@/components/accessibility/text-size-control';
 
 export const metadata = {
   title: 'Sign In',
-  description: 'Sign in to your ECCB member account',
+  description: 'Sign in to see your music, your schedule, and your band details',
 };
 
 export default async function LoginPage() {
@@ -22,7 +24,7 @@ export default async function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="relative flex min-h-screen">
       {/* Left side: Dramatic Entry */}
       <div className="relative hidden w-1/2 overflow-hidden bg-[#0f172a] lg:block">
         <Image
@@ -47,8 +49,8 @@ export default async function LoginPage() {
               WELCOME <br /> <span className="text-primary italic">BACK</span>
             </h1>
             <p className="max-w-md text-lg text-gray-300">
-              Access the digital music library, update your profile, and check
-              the latest rehearsal schedules.
+              Find your music, check when we rehearse, and keep your details up
+              to date — all in one place.
             </p>
           </div>
           
@@ -60,6 +62,12 @@ export default async function LoginPage() {
 
       {/* Right side: Auth Form */}
       <div className="flex w-full flex-col items-center justify-center bg-background px-6 lg:w-1/2">
+        {/* Comfort controls before signing in: someone who struggles to read the
+            form should be able to enlarge the text without an account. */}
+        <div className="absolute top-4 right-4 flex items-center gap-1">
+          <HelpControl />
+          <TextSizeControl />
+        </div>
         <div className="w-full max-w-md space-y-8">
           <div className="flex flex-col items-center lg:items-start">
             <Button
@@ -68,7 +76,7 @@ export default async function LoginPage() {
               className="mb-8 -ml-4 text-muted-foreground hover:text-primary lg:flex hidden"
             >
               <Link href="/">
-                <ChevronLeft className="mr-2 h-4 w-4" /> Back to Home
+                <ChevronLeft className="mr-2 h-4 w-4" /> Back to the main website
               </Link>
             </Button>
             
@@ -78,18 +86,18 @@ export default async function LoginPage() {
             </div>
             
             <h3 className="font-display text-4xl font-black text-foreground uppercase tracking-tight">
-              Member Sign In
+              Sign in
             </h3>
             <p className="mt-2 text-muted-foreground">
-              Don't have an account?{' '}
+              New to the band?{' '}
               <Link href="/signup" className="font-medium text-primary hover:underline">
-                Register as a Musician
+                Create an account
               </Link>
             </p>
           </div>
 
           <div className="glass-morphism rounded-3xl border border-border/50 p-8 shadow-sm">
-            <Suspense fallback={<div className="flex justify-center p-8">Loading...</div>}>
+            <Suspense fallback={<div className="flex justify-center p-8">One moment...</div>}>
               <LoginForm />
             </Suspense>
           </div>

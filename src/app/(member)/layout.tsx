@@ -4,6 +4,7 @@ import { MemberHeader } from '@/components/member/header';
 import { ImpersonationBanner } from '@/components/auth/impersonation-banner';
 import { getImpersonatingAdminId } from '@/lib/auth/impersonation-session';
 import { isFeatureEnabled, FEATURES } from '@/lib/feature-flags';
+import { OnboardingWalkthrough } from '@/components/accessibility/onboarding-walkthrough';
 
 export default async function MemberLayout({
   children,
@@ -28,7 +29,10 @@ export default async function MemberLayout({
       <div className="flex flex-1 flex-col lg:pl-64">
         {impersonatedBy && user ? <ImpersonationBanner targetEmail={user.email} /> : null}
         <MemberHeader user={user} />
-        <main className="flex-1 p-6 lg:p-8">
+        {/* Shows itself once to a new member; the header's "Show me how"
+            button re-opens it forever after. */}
+        <OnboardingWalkthrough />
+        <main id="main-content" className="flex-1 p-6 lg:p-8">
           {children}
         </main>
       </div>

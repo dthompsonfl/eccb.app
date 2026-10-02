@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { AttendanceStatus } from '@prisma/client';
 import { formatDate } from '@/lib/date';
+import { attendanceStatusLabel, eventTypeLabel } from '@/lib/accessibility/plain-language';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,12 +48,13 @@ export default async function MemberAttendancePage() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <ClipboardCheck className="h-12 w-12 text-muted-foreground/30 mb-4" />
-            <h3 className="text-lg font-medium">Member Profile Required</h3>
+            <h3 className="text-lg font-medium">We do not have your details yet</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Please complete your profile to view attendance records
+              Please fill in your details, then this page will show which rehearsals
+              you came to.
             </p>
             <Button asChild className="mt-4">
-              <Link href="/member/profile">Complete Profile</Link>
+              <Link href="/member/profile">Fill in my details</Link>
             </Button>
           </CardContent>
         </Card>
@@ -88,9 +90,9 @@ export default async function MemberAttendancePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Attendance</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Which Rehearsals I Came To</h1>
         <p className="text-muted-foreground">
-          View your attendance history and statistics
+          Your record for recent rehearsals and concerts.
         </p>
       </div>
 
@@ -98,7 +100,7 @@ export default async function MemberAttendancePage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Attendance Rate</CardTitle>
+            <CardTitle className="text-sm font-medium">Came to</CardTitle>
             <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -107,7 +109,7 @@ export default async function MemberAttendancePage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Present</CardTitle>
+            <CardTitle className="text-sm font-medium">Came</CardTitle>
             <CheckCircle2 className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
@@ -116,7 +118,7 @@ export default async function MemberAttendancePage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Absent</CardTitle>
+            <CardTitle className="text-sm font-medium">Missed</CardTitle>
             <XCircle className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
@@ -125,7 +127,7 @@ export default async function MemberAttendancePage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Excused</CardTitle>
+            <CardTitle className="text-sm font-medium">Told Us in Advance</CardTitle>
             <AlertCircle className="h-4 w-4 text-amber-500" />
           </CardHeader>
           <CardContent>
@@ -137,25 +139,26 @@ export default async function MemberAttendancePage() {
       {/* Attendance History */}
       <Card>
         <CardHeader>
-          <CardTitle>Attendance History</CardTitle>
-          <CardDescription>
-            Your attendance record for recent events
-          </CardDescription>
+          <CardTitle>Every Rehearsal on Record</CardTitle>
+          <CardDescription>Most recent first.</CardDescription>
         </CardHeader>
         <CardContent>
           {member.attendance.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8">
               <Calendar className="h-12 w-12 text-muted-foreground/30 mb-4" />
-              <p className="text-muted-foreground">No attendance records yet</p>
+              <p className="text-muted-foreground">
+                Nothing has been recorded yet. Once the band office marks a rehearsal, it
+                will show up here.
+              </p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Event</TableHead>
+                  <TableHead>What it was</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Kind</TableHead>
+                  <TableHead>Did you come</TableHead>
                   <TableHead>Notes</TableHead>
                 </TableRow>
               </TableHeader>
@@ -174,12 +177,12 @@ export default async function MemberAttendancePage() {
                       {formatDate(record.event.startTime, 'MMM d, yyyy')}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{record.event.type}</Badge>
+                      <Badge variant="outline">{eventTypeLabel(record.event.type)}</Badge>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {statusIcons[record.status]}
-                        <span className="capitalize">{record.status.toLowerCase()}</span>
+                        <span>{attendanceStatusLabel(record.status)}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground max-w-xs truncate">

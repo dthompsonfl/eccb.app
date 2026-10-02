@@ -192,7 +192,7 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
             canvasRef.current,
             scale,
             dpr,
-            pixelCrop(currentPage),
+            pixelCrop(page),
           );
             if (!cancelled) {
               renderRef.current = handle;
@@ -222,7 +222,16 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
         renderRef.current = null;
       }
     };
-  }, [document, pageNumber, scale, numPages, enableAutoCrop, currentPage, pixelCrop]);
+    // `currentPage` is deliberately NOT a dependency. It is the state this
+    // effect itself sets (setCurrentPage above), so including it re-entered
+    // this effect on every completed render: the PDF re-rendered, produced a
+    // new PdfPage object, which changed `currentPage`, which re-ran the effect
+    // again. That was an unbounded render loop pegging the main thread at
+    // ~800 canvas renders/second, which starved the event loop so completely
+    // that real user input (clicks, taps, page turns) never completed. The
+    // crop for the page being rendered is derived from the local `page` this
+    // effect just fetched, not from the previous render's state.
+  }, [document, pageNumber, scale, numPages, enableAutoCrop, pixelCrop]);
 
   // Preload adjacent pages
   useEffect(() => {
@@ -305,6 +314,20 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
   }, [currentPage, scale, pixelCrop]);
 
   /**
+   * Renders still in flight, keyed by the canvas being drawn into.
+   *
+   * PDF.js refuses to render the same canvas twice concurrently ("Cannot use the
+   * same canvas during multiple render() operations"). The spread's right-hand
+   * page re-renders whenever `renderPageInto` changes identity — which happens on
+   * every page-count update, zoom change and crop change — and React re-runs the
+   * effect without the previous render having finished. The new render then
+   * collided with the old one, the whole call rejected, and the spread page
+   * silently stayed blank (after a reload, forever). Cancelling the superseded
+   * render before starting a new one is what makes the second page appear.
+   */
+  const spreadRendersRef = useRef(new Map<HTMLCanvasElement, { cancel: () => void }>());
+
+  /**
    * Render any page of the loaded document into a caller-supplied canvas.
    * The two-page spread uses this to draw its right-hand page for real instead
    * of advancing the current page and displaying only one of them.
@@ -314,11 +337,24 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
       if (!document) return;
       if (targetPageNumber < 1 || targetPageNumber > numPages) return;
 
+      // Retire any render still targeting this canvas before starting another.
+      const previous = spreadRendersRef.current.get(target);
+      if (previous) {
+        spreadRendersRef.current.delete(target);
+        previous.cancel();
+      }
+
       try {
         const page = await document.getPage(targetPageNumber);
+        // The document may have been swapped out while the page was loading.
+        if (!documentRef.current) return;
         const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-        await renderPageToCanvas(page, target, scale, dpr, pixelCrop(page));
+        const handle = await renderPageToCanvas(page, target, scale, dpr, pixelCrop(page));
+        spreadRendersRef.current.set(target, handle);
       } catch (err) {
+        // A cancelled render throws by design. That is a normal outcome here, not
+        // a failure worth reporting.
+        if (err instanceof Error && /cancel/i.test(err.message)) return;
         console.error(`Error rendering spread page ${targetPageNumber}:`, err);
       }
     },
@@ -349,6 +385,16 @@ export function usePdf(options: UsePdfOptions): UsePdfReturn {
       setNextPageCanvas(canvas);
     }
   }, [document, pageNumber, numPages, scale, enablePreload]);
+
+  // Release any in-flight spread render when the viewer goes away, so a
+  // cancelled task cannot later write into a detached canvas.
+  useEffect(() => {
+    const inFlight = spreadRendersRef.current;
+    return () => {
+      for (const handle of inFlight.values()) handle.cancel();
+      inFlight.clear();
+    };
+  }, []);
 
   return {
     document,

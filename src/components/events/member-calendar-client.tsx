@@ -79,15 +79,15 @@ export function MemberCalendarClient({ events, stats }: MemberCalendarClientProp
       <Button asChild variant="ghost" size="sm">
         <Link href="/member/events">
           <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Events
+          Back
         </Link>
       </Button>
 
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Calendar</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Dates &amp; Times</h1>
         <p className="text-muted-foreground">
-          View and manage your event schedule
+          Every rehearsal and concert on the band calendar.
         </p>
       </div>
 
@@ -102,7 +102,11 @@ export function MemberCalendarClient({ events, stats }: MemberCalendarClientProp
               <div>
                 <p className="text-2xl font-bold">{stats.total}</p>
                 <p className="text-sm text-muted-foreground">
-                  {filters.status === 'upcoming' ? 'Upcoming' : filters.status === 'past' ? 'Past' : 'Total'} Events
+                  {filters.status === 'upcoming'
+                    ? 'still to come'
+                    : filters.status === 'past'
+                      ? 'already happened'
+                      : 'in total'}
                 </p>
               </div>
             </div>
@@ -116,7 +120,7 @@ export function MemberCalendarClient({ events, stats }: MemberCalendarClientProp
               </div>
               <div>
                 <p className="text-2xl font-bold">{stats.rehearsals}</p>
-                <p className="text-sm text-muted-foreground">Rehearsals</p>
+                <p className="text-sm text-muted-foreground">rehearsals</p>
               </div>
             </div>
           </CardContent>
@@ -129,7 +133,7 @@ export function MemberCalendarClient({ events, stats }: MemberCalendarClientProp
               </div>
               <div>
                 <p className="text-2xl font-bold">{stats.concerts}</p>
-                <p className="text-sm text-muted-foreground">Concerts</p>
+                <p className="text-sm text-muted-foreground">concerts</p>
               </div>
             </div>
           </CardContent>

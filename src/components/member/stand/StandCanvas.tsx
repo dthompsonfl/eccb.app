@@ -149,18 +149,38 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
       visibleSpreadPages,
       cropRect: persistedCrop,
       setCropRect,
+      updatePieceTotalPages,
     } = useStandStore();
 
     const prefersReducedMotion = usePrefersReducedMotion();
     const currentPiece = pieces[currentPieceIndex];
+    const currentPieceId = currentPiece?.id;
+    // The spread decision needs the piece's page count, and `visibleSpreadPages`
+    // reads it from the store. Keyed on it so the memo re-evaluates when the real
+    // count arrives after the document loads — otherwise it returns a stale
+    // single-page result and the spread's right-hand canvas never renders, which
+    // is what happened on every reload into spread mode.
+    const storeTotalPages = currentPiece?.totalPages;
 
     /**
      * In spread mode two pages are shown side by side. The right page is null
      * for an odd-length piece's final page, which is centred rather than padded.
      */
+    // Depends on the store's totalPages as well as the page and mode, because
+    // `visibleSpreadPages()` reads the piece's page count from the store. When
+    // the document finishes loading and the real page count lands,
+    // `visibleSpreadPages` and `currentPage` are both referentially unchanged, so
+    // a memo keyed only on those returned its stale single-page result and the
+    // spread's right-hand canvas was never rendered — exactly what happened on
+    // every reload into spread mode.
+    //
+    // `numPages` (PDF.js) is the authority on page count, but it is not
+    // destructured until below this memo, so it cannot be a dependency here
+    // without a temporal-dead-zone crash. The store is kept in sync with
+    // PDF.js by the `updatePieceTotalPages` effect further down.
     const spread = useMemo(
       () => (twoPageMode ? visibleSpreadPages() : { left: currentPage, right: null }),
-      [twoPageMode, visibleSpreadPages, currentPage],
+      [twoPageMode, visibleSpreadPages, currentPage, storeTotalPages],
     );
 
     const scale = useMemo(() => zoom / 100, [zoom]);
@@ -190,6 +210,21 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
         onCropChange(cropRect);
       }
     }, [cropRect, onCropChange]);
+
+    // Feed the real page count from the loaded document back into the store.
+    //
+    // The database's `pageCount` is nullable and is left NULL by the upload
+    // path, so the store was seeded with `pageCount ?? 1`. Every consumer that
+    // trusts the store — the page counter, the Next/Previous buttons, and
+    // `isSpreadable()` for two-page spread — therefore believed the score was a
+    // single page, which left page navigation permanently disabled on a 27-page
+    // score. PDF.js is the authority on how many pages a document has, so its
+    // count is what must win.
+    useEffect(() => {
+      if (!currentPieceId || numPages <= 0) return;
+      if (currentPiece?.totalPages === numPages) return;
+      updatePieceTotalPages(currentPieceId, numPages);
+    }, [currentPieceId, currentPiece?.totalPages, numPages, updatePieceTotalPages]);
 
     // Expose methods via ref
     useImperativeHandle(

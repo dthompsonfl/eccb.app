@@ -47,7 +47,7 @@ export function LoginForm() {
     });
 
     if (error) {
-      toast.error(error.message || 'Failed to sign in');
+      toast.error('That did not work. Check your email and password, then try again.');
       setLoading(false);
       return;
     }
@@ -72,7 +72,9 @@ export function LoginForm() {
 
     if (useBackupCode ? !value : value.length !== 6) {
       toast.error(
-        useBackupCode ? 'Enter a backup code' : 'Enter the 6-digit code',
+        useBackupCode
+          ? 'Please enter one of your backup codes'
+          : 'Please enter the 6-digit code',
       );
       return;
     }
@@ -84,7 +86,7 @@ export function LoginForm() {
         : await authClient.twoFactor.verifyTotp({ code: value, trustDevice });
 
       if (error) {
-        toast.error(error.message || 'That code was not accepted');
+        toast.error('That code was not right. Please try again.');
         setTwoFactorCode('');
         setLoading(false);
         return;
@@ -94,7 +96,7 @@ export function LoginForm() {
       // A full reload so the server re-reads the newly established session.
       window.location.href = callbackUrl;
     } catch {
-      toast.error('That code was not accepted');
+      toast.error('That code was not right. Please try again.');
       setTwoFactorCode('');
       setLoading(false);
     }
@@ -117,13 +119,13 @@ export function LoginForm() {
       });
 
       if (error) {
-        // Handle specific error types with user-friendly messages
+        // Turn technical failures into something a member can act on.
         if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
-          toast.error('Unable to connect to authentication service. Please check your internet connection and try again.');
+          toast.error('We could not reach the sign-in service. Please check your internet connection and try again.');
         } else if (error.message?.includes('Provider not found')) {
-          toast.error('Google sign-in is not configured. Please contact support or use email/password.');
+          toast.error('Signing in with Google is not set up. Please ask the band office for help, or sign in with your email and password.');
         } else {
-          toast.error(error.message || 'Failed to sign in with Google');
+          toast.error(error.message || 'We could not sign you in with Google');
         }
         setGoogleLoading(false);
       }
@@ -146,17 +148,17 @@ export function LoginForm() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <ShieldCheck className="h-6 w-6 text-primary" aria-hidden="true" />
           </div>
-          <h3 className="text-lg font-semibold">Two-factor verification</h3>
+          <h3 className="text-lg font-semibold">One more step to keep your account safe</h3>
           <p className="text-sm text-muted-foreground">
             {useBackupCode
-              ? 'Enter one of the backup codes you saved when you set this up.'
-              : `Enter the 6-digit code from your authenticator app for ${email}.`}
+              ? 'Enter one of the spare codes you saved when you set this up.'
+              : `Open the app you use for codes and enter the 6-digit code it shows for ${email}.`}
           </p>
         </div>
 
         {useBackupCode ? (
           <div className="space-y-2">
-            <Label htmlFor="backup-code">Backup code</Label>
+            <Label htmlFor="backup-code">Spare code</Label>
             <Input
               id="backup-code"
               name="backup-code"
@@ -195,7 +197,7 @@ export function LoginForm() {
             className="h-4 w-4 rounded border-input"
           />
           <Label htmlFor="trust-device" className="font-normal">
-            Don't ask again on this device for 30 days
+            Don't ask me for this code again on this computer for 30 days
           </Label>
         </div>
 
@@ -207,7 +209,7 @@ export function LoginForm() {
           {loading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Verifying...
+              Checking...
             </>
           ) : (
             'Verify'
@@ -220,7 +222,7 @@ export function LoginForm() {
             onClick={() => setUseBackupCode((v) => !v)}
             className="font-medium text-primary hover:underline"
           >
-            {useBackupCode ? 'Use authenticator code' : 'Use a backup code'}
+            {useBackupCode ? 'Use the code from my app' : 'Use a spare code instead'}
           </button>
           <button
             type="button"
@@ -237,7 +239,7 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-2">
-        <Label htmlFor="email">Email Address</Label>
+        <Label htmlFor="email">Your email address</Label>
         <div className="relative">
           <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
           <Input
@@ -257,7 +259,7 @@ export function LoginForm() {
         <div className="flex items-center justify-between">
           <Label htmlFor="password">Password</Label>
           <Button variant="link" className="h-auto p-0 text-xs text-primary" asChild>
-            <a href="/forgot-password">Forgot password?</a>
+            <a href="/forgot-password">I forgot my password</a>
           </Button>
         </div>
         <div className="relative">
@@ -283,10 +285,10 @@ export function LoginForm() {
         {loading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Signing in...
+            Signing you in...
           </>
         ) : (
-          'Sign In'
+          'Sign in'
         )}
       </Button>
 
@@ -298,7 +300,7 @@ export function LoginForm() {
             </div>
             <div className="relative flex justify-center text-xs uppercase">
               <span className="bg-background px-2 text-muted-foreground">
-                Or continue with
+                Or sign in with
               </span>
             </div>
           </div>

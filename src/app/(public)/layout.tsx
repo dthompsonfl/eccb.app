@@ -9,6 +9,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
       <PublicNavigation />
 
       <main
+        id="main-content"
         className="flex-1"
         // Use CSS var so header height can be tuned globally in globals.css
         style={{ paddingTop: 'var(--site-header-height, 4rem)' }}

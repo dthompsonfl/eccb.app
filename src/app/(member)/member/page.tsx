@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { requireAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { formatDate, formatRelativeTime } from '@/lib/date';
+import { eventTypeLabel } from '@/lib/accessibility/plain-language';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export const metadata: Metadata = {
-  title: 'Member Dashboard',
+  title: 'Home',
 };
 
 async function getDashboardData(userId: string) {
@@ -102,7 +103,7 @@ export default async function MemberDashboardPage() {
           Welcome back, {memberName}!
         </h1>
         <p className="mt-2 text-muted-foreground">
-          Here's what's happening with the band.
+          Here is what is coming up. Everything you need is in the menu on the left.
         </p>
       </div>
 
@@ -110,55 +111,47 @@ export default async function MemberDashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">My Music</CardTitle>
+            <CardTitle className="text-sm font-medium">Your Music</CardTitle>
             <Music className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{assignedMusic.length}</div>
-            <p className="text-xs text-muted-foreground">
-              assigned pieces
-            </p>
+            <p className="text-xs text-muted-foreground">pieces given to you</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Upcoming Events</CardTitle>
+            <CardTitle className="text-sm font-medium">Coming Up</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{upcomingEvents.length}</div>
-            <p className="text-xs text-muted-foreground">
-              in the next 30 days
-            </p>
+            <p className="text-xs text-muted-foreground">in the next 30 days</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Attendance</CardTitle>
+            <CardTitle className="text-sm font-medium">Rehearsals</CardTitle>
             <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {user?.member?.attendance.filter(a => a.status === 'PRESENT').length || 0}
             </div>
-            <p className="text-xs text-muted-foreground">
-              rehearsals attended
-            </p>
+            <p className="text-xs text-muted-foreground">you came to</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Notifications</CardTitle>
+            <CardTitle className="text-sm font-medium">Messages</CardTitle>
             <Bell className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{unreadNotifications}</div>
-            <p className="text-xs text-muted-foreground">
-              unread messages
-            </p>
+            <p className="text-xs text-muted-foreground">you have not read</p>
           </CardContent>
         </Card>
       </div>
@@ -168,10 +161,10 @@ export default async function MemberDashboardPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Upcoming Events</CardTitle>
+              <CardTitle>What&apos;s Coming Up</CardTitle>
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/member/calendar">
-                  View All
+                  See all dates
                   <ArrowRight className="ml-1 h-4 w-4" />
                 </Link>
               </Button>
@@ -180,7 +173,7 @@ export default async function MemberDashboardPage() {
           <CardContent>
             {upcomingEvents.length === 0 ? (
               <p className="text-muted-foreground text-center py-8">
-                No upcoming events scheduled.
+                Nothing is scheduled right now. Check back soon.
               </p>
             ) : (
               <div className="space-y-4">
@@ -213,7 +206,7 @@ export default async function MemberDashboardPage() {
                       </div>
                     </div>
                     <Badge variant={event.type === 'CONCERT' ? 'default' : 'secondary'}>
-                      {event.type}
+                      {eventTypeLabel(event.type)}
                     </Badge>
                   </div>
                 ))}
@@ -226,10 +219,10 @@ export default async function MemberDashboardPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>My Music</CardTitle>
+              <CardTitle>Your Music</CardTitle>
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/member/music">
-                  View All
+                  See all
                   <ArrowRight className="ml-1 h-4 w-4" />
                 </Link>
               </Button>
@@ -238,7 +231,7 @@ export default async function MemberDashboardPage() {
           <CardContent>
             {assignedMusic.length === 0 ? (
               <p className="text-muted-foreground text-center py-8">
-                No music assigned yet.
+                You have not been given any music yet. Your librarian will add it here.
               </p>
             ) : (
               <div className="space-y-3">

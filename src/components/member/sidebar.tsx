@@ -18,14 +18,17 @@ import {
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 
+// Labels are written the way a musician would say them out loud. "Home" and
+// "Your music" instead of "Dashboard" and "My Music"; "Which rehearsals I came
+// to" instead of "Attendance". Hrefs are unchanged.
 const navigation = [
-  { name: 'Dashboard', href: '/member', icon: Home, featureKey: null },
-  { name: 'Music Stand', href: '/member/stand', icon: BookOpen, featureKey: 'musicStand' as const },
-  { name: 'My Music', href: '/member/music', icon: Music, featureKey: null },
-  { name: 'Calendar', href: '/member/calendar', icon: Calendar, featureKey: null },
-  { name: 'Attendance', href: '/member/attendance', icon: ClipboardCheck, featureKey: null },
-  { name: 'Notifications', href: '/member/notifications', icon: Bell, featureKey: null },
-  { name: 'Profile', href: '/member/profile', icon: User, featureKey: null },
+  { name: 'Home', href: '/member', icon: Home, featureKey: null },
+  { name: 'My Music Stand', href: '/member/stand', icon: BookOpen, featureKey: 'musicStand' as const },
+  { name: 'Your Music', href: '/member/music', icon: Music, featureKey: null },
+  { name: 'Dates & Times', href: '/member/calendar', icon: Calendar, featureKey: null },
+  { name: 'Rehearsals I Came To', href: '/member/attendance', icon: ClipboardCheck, featureKey: null },
+  { name: 'Messages', href: '/member/notifications', icon: Bell, featureKey: null },
+  { name: 'About Me', href: '/member/profile', icon: User, featureKey: null },
   { name: 'Settings', href: '/member/settings', icon: Settings, featureKey: null },
 ];
 
@@ -69,7 +72,7 @@ export function MemberSidebar({ user, enabledFeatures }: MemberSidebarProps) {
           size="icon"
           onClick={() => setMobileOpen(true)}
           className="bg-background"
-          aria-label="Open mobile menu"
+          aria-label="Open the menu"
         >
           <Menu className="h-5 w-5" />
         </Button>
@@ -97,7 +100,7 @@ export function MemberSidebar({ user, enabledFeatures }: MemberSidebarProps) {
             size="icon"
             onClick={() => setMobileOpen(false)}
             className="text-white hover:bg-white/10"
-            aria-label="Close mobile menu"
+            aria-label="Close the menu"
           >
             <X className="h-5 w-5" />
           </Button>
@@ -106,7 +109,7 @@ export function MemberSidebar({ user, enabledFeatures }: MemberSidebarProps) {
         {/* Logo */}
         <div className="flex items-center gap-2 px-6 py-6 border-b border-white/10">
           <Music className="h-8 w-8 text-primary" />
-          <span className="font-bold text-lg">Member Portal</span>
+          <span className="font-bold text-lg">Band Members</span>
         </div>
 
         {/* User info */}
@@ -160,7 +163,7 @@ export function MemberSidebar({ user, enabledFeatures }: MemberSidebarProps) {
             href="/"
             className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
           >
-            ← Back to Website
+            ← Back to the main website
           </Link>
         </div>
       </aside>

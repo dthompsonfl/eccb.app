@@ -216,6 +216,17 @@ function isStaticAssetPath(pathname: string): boolean {
   if (STATIC_ASSET_EXACT.has(pathname)) return true;
   if (STATIC_ASSET_PREFIXES.some(prefix => pathname.startsWith(prefix))) return true;
 
+  // The extension heuristic below must NEVER apply to a protected prefix or to
+  // the API surface. `isStaticAssetPath` is consulted BEFORE the auth gate, so
+  // allowing `/admin/notes.txt` or `/api/x.csv` here would hand the request
+  // straight past authentication and the setup gate. Both lists above are exact
+  // allowlists (a real asset root or a whole literal path) and are safe; the
+  // extension guess is not, because any future route serving a `.txt`/`.xml`
+  // file beneath `/admin`, `/member`, `/dashboard` or `/api` would inherit an
+  // authorization bypass. Fail closed instead.
+  if (getRouteConfig(pathname) !== null) return false;
+  if (pathname === '/api' || pathname.startsWith('/api/')) return false;
+
   // Extension check, but ONLY when the path is not an application route.
   // A dot in the final segment is a strong signal of a file, whereas a dot in
   // a directory or filename belonging to a known route is not.

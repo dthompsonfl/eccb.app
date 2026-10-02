@@ -6,6 +6,8 @@ import { Toaster } from 'sonner';
 import { ThemeProvider } from '@/components/providers/theme-provider';
 import { ServiceWorkerRegistration } from '@/components/providers/service-worker-provider';
 import { SkipToContent } from '@/components/ui/skip-to-content';
+import { TextScaleProvider } from '@/components/accessibility/text-scale-provider';
+import { TEXT_SCALE_PREPAINT_SCRIPT } from '@/lib/accessibility/text-scale-script';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -74,6 +76,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Set the member's chosen text size BEFORE first paint. Inline and
+            synchronous on purpose: a deferred or effect-based application would
+            render at the default size and then jump. */}
+        <script
+          id="text-scale-prepaint"
+          dangerouslySetInnerHTML={{ __html: TEXT_SCALE_PREPAINT_SCRIPT }}
+        />
+      </head>
       <body className={`${inter.variable} ${oswald.variable} font-sans antialiased`}>
         <ThemeProvider
           attribute="class"
@@ -81,15 +92,17 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <SkipToContent />
-          <ServiceWorkerRegistration />
-          {children}
-          <Toaster
-            position="top-right"
-            richColors
-            closeButton
-            expand={false}
-          />
+          <TextScaleProvider>
+            <SkipToContent />
+            <ServiceWorkerRegistration />
+            {children}
+            <Toaster
+              position="top-right"
+              richColors
+              closeButton
+              expand={false}
+            />
+          </TextScaleProvider>
         </ThemeProvider>
       </body>
     </html>

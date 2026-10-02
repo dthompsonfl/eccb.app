@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   getSpreadPages,
   isSpreadable,
@@ -393,7 +394,69 @@ function annotationKey(pieceId: string, pageNumber: number): string {
   return `${pieceId}-${pageNumber}`;
 }
 
-export const useStandStore = create<StandState>((set, get) => ({
+/**
+ * View preferences that must survive a page reload.
+ *
+ * A musician who enlarges the music to read a difficult bar, or switches on
+ * night mode for a dark rehearsal room, expects that to still be true the next
+ * time they open the stand. Without this the store reset to its defaults on
+ * every navigation and reload, so the setting silently did nothing.
+ *
+ * Only genuinely durable view state is persisted. Deliberately NOT persisted:
+ * `pieces`, `annotations`, `roster`, `userContext` and `eventId`, which are
+ * per-session data loaded from the server for a specific user and event —
+ * persisting those would show one musician another musician's annotations.
+ */
+/**
+ * Resolve a usable Storage for the persisted slice.
+ *
+ * The store is imported by unit tests running under jsdom and by server
+ * rendering, where `localStorage` can be missing or throw on access (Safari
+ * private mode, disabled storage, SSR). Persistence is a convenience here, so
+ * an unusable Storage degrades to an in-memory no-op rather than taking the
+ * whole stand down with it.
+ */
+function resolveViewPrefStorage(): Storage {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const probe = '__eccb_stand_probe__';
+      localStorage.setItem(probe, '1');
+      localStorage.removeItem(probe);
+      return localStorage;
+    }
+  } catch {
+    /* fall through to the in-memory fallback */
+  }
+
+  const memory = new Map<string, string>();
+  return {
+    get length() {
+      return memory.size;
+    },
+    clear: () => memory.clear(),
+    getItem: (k: string) => memory.get(k) ?? null,
+    key: (i: number) => [...memory.keys()][i] ?? null,
+    removeItem: (k: string) => void memory.delete(k),
+    setItem: (k: string, v: string) => void memory.set(k, v),
+  } satisfies Storage;
+}
+
+const PERSISTED_VIEW_KEYS = [
+  'zoom',
+  'nightMode',
+  'twoPageMode',
+  'cropRect',
+  'selectedLayer',
+  'currentTool',
+  'toolColor',
+  'strokeWidth',
+  'pressureScale',
+  'selectedStampId',
+] as const;
+
+export const useStandStore = create<StandState>()(
+  persist(
+    (set, get) => ({
   ...initialState,
 
   setCurrentPieceIndex: (index: number) => {
@@ -425,16 +488,40 @@ export const useStandStore = create<StandState>((set, get) => ({
     }
   },
 
+  // In two-page mode the unit of navigation is the SPREAD, not the page.
+  //
+  // `stepTwoPages` and `nextSpreadPage` already existed for this and the gesture
+  // overlay used them, but the toolbar's Next/Previous buttons and the keyboard
+  // shortcuts both call nextPage/prevPage, which advanced a single page. With a
+  // spread showing pages N and N+1, a one-page step slid the window by half a
+  // spread: the page the musician was reading moved from the right-hand side to
+  // the left, which is not what "turn the page" means for a spread. Every
+  // navigation entry point now agrees on the unit.
   nextPage: () => {
-    const { pieces, currentPieceIndex, _currentPage } = get();
+    const { pieces, currentPieceIndex, _currentPage, twoPageMode } = get();
     const currentPiece = pieces[currentPieceIndex];
-    if (currentPiece && _currentPage < currentPiece.totalPages) {
+    if (!currentPiece) return;
+
+    if (twoPageMode && isSpreadable(currentPiece.totalPages)) {
+      get().stepTwoPages(1);
+      return;
+    }
+
+    if (_currentPage < currentPiece.totalPages) {
       set({ _currentPage: _currentPage + 1, scrollOffset: 0 });
     }
   },
 
   prevPage: () => {
-    const { _currentPage } = get();
+    const { pieces, currentPieceIndex, _currentPage, twoPageMode } = get();
+    const currentPiece = pieces[currentPieceIndex];
+    if (!currentPiece) return;
+
+    if (twoPageMode && isSpreadable(currentPiece.totalPages)) {
+      get().stepTwoPages(-1);
+      return;
+    }
+
     if (_currentPage > 1) {
       set({ _currentPage: _currentPage - 1, scrollOffset: 0 });
     }
@@ -926,7 +1013,20 @@ export const useStandStore = create<StandState>((set, get) => ({
     set((state) => ({
       midiMappings: { ...state.midiMappings, [key]: action },
     })),
-}));
+    }),
+    {
+      name: 'stand-view-preferences',
+      storage: createJSONStorage(() => resolveViewPrefStorage()),
+      partialize: (state) =>
+        Object.fromEntries(
+          PERSISTED_VIEW_KEYS.map((key) => [key, state[key]]),
+        ) as unknown as StandState,
+      // Rehydrated on the client only. Reading localStorage during SSR would
+      // throw and would make the server and client markup disagree.
+      skipHydration: false,
+    },
+  ),
+);
 
 // Selector hook for more specific state selections
 export const useStoreSelector = <T>(selector: (state: StandState) => T): T => {

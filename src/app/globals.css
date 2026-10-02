@@ -28,6 +28,40 @@
 
   /* global header height used by layouts to provide consistent top padding */
   --site-header-height: 6rem;
+
+  /* Multiplier applied to the root font size by the "text size" control.
+     Kept in sync with TEXT_SCALE_VALUES in src/lib/accessibility/text-scale.ts */
+  --font-scale: 1;
+}
+
+/* ============================================================================
+   Accessibility: user-adjustable text size ("guided mode")
+   ============================================================================
+   The whole UI is sized in rem, so scaling the ROOT font size scales text,
+   padding, and gaps together — it composes with Tailwind's type scale instead
+   of fighting it. Which rules apply is decided by `data-font-scale` on <html>,
+   written before first paint by the inline script in the root layout so the
+   size never flashes.
+
+   Kept to four steps and capped at 1.3: past roughly 130% the multi-column
+   layouts stop being usable, which would make the app harder, not easier.
+   ========================================================================== */
+
+html[data-font-scale='small'] { --font-scale: 0.875; }
+html[data-font-scale='medium'] { --font-scale: 1; }
+html[data-font-scale='large'] { --font-scale: 1.15; }
+html[data-font-scale='xlarge'] { --font-scale: 1.3; }
+
+html {
+  font-size: calc(100% * var(--font-scale));
+}
+
+/* Scaling text must never imply movement. Opt out of transitions entirely so a
+   member who has asked for reduced motion does not get animated resizing. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 .dark {

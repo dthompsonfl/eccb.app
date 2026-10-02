@@ -106,6 +106,12 @@ beforeEach(() => {
  * The static-asset decision is the load-bearing one. We assert it directly by
  * replaying the same predicate the proxy uses, so a regression in the
  * allowlist is caught even if the gate ordering changes.
+ *
+ * NOTE: this harness previously omitted the protected-prefix guard that
+ * src/proxy.ts now applies, which is why the `.txt`/`.xml`/`.json` bypass
+ * below went unnoticed: the replica agreed with the test's expectations while
+ * the shipped function did not. Keep this function byte-for-byte equivalent to
+ * `isStaticAssetPath` in src/proxy.ts — if you change one, change both.
  */
 const STATIC_ASSET_PREFIXES = [
   '/_next/static',
@@ -131,9 +137,21 @@ const STATIC_ASSET_EXTENSIONS = new Set([
   '.txt', '.xml', '.webmanifest', '.map',
 ]);
 
+/** Mirrors ROUTE_CONFIG in src/proxy.ts. */
+const PROTECTED_PREFIXES = ['/admin', '/dashboard', '/member'];
+
+function isProtectedPath(pathname: string): boolean {
+  return PROTECTED_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+}
+
 function isStaticAssetPath(pathname: string): boolean {
   if (STATIC_ASSET_EXACT.has(pathname)) return true;
   if (STATIC_ASSET_PREFIXES.some((p) => pathname.startsWith(p))) return true;
+  // Fail closed for protected prefixes and the whole API surface.
+  if (isProtectedPath(pathname)) return false;
+  if (pathname === '/api' || pathname.startsWith('/api/')) return false;
   const lastSegment = pathname.split('/').pop() ?? '';
   const dot = lastSegment.lastIndexOf('.');
   if (dot <= 0) return false;
@@ -158,25 +176,55 @@ describe('static asset classification', () => {
   });
 
   it.each([
-    // The exploit: dots in application routes must NOT bypass the gates.
-    ['/admin/report.csv', true],
-    ['/admin/members/export.csv', true],
-    ['/member/music.pdf', true],
-    ['/admin/settings.json', true],
-    ['/admin/users/x.', true],
-    ['/member/stand/../../admin/secrets.json', true],
+    // The original exploit: dots in application routes must NOT bypass the gates.
+    ['/admin/report.csv'],
+    ['/admin/members/export.csv'],
+    ['/member/music.pdf'],
+    ['/admin/settings.json'],
+    ['/admin/users/x.'],
+    ['/member/stand/../../admin/secrets.json'],
+    // Regression: allowlisted extensions must not launder a protected route.
+    ['/admin/notes.txt'],
+    ['/admin/roster.xml'],
+    ['/member/schedule.txt'],
+    ['/dashboard/notes.json'],
+    ['/admin/reports/attendance.xml'],
+    ['/api/export.csv'],
+    ['/api/admin/report.txt'],
     // Plain application routes.
-    ['/admin', false],
-    ['/admin/members', false],
-    ['/member/stand', false],
-    ['/member/stand/library/abc', false],
-    ['/login', false],
-    ['/api/health', false],
-  ])('%s is not a static asset (expected bypass=%s)', (p, _expected) => {
-    // Every one of these must be classified as a real route, so the auth and
-    // setup gates apply. The old `includes('.')` heuristic returned true for
-    // any path containing a dot, which is the vulnerability.
+    ['/admin'],
+    ['/admin/members'],
+    ['/member/stand'],
+    ['/member/stand/library/abc'],
+    ['/login'],
+    ['/api/health'],
+  ])('%s is not a static asset, so the auth and setup gates apply', (p) => {
     expect(isStaticAssetPath(p as string)).toBe(false);
+  });
+
+  it('still serves real public assets whose names contain a dot', () => {
+    // The fix must not over-block: a genuine public asset still resolves.
+    expect(isStaticAssetPath('/robots.txt')).toBe(true);
+    expect(isStaticAssetPath('/images/2024.photo.png')).toBe(true);
+  });
+});
+
+describe('protected routes with an allowlisted extension are actually gated', () => {
+  // The predicate test above proves the classification; these assert the
+  // end-to-end consequence — an unauthenticated request to a dot-extension
+  // path under a protected prefix must be redirected, not served.
+  //
+  // Assert on status only: the NextResponse mock's `redirect()` does not retain
+  // the Location header (see the mock above), which is why the pre-existing
+  // admin-redirect test asserts `status === 307` for the same reason.
+  it('redirects an unauthenticated /admin/notes.txt instead of serving it', async () => {
+    const res = await proxy(makeRequest('/admin/notes.txt'));
+    expect(res.status).toBe(307);
+  });
+
+  it('redirects an unauthenticated /member/roster.xml instead of serving it', async () => {
+    const res = await proxy(makeRequest('/member/roster.xml'));
+    expect(res.status).toBe(307);
   });
 });
 

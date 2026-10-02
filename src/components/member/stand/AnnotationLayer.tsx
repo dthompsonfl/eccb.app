@@ -337,8 +337,34 @@ export function AnnotationLayer() {
     };
 
     resize();
+
+    // The layer must track the size of the rendered page, but the page is
+    // sized asynchronously by PDF.js — on first paint the wrapper still has
+    // its default 300x150, and nothing in this component re-measures when the
+    // PDF canvas finally lays out. Measuring only on window resize left every
+    // annotation layer stuck at 300x150, so a stroke was captured against a
+    // quarter of the page and replayed at the wrong scale and position on the
+    // next load. Observe the wrapper's actual size instead of waiting for a
+    // resize event that a musician never sends.
+    const wrapper = personalRef.current?.parentElement ?? null;
+    let observer: ResizeObserver | null = null;
+    // Constructed defensively: a ResizeObserver polyfill or test double that is
+    // not constructible must not take the annotation layer down with it. The
+    // window-resize listener below remains as the fallback.
+    try {
+      if (wrapper && typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(() => resize());
+        observer.observe(wrapper);
+      }
+    } catch {
+      observer = null;
+    }
+
     window.addEventListener('resize', resize, { passive: true });
-    return () => window.removeEventListener('resize', resize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', resize);
+    };
   }, [scheduleCanvasRender]);
 
   useEffect(() => {

@@ -20,6 +20,7 @@ import {
   ATTENDANCE_MARK_OWN,
 } from '@/lib/auth/permission-constants';
 import { assertSuperAdminPasswordPresentForSeed } from '@/lib/seeding';
+import { seedStandE2EFixture } from './seed-stand-fixture';
 
 // If DATABASE_URL points to MySQL/MariaDB, provide a driver adapter required by the "client" (WASM) engine.
 function _parseDbUrl(url?: string) {
@@ -477,6 +478,18 @@ async function main() {
       throw error;
     }
   }
+
+  // 10. Digital Music Stand E2E fixture (idempotent)
+  //
+  // A single MusicPiece + MusicFile with a real, inked, multi-page PDF written to
+  // local storage through the app's own storage service. The stand E2E specs
+  // resolve this piece by its sentinel catalog number at runtime, so they work on
+  // any machine without a hardcoded id. Upserts throughout: re-running the seed
+  // neither duplicates nor errors.
+  const standFixture = await seedStandE2EFixture(prisma);
+  console.log(
+    `✅ Stand E2E fixture "${standFixture.pieceId}" (${standFixture.pageCount} pages) at ${standFixture.storageKey}`,
+  );
 
   console.log('🎉 Seeding complete!');
 }

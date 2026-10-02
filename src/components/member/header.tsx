@@ -14,6 +14,8 @@ import {
 import Link from 'next/link';
 import { signOut } from '@/lib/auth/client';
 import { useRouter } from 'next/navigation';
+import { HelpControl } from '@/components/accessibility/help-control';
+import { TextSizeControl } from '@/components/accessibility/text-size-control';
 
 interface MemberHeaderProps {
   user: {
@@ -49,12 +51,18 @@ export function MemberHeader({ user }: MemberHeaderProps) {
 
         {/* Right side actions */}
         <div className="flex items-center gap-2">
+          {/* "Show me how" — always there, so the walkthrough is never lost */}
+          <HelpControl />
+
+          {/* Text size */}
+          <TextSizeControl />
+
           {/* Theme toggle */}
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            aria-label="Toggle theme"
+            aria-label="Switch between light and dark"
           >
             <Sun className="h-5 w-5 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
             <Moon className="absolute h-5 w-5 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
@@ -64,7 +72,7 @@ export function MemberHeader({ user }: MemberHeaderProps) {
           <Button variant="ghost" size="icon" asChild>
             <Link href="/member/notifications">
               <Bell className="h-5 w-5" />
-              <span className="sr-only">Notifications</span>
+              <span className="sr-only">Messages</span>
             </Link>
           </Button>
 
@@ -93,7 +101,7 @@ export function MemberHeader({ user }: MemberHeaderProps) {
               <DropdownMenuItem asChild>
                 <Link href="/member/profile">
                   <User className="mr-2 h-4 w-4" />
-                  Profile
+                  About Me
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
@@ -105,7 +113,7 @@ export function MemberHeader({ user }: MemberHeaderProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
                 <LogOut className="mr-2 h-4 w-4" />
-                Sign Out
+                Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

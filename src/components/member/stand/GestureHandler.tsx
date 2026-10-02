@@ -68,6 +68,23 @@ export function GestureHandler({ className, enabled = true }: GestureHandlerProp
     arbitratePointer({ editMode: false, pointerType: 'mouse' }),
   );
 
+  // The pass-through state must be known BEFORE the pointer arrives, not after.
+  //
+  // `decide()` is only ever called from this overlay's own pointerdown handler,
+  // so a decision could never be computed for the event that decides it: the
+  // overlay was still `pointer-events-auto` when the stroke began, swallowed
+  // that pointerdown, and only then flipped to pass-through. The musician's
+  // first stroke after entering annotate mode was therefore always discarded —
+  // no annotation was created, and nothing was saved.
+  //
+  // Recompute whenever `editMode` changes so the overlay is already in the
+  // right state when the pointerdown arrives. Mouse and pen are the devices
+  // that draw, so they are the ones that must reach the annotation canvas; touch
+  // still navigates in annotate mode, which is the documented policy.
+  useEffect(() => {
+    setDecision(arbitratePointer({ editMode, pointerType: 'mouse' }));
+  }, [editMode]);
+
   const markPenActive = useCallback(() => {
     penActiveRef.current = true;
     setPenActive(true);

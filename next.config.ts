@@ -61,7 +61,6 @@ const nextConfig: NextConfig = {
     // large music PDFs.
     proxyClientMaxBodySize: '50mb',
     taint: true,
-    viewTransition: true,
     webVitalsAttribution: ['CLS', 'LCP']
   },
 
