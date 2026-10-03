@@ -277,6 +277,73 @@ export function parseMessage(data: unknown): StandMessage | null {
 let io: SocketIOServer | null = null;
 
 /**
+ * Attach state on `globalThis`, NOT in a module-level variable.
+ *
+ * The socket server is initialized by `scripts/serve.ts`, which loads this file
+ * through tsx in the same process that serves Next. But Next compiles its route
+ * handlers into `.next/server/`, so the copy of this module that
+ * `/api/health` imports is a DIFFERENT module instance with its own `io`
+ * variable. A module-level flag therefore reads `null` inside the route and the
+ * health endpoint would report "no socket server" on a perfectly healthy
+ * deployment — or, worse, be edited to report `true` unconditionally and lose
+ * the ability to detect a real outage.
+ *
+ * `globalThis` is shared across every module instance in one process, so both
+ * sides observe the same value.
+ */
+const SOCKET_STATE_KEY = '__eccbStandSocketState';
+
+export interface StandSocketState {
+  /** True once the Socket.IO server has been attached to the HTTP server. */
+  attached: boolean;
+  /** True when the deployment expects real-time sync at all. */
+  expected: boolean;
+  /** When `attached` last became true (ISO 8601). */
+  attachedAt: string | null;
+  /** Populated when initialization failed. */
+  error: string | null;
+}
+
+function globalState(): StandSocketState {
+  const store = globalThis as unknown as Record<string, StandSocketState | undefined>;
+  let state = store[SOCKET_STATE_KEY];
+  if (!state) {
+    state = { attached: false, expected: false, attachedAt: null, error: null };
+    store[SOCKET_STATE_KEY] = state;
+  }
+  return state;
+}
+
+/**
+ * Read the live socket-server state for health reporting.
+ *
+ * This is the value the process manager's readiness gate must be driven by.
+ * It reflects what actually happened at bind time, not what the environment
+ * asked for — which is the whole point: a deployment with `ENABLE_WEBSOCKETS=true`
+ * whose socket failed to attach must read `attached: false`.
+ */
+export function getStandSocketState(): StandSocketState {
+  return { ...globalState() };
+}
+
+/** Record a successful attach. Called from `initializeStandSocketServer`. */
+function markAttached(expected: boolean): void {
+  const state = globalState();
+  state.attached = true;
+  state.expected = expected;
+  state.attachedAt = new Date().toISOString();
+  state.error = null;
+}
+
+/** Record a failed attach. Called from `initializeStandSocketServer` on error. */
+function markAttachFailed(expected: boolean, message: string): void {
+  const state = globalState();
+  state.attached = false;
+  state.expected = expected;
+  state.error = message;
+}
+
+/**
  * Return the running Socket.IO instance (throws if not yet started).
  */
 export function getStandSocketServer(): SocketIOServer {
@@ -306,20 +373,34 @@ export function initializeStandSocketServer(
   // address, Tailscale address or a forwarded public IP — not just loopback.
   const origin = appUrl ? [appUrl] : getSocketCorsOrigins();
 
-  io = new SocketIOServer(httpServer, {
-    // Shared with next.config.ts's rewrite and the browser hook — see
-    // `stand-socket-path.ts` for why the three shapes are deliberately not all
-    // identical.
-    path: STAND_SOCKET_SERVER_PATH,
-    cors: { origin, methods: ['GET', 'POST'], credentials: true },
-    pingTimeout: 60_000,
-    pingInterval: 25_000,
-    transports: ['websocket', 'polling'],
-  });
+  try {
+    io = new SocketIOServer(httpServer, {
+      // Shared with the browser hook and the path contract module — see
+      // `stand-socket-path.ts` for why the shapes are deliberately not all
+      // identical.
+      path: STAND_SOCKET_SERVER_PATH,
+      cors: { origin, methods: ['GET', 'POST'], credentials: true },
+      pingTimeout: 60_000,
+      pingInterval: 25_000,
+      transports: ['websocket', 'polling'],
+    });
+  } catch (error) {
+    // A failed attach must be RECORDED, not just thrown. Previously the failure
+    // propagated with no state change, so a health check reading
+    // `getStandSocketState()` would still see the last known good value — or the
+    // default `attached: false` — and could not distinguish "never started"
+    // from "tried and failed".
+    markAttachFailed(true, (error as Error).message);
+    throw error;
+  }
 
   // Redis adapter for horizontal scaling
   io.adapter(createAdapter(pubClient, subClient));
   logger.info('[WS] Redis adapter attached');
+
+  // Only now is the server genuinely usable — record the attach so health
+  // reporting and the process manager's readiness gate observe reality.
+  markAttached(true);
 
   // ── Auth middleware ───────────────────────────────────────────────────────
   io.use(async (socket, next) => {
@@ -578,10 +659,17 @@ export function initializeStandSocketServer(
 
 export async function closeStandSocketServer(): Promise<void> {
   if (!io) return;
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     io!.close(() => {
       logger.info('[WS] Socket.IO server closed');
       io = null;
+      // Keep `expected` and the reason, but drop `attached`: a closed socket is
+      // no longer serving real-time sync, and leaving the flag true would let a
+      // draining-but-dead process keep reporting healthy through its final
+      // seconds.
+      const state = globalState();
+      state.attached = false;
+      state.attachedAt = null;
       resolve();
     });
   });

@@ -16,7 +16,7 @@ import {
   stopSmartUploadProcessorWorker,
   isSmartUploadProcessorWorkerRunning,
 } from './smart-upload-processor-worker';
-import { startOcrWorker, stopOcrWorker, isOcrWorkerRunning } from './ocr-worker';
+import { startOcrWorker, stopOcrWorker, isOcrWorkerRunning, isOcrWorkerEnabled } from './ocr-worker';
 import { logger } from '@/lib/logger';
 import { DEFAULT_PORTS, listenWithFallback } from '@/lib/ports';
 
@@ -59,18 +59,40 @@ let healthServer: http.Server | null = null;
 // The stand socket server is hosted by the app server (scripts/serve.ts), so
 // this process holds no socket state. Kept as a function so the health
 // endpoint can still report the true, cross-process socket state.
-// The stand socket server is hosted by the app server process (scripts/serve.ts).
-// This flag records the INTENDED posture (derived from ENABLE_WEBSOCKETS), not a
-// local bind: reporting a local `false` here would make /ready claim realtime is
-// broken when it is in fact served by the other process. The process manager
-// probes the app server itself, so a genuine socket failure is still caught.
+//
+// This reports the INTENDED posture (derived from ENABLE_WEBSOCKETS), not a
+// local bind.
+//
+// IMPORTANT: this must NOT be used to decide readiness. It is `true` whenever
+// realtime is enabled, regardless of whether the socket actually attached, so
+// gating on it can never detect a failure. The real attach state is observable
+// only on the app server's `/api/health` (`components.sockets`), which is what
+// `scripts/start.ts` reads. Both are reported so an operator comparing the two
+// endpoints can see them agree — and see them disagree when the socket is down.
 const socketWorkerEnabled = (process.env.ENABLE_WEBSOCKETS || '').trim() === 'true';
 
 export function isSocketWorkerRunning(): boolean {
   // The socket server now lives in the app server process, not this one, so we
-  // cannot infer it from local state. Ask the app server via the stand status
-  // route instead of reporting a local `false` that would read as "degraded".
+  // cannot infer it from local state. This reports intent only; see the note
+  // above. Query /api/health for the authoritative attach state.
   return socketWorkerEnabled;
+}
+
+/**
+ * Whether the OCR worker is healthy FOR THIS DEPLOYMENT'S CONFIGURATION.
+ *
+ * The trap this exists to avoid: `startOcrWorker()` is a no-op when
+ * `ENABLE_OCR_WORKER=false`, so `isOcrWorkerRunning()` correctly reports false.
+ * Folding that raw false into the readiness computation — as the previous code
+ * did — makes a deliberately-disabled worker indistinguishable from a crashed
+ * one. The worker process would then answer /ready with 503 forever and
+ * `npm run start:all` would never reach a ready verdict, even though everything
+ * the operator asked for was running.
+ *
+ * Disabled is a healthy state. Only "enabled but not running" is a fault.
+ */
+function ocrWorkerHealthy(): boolean {
+  return !isOcrWorkerEnabled() || isOcrWorkerRunning();
 }
 
 /** Thrown when the Socket.IO stand server could not be started. */
@@ -177,17 +199,20 @@ function startHealthServer(): void {
     if (req.url === '/health') {
       try {
         const stats = await getAllQueueStats();
-        const socketsHealthy = !ENABLE_WEBSOCKETS || isSocketWorkerRunning();
-        // When ENABLE_WEBSOCKETS=true the socket server is part of this
-        // process's contract. Excluding it from this check is what allowed a
-        // real-time-sync outage to report itself as healthy.
+        // Socket health is NOT asserted here. This process cannot observe the
+        // bind — the socket is hosted by scripts/serve.ts — and
+        // `isSocketWorkerRunning()` only reflects ENABLE_WEBSOCKETS, so folding
+        // it into this process's health would assert an intent as a fact.
+        // Requiring realtime to be up is the app server's /api/health job
+        // (`components.sockets`), and the process manager gates readiness on it.
+        const socketsIntentional = isSocketWorkerRunning();
+
         const workersHealthy =
           areQueuesInitialized() &&
           isEmailWorkerRunning() &&
           isSchedulerWorkerRunning() &&
           isSmartUploadProcessorWorkerRunning() &&
-          isOcrWorkerRunning() &&
-          socketsHealthy;
+          ocrWorkerHealthy();
 
         const health = {
           status: workersHealthy ? 'healthy' : 'unhealthy',
@@ -199,8 +224,18 @@ function startHealthServer(): void {
             scheduler: isSchedulerWorkerRunning(),
             smartUpload: isSmartUploadProcessorWorkerRunning(),
             ocr: isOcrWorkerRunning(),
-            sockets: isSocketWorkerRunning(),
           },
+          // Whether each worker is REQUIRED by this deployment's config. A
+          // disabled worker is reported false under `workers` and is not a fault.
+          workerEnabled: {
+            email: true,
+            scheduler: true,
+            smartUpload: true,
+            ocr: isOcrWorkerEnabled(),
+          },
+          // Intent only — not proof that the socket bound. See /ready.
+          websocketsIntentional: socketsIntentional,
+          socketHostedBy: 'app-server',
           queues: stats,
         };
 
@@ -214,20 +249,30 @@ function startHealthServer(): void {
         }));
       }
     } else if (req.url === '/ready') {
-      // Readiness probe - check if workers are ready to accept jobs
+      // Readiness probe - check if workers are ready to accept jobs.
+      //
+      // `sockets` here reports INTENT (ENABLE_WEBSOCKETS), because the socket
+      // lives in the app server process. It is deliberately excluded from the
+      // `ready` computation for that reason — an intent flag cannot prove a
+      // bind succeeded. The authoritative attach state is on the app server's
+      // /api/health (`components.sockets`), which the process manager gates on.
       const ready =
         areQueuesInitialized() &&
         isEmailWorkerRunning() &&
         isSchedulerWorkerRunning() &&
         isSmartUploadProcessorWorkerRunning() &&
-        isOcrWorkerRunning() &&
-        (!ENABLE_WEBSOCKETS || isSocketWorkerRunning());
+        ocrWorkerHealthy();
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         ready,
         ocr: isOcrWorkerRunning(),
-        sockets: isSocketWorkerRunning(),
+        // Distinguishes "deliberately off" from "should be up but isn't".
+        ocrEnabled: isOcrWorkerEnabled(),
+        // Renamed for honesty: this is configuration intent, not proof of a bind.
         websocketsExpected: ENABLE_WEBSOCKETS,
+        websocketsIntentional: socketWorkerEnabled,
+        socketHostedBy: 'app-server',
+        socketStateEndpoint: '/api/health on the app port (components.sockets)',
       }));
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });

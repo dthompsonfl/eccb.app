@@ -11,6 +11,7 @@ import {
   deriveComponentState,
   deriveReadiness,
   evaluateNextServerProbe,
+  evaluateSocketComponent,
   evaluateWorkerProbe,
   ManagedState,
   ProbeResult,
@@ -81,12 +82,27 @@ describe('deriveReadiness', () => {
     expect(result.verdict).toBe('ready');
   });
 
-  it('is not ready when the worker is up but real-time sync is expected and the socket server is absent', () => {
-    // The silent-degradation case: everything answers 200, `sockets: false`.
+  it('is not ready when realtime is expected and the socket server did not attach', () => {
+    // The silent-degradation case: the app server answers 200 and reports
+    // itself healthy, but the socket never bound — so every browser falls back
+    // to polling while nothing looks wrong.
+    //
+    // Note the socket state now comes from the NEXT-SERVER payload, because
+    // `scripts/serve.ts` is what hosts the socket. The workers payload's
+    // `sockets` field is derived from `ENABLE_WEBSOCKETS`, so it is `true` by
+    // construction and could never catch this.
     const result = deriveReadiness(
       [
-        state({ name: 'next-server', lastProbe: probe({ body: { status: 'healthy' } }) }),
-        state({ name: 'workers', lastProbe: probe({ body: { ready: true, sockets: false } }) }),
+        state({
+          name: 'next-server',
+          lastProbe: probe({
+            body: {
+              status: 'degraded',
+              components: { sockets: { expected: true, attached: false } },
+            },
+          }),
+        }),
+        state({ name: 'workers', lastProbe: probe({ body: { ready: true, sockets: true } }) }),
       ],
       { requireSockets: true },
     );
@@ -94,15 +110,57 @@ describe('deriveReadiness', () => {
     expect(result.details.sockets).toMatchObject({ state: 'down' });
   });
 
-  it('is ready with sockets running when real-time sync is expected', () => {
+  it('is ready when realtime is expected and the socket server attached', () => {
     const result = deriveReadiness(
       [
-        state({ name: 'next-server', lastProbe: probe() }),
-        state({ name: 'workers', lastProbe: probe({ body: { ready: true, sockets: true } }) }),
+        state({
+          name: 'next-server',
+          lastProbe: probe({
+            body: {
+              status: 'healthy',
+              components: { sockets: { expected: true, attached: true } },
+            },
+          }),
+        }),
+        state({ name: 'workers', lastProbe: probe({ body: { ready: true } }) }),
       ],
       { requireSockets: true },
     );
     expect(result.verdict).toBe('ready');
+  });
+
+  it('is ready when realtime is NOT expected and no socket is attached', () => {
+    const result = deriveReadiness(
+      [
+        state({
+          name: 'next-server',
+          lastProbe: probe({
+            body: {
+              status: 'healthy',
+              components: { sockets: { expected: false, attached: false } },
+            },
+          }),
+        }),
+        state({ name: 'workers', lastProbe: probe({ body: { ready: true } }) }),
+      ],
+      { requireSockets: true },
+    );
+    expect(result.verdict).toBe('ready');
+  });
+
+  it('is NOT ready when realtime is expected but socket state is unreportable', () => {
+    // An app server that predates the `sockets` health field cannot be verified.
+    // Assuming health here would reintroduce exactly the unverifiable
+    // configuration this gate exists to reject.
+    const result = deriveReadiness(
+      [
+        state({ name: 'next-server', lastProbe: probe({ body: { status: 'healthy' } }) }),
+        state({ name: 'workers', lastProbe: probe({ body: { ready: true } }) }),
+      ],
+      { requireSockets: true },
+    );
+    expect(result.verdict).toBe('not-ready');
+    expect(result.details.sockets).toMatchObject({ state: 'down' });
   });
 
   it('ignores socket absence when real-time sync is not expected', () => {
@@ -146,6 +204,42 @@ describe('evaluateNextServerProbe', () => {
 
   it('accepts a response with no JSON body', () => {
     expect(evaluateNextServerProbe(probe({ body: undefined }))).toBe(true);
+  });
+});
+
+describe('evaluateSocketComponent', () => {
+  it('reads the attach state the app server actually reported', () => {
+    const result = evaluateSocketComponent(
+      probe({
+        body: {
+          status: 'healthy',
+          components: { sockets: { status: 'healthy', expected: true, attached: true } },
+        },
+      }),
+    );
+    expect(result).toEqual({ expected: true, attached: true });
+  });
+
+  it('distinguishes "expected but absent" from "not expected"', () => {
+    expect(
+      evaluateSocketComponent(
+        probe({ body: { components: { sockets: { expected: true, attached: false } } } }),
+      ),
+    ).toEqual({ expected: true, attached: false });
+
+    expect(
+      evaluateSocketComponent(
+        probe({ body: { components: { sockets: { expected: false, attached: false } } } }),
+      ),
+    ).toEqual({ expected: false, attached: false });
+  });
+
+  it('returns undefined when the payload carries no socket component', () => {
+    // An older build, or a non-JSON response. Callers must be able to tell
+    // "unknown" apart from "known absent".
+    expect(evaluateSocketComponent(probe({ body: { status: 'healthy' } }))).toBeUndefined();
+    expect(evaluateSocketComponent(probe({ body: undefined }))).toBeUndefined();
+    expect(evaluateSocketComponent(probe({ body: { components: 'nope' } }))).toBeUndefined();
   });
 });
 

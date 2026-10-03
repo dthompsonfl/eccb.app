@@ -53,6 +53,7 @@ import { formatPreflightReport, runPreflight } from './preflight';
 import {
   deriveReadiness,
   evaluateNextServerProbe,
+  evaluateSocketComponent,
   evaluateWorkerProbe,
   ManagedState,
   probeHttp,
@@ -174,6 +175,29 @@ let SOCKET_PORT = parsePort(process.env.SOCKET_PORT, DEFAULT_SOCKET_PORT);
 let WORKER_HEALTH_PORT = parsePort(process.env.WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT);
 let MANAGER_HEALTH_PORT = parsePort(process.env.PROCESS_MANAGER_HEALTH_PORT, DEFAULT_MANAGER_HEALTH_PORT);
 const RESTART_CRASHED_PROCESSES = process.env.RESTART_CRASHED_PROCESSES === 'true';
+
+/**
+ * Whether to start the background worker fleet at all.
+ *
+ * Defaults to enabled when unset, so existing deployments are unaffected.
+ *
+ * This exists for the web-only case: running the Next.js server without the
+ * workers is useful when a second instance should serve traffic while another
+ * host owns the queues, or when diagnosing "is this a web or a worker problem?"
+ * on a single box.
+ *
+ * It is NOT a way to run a production deployment. With no workers nothing sends
+ * email, the scheduler never publishes scheduled content or fires reminders,
+ * cleanup never runs, and Smart Upload sessions queue and never process. The
+ * preflight check emits a prominent warning for exactly this reason, because
+ * the failure mode is silent — every endpoint the operator might check reports
+ * healthy.
+ */
+const WORKERS_ENABLED = (() => {
+  const raw = (process.env.ENABLE_WORKER ?? '').trim().toLowerCase();
+  if (raw === '') return true;
+  return raw !== 'false' && raw !== '0' && raw !== 'no';
+})();
 
 /**
  * Interface the Next.js server binds to.
@@ -301,7 +325,10 @@ function readinessSnapshot(): {
   if (states.length === 0) {
     return { verdict: 'not-ready', components: {}, details: {} };
   }
-  const result = deriveReadiness(states, { requireSockets: websocketsExpected });
+  const result = deriveReadiness(states, {
+    requireSockets: websocketsExpected,
+    probeSockets: evaluateSocketComponent,
+  });
   return {
     verdict: result.verdict,
     components: result.components as Record<string, string>,
@@ -628,8 +655,23 @@ function startNextServer(prepared: PrepareStandaloneResult): void {
  *   SOCKET_PORT        — must equal the port baked into the build manifest, or
  *                        the /api/stand/socket proxy 404s.
  *   WORKER_HEALTH_PORT — must match the port the manager probes for readiness.
+ *
+ * Skipped entirely when `ENABLE_WORKER=false`. Because the probe loop and
+ * `stopAllProcesses()` are both keyed on the `processes` map, a fleet that was
+ * never spawned is never probed, never waited on during shutdown, and never
+ * contributes a not-ready verdict — the readiness model stays honest about
+ * "disabled" instead of reporting a component that will never answer.
  */
 function startWorkers(): void {
+  if (!WORKERS_ENABLED) {
+    log('warn', 'Background workers DISABLED (ENABLE_WORKER=false) — not starting', {
+      consequence:
+        'No email, no scheduler, no cleanup, and Smart Upload sessions will queue without ever being processed.',
+      hint: 'Set ENABLE_WORKER=true, or run the workers on another host via `npm run start:workers`.',
+    });
+    return;
+  }
+
   const worker = workerCommandLine();
   const managed: ManagedProcess = {
     name: 'workers',
@@ -745,6 +787,7 @@ function startHealthServer(): void {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         verdict: snapshot.verdict,
+        workersEnabled: WORKERS_ENABLED,
         processes: snapshot.components,
       });
       return;
@@ -753,10 +796,16 @@ function startHealthServer(): void {
     if (url === '/ready') {
       // Readiness: every child must answer its probe. Never derived from a
       // non-null ChildProcess.
+      //
+      // `workersEnabled` is reported so a caller can tell "the worker fleet is
+      // deliberately off" from "the worker fleet is down". Without it a web-only
+      // deployment is indistinguishable from a healthy full one, and an operator
+      // has no way to discover that email and the scheduler are not running.
       send(snapshot.verdict === 'ready' ? 200 : 503, {
         ready: snapshot.verdict === 'ready',
         verdict: snapshot.verdict,
         timestamp: new Date().toISOString(),
+        workersEnabled: WORKERS_ENABLED,
         processes: snapshot.components,
         details: snapshot.details,
       });
@@ -944,6 +993,7 @@ async function main(): Promise<void> {
     workerHealthPort: WORKER_HEALTH_PORT,
     managerHealthPort: MANAGER_HEALTH_PORT,
     standSocketServer: websocketsExpected ? 'enabled' : 'disabled',
+    workers: WORKERS_ENABLED ? 'enabled' : 'DISABLED',
     restartCrashedProcesses: RESTART_CRASHED_PROCESSES,
   });
 
@@ -959,10 +1009,14 @@ async function main(): Promise<void> {
   // Start Next.js server
   startNextServer(prepared);
 
-  // Wait a bit before starting workers. The web server owns the schema-facing
-  // instrumentation bootstrap; workers can connect to the same database
-  // independently, so this is a courtesy stagger rather than a dependency.
-  await new Promise((r) => setTimeout(r, 2000));
+  if (WORKERS_ENABLED) {
+    // Wait a bit before starting workers. The web server owns the
+    // schema-facing instrumentation bootstrap; workers can connect to the same
+    // database independently, so this is a courtesy stagger rather than a
+    // dependency. Skipped when workers are disabled — there is nothing to wait
+    // for, and the delay would be pure dead time on every boot.
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 
   // Start background workers (also hosts the Socket.IO stand server)
   startWorkers();

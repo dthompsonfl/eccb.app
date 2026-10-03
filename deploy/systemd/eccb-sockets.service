@@ -1,14 +1,35 @@
 [Unit]
-Description=ECCB Platform — Stand live-sync WebSocket server
+Description=ECCB Platform — Stand live-sync WebSocket server (LEGACY — do not enable)
 Documentation=file:///var/www/eccb/DEPLOYMENT.md
 After=network-online.target eccb-web.service mariadb.service redis-server.service
 Wants=network-online.target
 Requires=redis-server.service
 
-# NOTE: this unit is OPTIONAL and should only be enabled when
-# ENABLE_WEBSOCKETS=true. With it disabled the Stand uses polling
-# (stand.pollingIntervalMs, default 5000ms) and everything still works.
-# Leaving it enabled while the port is unused just burns a process.
+# ============================================================================
+# DO NOT ENABLE THIS UNIT.
+# ============================================================================
+#
+# It is retained only so an existing host that still has it enabled can be
+# migrated deliberately rather than silently.
+#
+# This process binds SOCKET_PORT on its own HTTP server. Nothing can reach it:
+# `next.config.ts` deliberately defines NO rewrite for /api/stand/socket,
+# because a WebSocket upgrade is never proxied by a rewrite (the browser gets a
+# 308 it cannot follow and silently drops to polling). So this server accepts
+# connections that no member will ever make, while burning a process and a port.
+#
+# `scripts/serve.ts` — what eccb-web.service runs — attaches the Stand socket to
+# the SAME http.Server and port as Next, so there is no cross-port hop and no
+# redirect to follow. That is the supported topology.
+#
+# Migration:
+#   sudo systemctl disable --now eccb-sockets
+#   sudo rm /etc/systemd/system/eccb-sockets.service
+#   sudo systemctl daemon-reload
+#
+# Then confirm realtime still works:
+#   curl -fsS localhost:3000/api/health | grep -A4 '"sockets"'
+# ============================================================================
 
 [Service]
 Type=simple
@@ -18,8 +39,6 @@ WorkingDirectory=/var/www/eccb
 
 EnvironmentFile=/etc/eccb/eccb.env
 
-# SOCKET_PORT (default 3005). next.config.ts rewrites /api/stand/socket to
-# this port when ENABLE_WEBSOCKETS=true, so the two must agree.
 ExecStart=/usr/bin/node /var/www/eccb/node_modules/.bin/tsx src/server/socket-worker.ts
 
 Restart=always

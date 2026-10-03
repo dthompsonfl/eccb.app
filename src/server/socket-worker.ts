@@ -1,7 +1,26 @@
 /**
- * Standalone Socket.IO Worker Process
+ * Standalone Socket.IO Worker Process — LEGACY, do not start on a normal
+ * deployment.
  *
  * Run with:  npm run start:sockets
+ *
+ * WHY THIS IS NOT THE SUPPORTED PATH
+ * ----------------------------------
+ * This process binds its own HTTP server on SOCKET_PORT. No browser can reach
+ * it: `next.config.ts` deliberately defines NO rewrite for /api/stand/socket,
+ * because a WebSocket upgrade is never proxied by a rewrite — the browser gets
+ * a 308 it cannot follow and silently drops to polling, while every health
+ * endpoint still reports realtime healthy.
+ *
+ * The supported topology is `scripts/serve.ts`, which attaches the Stand socket
+ * to the SAME http.Server and port as Next: one origin, no cross-port hop, no
+ * redirect. That is what `npm run start:all` and `eccb-web.service` both run.
+ *
+ * Running this alongside serve.ts additionally competes for SOCKET_PORT and
+ * splits stand presence across two servers.
+ *
+ * Retained only for hosts migrating off the old three-unit topology. See
+ * deploy/systemd/eccb-sockets.service for the migration procedure.
  *
  * Environment variables:
  *   SOCKET_PORT          Port to listen on (default: 3226, auto-rolls to next

@@ -87,13 +87,20 @@ No PostgreSQL support exists or is claimed.
 
 ## Process topology
 
-Production runs three supervised processes, not one:
+Production runs **two** supervised processes, not one:
 
 | Process | Command | Purpose |
 | --- | --- | --- |
-| web | `npm run start:server` (`next start`) | HTTP + Server Actions |
+| web | `scripts/serve.ts` under tsx | HTTP + Server Actions **and** the Stand Socket.IO server, on one port |
 | workers | `npm run start:workers` (`tsx src/workers/index.ts`) | email, scheduler, Smart Upload, OCR, cleanup |
-| sockets | `npm run start:sockets` (`tsx src/server/socket-worker.ts`) | Stand live-sync WebSocket fanout |
 
-`npm run start:all` runs them under one process for local development only. A
-production deployment **must** supervise all three — see `DEPLOYMENT.md`.
+`npm run start:all` runs both under one supervising process — preflight, port
+resolution, restart-with-backoff, and a real readiness gate. It is the
+recommended way to run the whole system locally, and it exercises the same two
+entry points systemd does.
+
+There is deliberately **no third `sockets` process**. `src/server/socket-worker.ts`
+(`npm run start:sockets`) is a standalone entry point that binds `SOCKET_PORT`
+separately; it is unreachable from the browser because a WebSocket upgrade can
+never be proxied by a `next.config.ts` rewrite. Do not start it alongside
+`serve.ts` — see `DEPLOYMENT.md`.

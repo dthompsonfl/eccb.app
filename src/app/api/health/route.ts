@@ -5,6 +5,7 @@ import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { startTimer } from '@/lib/performance';
 import { getSetupState } from '@/lib/setup/state';
+import { getStandSocketState } from '@/lib/websocket/stand-socket';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,6 +34,16 @@ interface HealthResponse {
     database: ComponentHealth;
     redis: ComponentHealth;
     storage: ComponentHealth;
+    /**
+     * Digital Music Stand real-time sync.
+     *
+     * Reported separately from `status` on purpose. When realtime is EXPECTED
+     * but the socket server never attached, every browser silently falls back to
+     * polling — the site still works and looks healthy, which is exactly why
+     * this needs to be its own observable field rather than a detail buried in
+     * a message string.
+     */
+    sockets: SocketComponentHealth;
   };
   setup: {
     phase: string;
@@ -41,6 +52,51 @@ interface HealthResponse {
     hasSuperAdmin: boolean;
     pendingMigrations?: number;
     error?: string;
+  };
+}
+
+interface SocketComponentHealth {
+  status: 'healthy' | 'degraded' | 'disabled';
+  /** True when this deployment is configured for real-time sync. */
+  expected: boolean;
+  /** True when the Socket.IO server actually attached to the HTTP server. */
+  attached: boolean;
+  attachedAt: string | null;
+  error?: string;
+}
+
+/**
+ * Report the Stand socket server's real attach state.
+ *
+ * Driven by `getStandSocketState()`, which is written by the attach itself — not
+ * by re-reading `ENABLE_WEBSOCKETS`. Reporting the env var here would recreate
+ * the defect this replaces: a socket that failed to bind would still be
+ * described as healthy, and readiness would pass.
+ *
+ * `degraded` (rather than `unhealthy`) when realtime is expected but absent, so
+ * an operator sees the fault without the whole stack being pulled from a load
+ * balancer. The process manager treats this field as blocking regardless.
+ */
+function checkSockets(): SocketComponentHealth {
+  const state = getStandSocketState();
+  const expected = (process.env.ENABLE_WEBSOCKETS || '').trim() === 'true';
+
+  if (!expected) {
+    // Realtime is off by configuration. Not a fault.
+    return {
+      status: 'disabled',
+      expected: false,
+      attached: state.attached,
+      attachedAt: state.attachedAt,
+    };
+  }
+
+  return {
+    status: state.attached ? 'healthy' : 'degraded',
+    expected: true,
+    attached: state.attached,
+    attachedAt: state.attachedAt,
+    ...(state.error ? { error: state.error } : {}),
   };
 }
 
@@ -160,7 +216,9 @@ async function checkStorage(): Promise<ComponentHealth> {
  * Determine overall health status from component statuses
  */
 function determineOverallStatus(components: HealthResponse['components']): 'healthy' | 'degraded' | 'unhealthy' {
-  const statuses = Object.values(components).map((c) => c.status);
+  const statuses = Object.entries(components)
+    .filter(([name]) => name !== 'sockets')
+    .map(([, c]) => c.status);
   
   if (statuses.includes('unhealthy')) {
     // If any critical component is unhealthy, overall is unhealthy
@@ -179,7 +237,16 @@ function determineOverallStatus(components: HealthResponse['components']): 'heal
   if (statuses.includes('degraded')) {
     return 'degraded';
   }
-  
+
+  // Realtime is expected but the socket server never attached: report the stack
+  // as degraded so the fault is visible on the dashboard, without failing the
+  // whole process (polling still serves the Stand correctly). The process
+  // manager's readiness gate treats this as blocking — see
+  // `evaluateNextServerProbe`.
+  if (components.sockets.status === 'degraded') {
+    return 'degraded';
+  }
+
   return 'healthy';
 }
 
@@ -191,14 +258,15 @@ export async function GET(): Promise<NextResponse<HealthResponse>> {
   const requestTimer = startTimer('health:check');
   
   // Run all health checks in parallel
-  const [database, redisHealth, storage, setupState] = await Promise.all([
+  const [database, redisHealth, storage, setupState, sockets] = await Promise.all([
     checkDatabase(),
     checkRedis(),
     checkStorage(),
     getSetupState().catch(() => null),
+    Promise.resolve(checkSockets()),
   ]);
   
-  const components = { database, redis: redisHealth, storage };
+  const components = { database, redis: redisHealth, storage, sockets };
   const status = determineOverallStatus(components);
   
   const uptime = Math.floor((Date.now() - APP_START_TIME) / 1000);

@@ -249,6 +249,19 @@ function isFeatureOn(env: NodeJS.ProcessEnv, flag: string, fallback: boolean): b
 }
 
 /**
+ * True when a boolean switch is explicitly turned OFF.
+ *
+ * Inverts {@link isFeatureOn} with a default of ON, matching how these switches
+ * are actually consumed: unset means enabled, so an operator who has never heard
+ * of the flag gets the full stack. Accepts `false`/`0`/`no` as off.
+ */
+function isFeatureOff(env: NodeJS.ProcessEnv, flag: string): boolean {
+  const raw = (env[flag] ?? '').trim().toLowerCase();
+  if (raw === '') return false;
+  return raw === 'false' || raw === '0' || raw === 'no';
+}
+
+/**
  * Resolve whether the Stand is *meant* to run in real-time mode.
  *
  * Three independent inputs can each request it, and all three are read here so
@@ -732,7 +745,34 @@ export async function runPreflight(options: PreflightOptions = {}): Promise<Pref
     }
   }
 
-  // ---- 7. Ports about to be claimed ---------------------------------------
+  // ---- 7. Optional components ----------------------------------------------
+  // Both switches below default to ON when unset. They are surfaced as warnings
+  // rather than errors because a web-only deployment is a legitimate topology
+  // (a second instance serving traffic while another host owns the queues) —
+  // but the consequences are entirely silent otherwise: no email is sent, the
+  // scheduler never runs, cleanup never happens, and Smart Upload sessions queue
+  // forever. Every health endpoint would still report healthy.
+  if (isFeatureOff(env, 'ENABLE_WORKER')) {
+    problems.push({
+      code: 'workers.disabled',
+      severity: 'warning',
+      message:
+        'ENABLE_WORKER=false — the background worker fleet will NOT be started. No email will be sent, the scheduler will not publish scheduled content or fire event reminders, cleanup will not run, and Smart Upload sessions will queue without ever being processed.',
+      hint: 'This is a warning, not an error: it is valid when another host runs `npm run start:workers`. If this is meant to be the full stack, set ENABLE_WORKER=true.',
+    });
+  }
+
+  if (isFeatureOff(env, 'ENABLE_OCR_WORKER')) {
+    problems.push({
+      code: 'ocr.disabled',
+      severity: 'warning',
+      message:
+        'ENABLE_OCR_WORKER=false — the dedicated OCR fallback worker will NOT be started. Smart Upload still OCRs inline, but the operator-triggered re-run (POST /api/admin/uploads/review/[id]/reocr) will be refused rather than queueing jobs nothing consumes.',
+      hint: 'Set ENABLE_OCR_WORKER=true if you use the re-OCR endpoint.',
+    });
+  }
+
+  // ---- 8. Ports about to be claimed ---------------------------------------
   if (options.ports && options.isPortBusy) {
     const claims: Array<[string, number]> = [
       ['app', options.ports.app],

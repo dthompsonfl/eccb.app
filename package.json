@@ -19,6 +19,7 @@
     "prepare:standalone": "tsx scripts/prepare-standalone.ts",
     "start:server": "next start",
     "prestart": "npm run sync:pdf-worker",
+    "prestart:all": "npm run sync:pdf-worker",
     "start:workers": "tsx src/workers/index.ts",
     "lint": "eslint",
     "test": "npm run permissions:audit && tsx scripts/assert-no-skipped-tests.ts && vitest",

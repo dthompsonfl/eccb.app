@@ -2,39 +2,47 @@
 # ECCB Platform — production process topology
 # =============================================================================
 #
-# The application is THREE long-running processes, not one. A previous
+# The application is TWO long-running processes, not one. A previous
 # deployment guide defined a single systemd unit running only `next start`,
-# which silently omitted the background worker and the WebSocket server. In
-# that topology nothing sends email, the scheduler never runs, Smart Upload
-# and OCR never process, and Stand live-sync falls back to polling.
+# which silently omitted the background worker. In that topology nothing sends
+# email, the scheduler never runs, and Smart Upload and OCR never process.
 #
-#   eccb-web.service       HTTP + Server Actions
+#   eccb-web.service       HTTP + Server Actions + Stand Socket.IO (one port)
 #   eccb-workers.service   email, scheduler, Smart Upload, OCR, cleanup
-#   eccb-sockets.service   Stand live-sync WebSocket fanout (optional)
 #
-# All three must be started on every deploy. `eccb-sockets` is only meaningful
-# when ENABLE_WEBSOCKETS=true; leave it disabled otherwise.
+# Both must be started on every deploy.
+#
+# Why eccb-web runs scripts/serve.ts and NOT `next start`:
+#   serve.ts attaches the Stand Socket.IO server to the same http.Server and
+#   port as Next. A WebSocket upgrade is never proxied by a rewrite, so a
+#   separately-bound SOCKET_PORT is unreachable and clients silently poll.
+#   `next start` binds only Next and cannot do that attachment. (Static assets
+#   are served correctly either way — verified.)
+#
+# eccb-sockets.service is LEGACY and must NOT be enabled. It exists only so a
+# host that still has it enabled can be migrated deliberately.
 #
 # Install (run from the app directory):
 #   sudo cp deploy/systemd/eccb-web.service      /etc/systemd/system/
 #   sudo cp deploy/systemd/eccb-workers.service  /etc/systemd/system/
-#   sudo cp deploy/systemd/eccb-sockets.service  /etc/systemd/system/
 #   sudo cp deploy/systemd/eccb.env.example     /etc/eccb/eccb.env
 #   sudo chmod 600 /etc/eccb/eccb.env
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now eccb-web eccb-workers
-#   # only if ENABLE_WEBSOCKETS=true
-#   sudo systemctl enable --now eccb-sockets
 #
 # Verify:
 #   systemctl status eccb-web eccb-workers
 #   curl -fsS localhost:3000/api/health
 #   curl -fsS localhost:3001/health    # worker health port
 #
-# Restart order matters on deploy: web and sockets pick up new code, but
-# workers must be restarted LAST and only after migrations have been applied
-# (see deploy.md). A worker running old code against a migrated schema is the
-# most common cause of a bad deploy.
+# /api/health reports components.sockets.expected and .attached — the REAL
+# attach state of the socket server, not merely ENABLE_WEBSOCKETS. Realtime
+# configured but not attached shows status "degraded" there.
+#
+# Restart order matters on deploy: web picks up new code, but workers must be
+# restarted LAST and only after migrations have been applied (see deploy.md).
+# A worker running old code against a migrated schema is the most common cause
+# of a bad deploy.
 # =============================================================================
 
 [Unit]

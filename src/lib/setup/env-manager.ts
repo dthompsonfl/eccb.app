@@ -475,7 +475,16 @@ const DEVELOPMENT_VARS: EnvVariable[] = [
     key: 'ENABLE_WORKER',
     value: 'true',
     required: false,
-    description: 'Enable background worker',
+    description: 'Start the background worker fleet (email, scheduler, Smart Upload, OCR). Set false only for a web-only instance.',
+    sensitive: false,
+    default: 'true',
+  },
+  {
+    key: 'ENABLE_OCR_WORKER',
+    value: 'true',
+    required: false,
+    description:
+      'Start the dedicated OCR fallback worker. Only needed for the admin re-OCR endpoint (POST /api/admin/uploads/review/[id]/reocr); Smart Upload OCRs inline regardless.',
     sensitive: false,
     default: 'true',
   },
@@ -780,7 +789,7 @@ export class EnvironmentManager {
       { name: 'PUSH NOTIFICATIONS', keys: ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'] },
       { name: 'VIRUS SCANNING', keys: ['ENABLE_VIRUS_SCAN', 'CLAMAV_HOST', 'CLAMAV_PORT'] },
       { name: 'LOGGING', keys: ['LOG_DIR', 'LOG_RETENTION_DAYS', 'LOG_MAX_SIZE_MB', 'LOG_ROTATION'] },
-      { name: 'WORKERS', keys: ['WORKER_HEALTH_PORT', 'PROCESS_MANAGER_HEALTH_PORT', 'RESTART_CRASHED_PROCESSES', 'SCHEDULER_INTERVAL_MS', 'CLEANUP_INTERVAL_MS', 'ENABLE_WORKER'] },
+      { name: 'WORKERS', keys: ['WORKER_HEALTH_PORT', 'PROCESS_MANAGER_HEALTH_PORT', 'RESTART_CRASHED_PROCESSES', 'SCHEDULER_INTERVAL_MS', 'CLEANUP_INTERVAL_MS', 'ENABLE_WORKER', 'ENABLE_OCR_WORKER'] },
     ];
 
     for (const category of categories) {
@@ -856,7 +865,7 @@ export class EnvironmentManager {
         { name: 'PUSH NOTIFICATIONS', keys: ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'] },
         { name: 'VIRUS SCANNING (ClamAV)', keys: ['ENABLE_VIRUS_SCAN', 'CLAMAV_HOST', 'CLAMAV_PORT'] },
         { name: 'LOGGING', keys: ['LOG_DIR', 'LOG_RETENTION_DAYS', 'LOG_MAX_SIZE_MB', 'LOG_ROTATION'] },
-        { name: 'WORKERS & PROCESS MANAGEMENT', keys: ['WORKER_HEALTH_PORT', 'PROCESS_MANAGER_HEALTH_PORT', 'RESTART_CRASHED_PROCESSES', 'SCHEDULER_INTERVAL_MS', 'CLEANUP_INTERVAL_MS', 'ENABLE_WORKER'] },
+        { name: 'WORKERS & PROCESS MANAGEMENT', keys: ['WORKER_HEALTH_PORT', 'PROCESS_MANAGER_HEALTH_PORT', 'RESTART_CRASHED_PROCESSES', 'SCHEDULER_INTERVAL_MS', 'CLEANUP_INTERVAL_MS', 'ENABLE_WORKER', 'ENABLE_OCR_WORKER'] },
       ];
 
       for (const category of categories) {

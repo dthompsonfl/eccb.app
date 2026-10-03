@@ -14,9 +14,28 @@ WorkingDirectory=/var/www/eccb
 # Secrets live in a root-owned, 0600 file — never in the unit or in git.
 EnvironmentFile=/etc/eccb/eccb.env
 
-# `next start` serves the production build. This process is stateless: durable
-# state lives in MariaDB and Redis, so it can be restarted freely.
-ExecStart=/usr/bin/node /var/www/eccb/node_modules/.bin/next start -p 3000
+# `scripts/serve.ts` hosts Next AND the Stand Socket.IO server on ONE port.
+#
+# It must NOT be `next start`, for one reason: `next start` binds only Next.
+# The Stand Socket.IO server must be attached to the SAME http.Server and port
+# as Next, because a WebSocket upgrade can never be proxied by a
+# `next.config.ts` rewrite — the browser receives a 308 it cannot follow and
+# silently drops to polling, while every health endpoint still reports realtime
+# healthy. serve.ts does that attachment; `next start` cannot.
+#
+# Note: `next start` does still serve static assets correctly under
+# `output: 'standalone'` (verified: hashed /_next/static chunks return 200).
+# Next prints a "does not work with output: standalone" warning, but the asset
+# serving works — the blocker is the missing socket, not styling.
+#
+# Running serve.ts under tsx keeps a single supervised PID (no `npx` wrapper
+# process to orphan on restart), which matters because Restart=always below.
+#
+# serve.ts reads PORT/BIND_HOST from /etc/eccb/eccb.env.
+#
+# This process is stateless: all durable state lives in MariaDB and Redis, so
+# it can be restarted freely.
+ExecStart=/usr/bin/node --import tsx /var/www/eccb/scripts/serve.ts
 
 Restart=always
 RestartSec=10

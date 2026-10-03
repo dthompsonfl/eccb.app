@@ -65,7 +65,7 @@ export function deriveComponentState(state: ManagedState): ComponentState {
  */
 export function deriveReadiness(
   states: ManagedState[],
-  options: { requireSockets: boolean } = { requireSockets: false },
+  options: { requireSockets: boolean; probeSockets?: (result: ProbeResult) => { expected: boolean; attached: boolean } | undefined } = { requireSockets: false },
 ): { verdict: ReadinessVerdict; components: Record<string, ComponentState>; details: Record<string, unknown> } {
   const components: Record<string, ComponentState> = {};
   const details: Record<string, unknown> = {};
@@ -98,23 +98,55 @@ export function deriveReadiness(
   const allReady = Object.values(components).every((s) => s === 'ready');
 
   if (allReady) {
-    // The worker process hosts the embedded Socket.IO stand server. When the
-    // deployment expects real-time sync, a worker that reports
-    // `sockets: false` is a silent downgrade to polling and must not pass.
-    const socketsExpected = options.requireSockets;
-    const workerBody = socketsExpected ? findWorkerBody(states) : undefined;
-    if (socketsExpected && workerBody !== undefined && workerBody.sockets !== true) {
-      return {
-        verdict: 'not-ready',
-        components,
-        details: {
-          ...details,
-          sockets: {
-            state: 'down',
-            reason: 'Stand real-time sync is enabled but the embedded Socket.IO server is not running in the worker process.',
+    // The Stand socket server is hosted by the APP SERVER process
+    // (`scripts/serve.ts`), so its real attach state is reported on the
+    // next-server probe's `/api/health` payload — not on the workers' `/ready`.
+    //
+    // The previous implementation read `sockets` from the WORKERS payload. That
+    // field is derived from `ENABLE_WEBSOCKETS` in `src/workers/index.ts`, i.e.
+    // from the environment rather than from what actually bound, so it was
+    // `true` by construction whenever realtime was expected and the gate could
+    // never fail. The check that exists specifically to prevent silent fallback
+    // to polling was structurally incapable of detecting it.
+    if (options.requireSockets) {
+      const nextServerProbe = states.find((s) => s.name === 'next-server')?.lastProbe;
+      const socketState = nextServerProbe
+        ? (options.probeSockets ?? defaultProbeSockets)(nextServerProbe)
+        : undefined;
+
+      // An unknown socket state means the app server predates the `sockets`
+      // health field. Treat it as NOT ready rather than assuming health: a
+      // realtime deployment whose socket state cannot be observed is exactly the
+      // unverifiable configuration this gate exists to reject.
+      if (socketState === undefined) {
+        return {
+          verdict: 'not-ready',
+          components,
+          details: {
+            ...details,
+            sockets: {
+              state: 'down',
+              reason:
+                'Real-time sync is expected but /api/health does not report socket state. Rebuild the app server so the socket attach is observable.',
+            },
           },
-        },
-      };
+        };
+      }
+
+      if (socketState.expected && !socketState.attached) {
+        return {
+          verdict: 'not-ready',
+          components,
+          details: {
+            ...details,
+            sockets: {
+              state: 'down',
+              reason:
+                'Stand real-time sync is enabled but the Socket.IO server did not attach to the app HTTP server. Members would silently fall back to polling.',
+            },
+          },
+        };
+      }
     }
     return { verdict: 'ready', components, details };
   }
@@ -122,10 +154,20 @@ export function deriveReadiness(
   return { verdict: anyStarting ? 'starting' : 'not-ready', components, details };
 }
 
-function findWorkerBody(states: ManagedState[]): Record<string, unknown> | undefined {
-  const worker = states.find((s) => s.name === 'workers');
-  const body = worker?.lastProbe?.body;
-  return body && typeof body === 'object' ? (body as Record<string, unknown>) : undefined;
+/**
+ * Default reader for the `/api/health` socket component.
+ *
+ * Duplicated here rather than imported from the socket module on purpose: this
+ * file is unit-tested without a running app server, and importing the real
+ * module would drag in ioredis, Prisma and the auth stack.
+ */
+function defaultProbeSockets(result: ProbeResult): { expected: boolean; attached: boolean } | undefined {
+  const components = result.body?.components;
+  if (!components || typeof components !== 'object') return undefined;
+  const sockets = (components as Record<string, unknown>).sockets;
+  if (!sockets || typeof sockets !== 'object') return undefined;
+  const record = sockets as Record<string, unknown>;
+  return { expected: record.expected === true, attached: record.attached === true };
 }
 
 // ============================================================================
@@ -216,6 +258,39 @@ export function evaluateNextServerProbe(result: ProbeResult): boolean {
   if (!body) return true;
   const status = body.status;
   return status !== 'unhealthy';
+}
+
+/**
+ * Whether `/api/health` reports a live Stand socket server.
+ *
+ * The socket is hosted by the app server process (`scripts/serve.ts`), NOT by
+ * the workers process, so this is the only place the real attach state can be
+ * observed. Three outcomes:
+ *
+ *  - `expected: false` — realtime is off by configuration; nothing to require.
+ *  - `expected: true, attached: true` — healthy.
+ *  - `expected: true, attached: false` — the silent-degradation case. Every
+ *    browser falls back to polling while the site keeps working and reporting
+ *    200, which is precisely the failure this gate exists to catch.
+ *
+ * A body with NO `sockets` field predates the check (or was served by a build
+ * that lacks it) and is reported as `undefined` so the caller can distinguish
+ * "unknown" from "known absent" and choose its own compatibility behaviour
+ * rather than silently assuming health.
+ */
+export function evaluateSocketComponent(
+  result: ProbeResult,
+): { expected: boolean; attached: boolean } | undefined {
+  const components = result.body?.components;
+  if (!components || typeof components !== 'object') return undefined;
+  const sockets = (components as Record<string, unknown>).sockets;
+  if (!sockets || typeof sockets !== 'object') return undefined;
+
+  const record = sockets as Record<string, unknown>;
+  return {
+    expected: record.expected === true,
+    attached: record.attached === true,
+  };
 }
 
 /**

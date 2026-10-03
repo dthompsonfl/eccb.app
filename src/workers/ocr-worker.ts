@@ -326,9 +326,36 @@ async function processOcrJob(job: Job<OcrProcessJobData>): Promise<void> {
 // =============================================================================
 
 /**
+ * Whether the OCR worker is enabled by configuration.
+ *
+ * Defaults to ENABLED when unset. The dedicated OCR queue has exactly one
+ * producer — `POST /api/admin/uploads/review/[id]/reocr` — so an operator who
+ * never uses that endpoint is holding a BullMQ consumer and a Redis connection
+ * open for nothing. Setting `ENABLE_OCR_WORKER=false` releases both.
+ *
+ * Absent → enabled, so existing deployments are unaffected by this switch.
+ */
+export function isOcrWorkerEnabled(): boolean {
+  const raw = (process.env.ENABLE_OCR_WORKER ?? '').trim().toLowerCase();
+  if (raw === '') return true;
+  return raw !== 'false' && raw !== '0' && raw !== 'no';
+}
+
+/**
  * Start OCR worker (rate-limited).
+ *
+ * A no-op when `ENABLE_OCR_WORKER=false`. Note this means `isOcrWorkerRunning()`
+ * stays false, so the caller must treat "disabled" as a healthy state rather than
+ * a failed worker — see `src/workers/index.ts`, where readiness is computed from
+ * `isOcrWorkerEnabled() && isOcrWorkerRunning()`.
  */
 export function startOcrWorker(): void {
+  if (!isOcrWorkerEnabled()) {
+    logger.info('OCR worker disabled by ENABLE_OCR_WORKER=false — not starting', {
+      hint: 'Re-run OCR via POST /api/admin/uploads/review/[id]/reocr will queue jobs that nothing consumes.',
+    });
+    return;
+  }
   if (worker || workerStarting) return;
   workerStarting = true;
 

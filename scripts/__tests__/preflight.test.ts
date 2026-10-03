@@ -344,6 +344,69 @@ describe('runPreflight', () => {
     }
   });
 
+  it('WARNS but does not block when ENABLE_WORKER=false', async () => {
+    // A web-only deployment is legitimate (another host owns the queues), but
+    // the consequences are entirely silent: no email, no scheduler, no cleanup,
+    // Smart Upload queues forever. Every health endpoint still reports healthy,
+    // so the operator has to be told at startup.
+    const root = await makeRoot({ routesManifest: emptyManifest() });
+    try {
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: { ...GOOD_ENV, ENABLE_WORKER: 'false' },
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      const problem = result.problems.find((p) => p.code === 'workers.disabled');
+      expect(problem).toBeDefined();
+      // A warning, not an error — it must not block a legitimate topology.
+      expect(problem?.severity).toBe('warning');
+      expect(result.ok).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('WARNS but does not block when ENABLE_OCR_WORKER=false', async () => {
+    const root = await makeRoot({ routesManifest: emptyManifest() });
+    try {
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: { ...GOOD_ENV, ENABLE_OCR_WORKER: 'false' },
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      const problem = result.problems.find((p) => p.code === 'ocr.disabled');
+      expect(problem).toBeDefined();
+      expect(problem?.severity).toBe('warning');
+      expect(result.ok).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('says nothing about either switch when they are unset or enabled', async () => {
+    // Unset must mean enabled: an operator who has never heard of these flags
+    // gets the full stack and no spurious warnings.
+    for (const value of [undefined, 'true', '1']) {
+      const root = await makeRoot({ routesManifest: emptyManifest() });
+      try {
+        const env = { ...GOOD_ENV } as NodeJS.ProcessEnv;
+        if (value !== undefined) {
+          env.ENABLE_WORKER = value;
+          env.ENABLE_OCR_WORKER = value;
+        }
+        const result = await runPreflight({
+          deps: fakeDeps(root, { env, readStandSettings: async () => WEBSOCKET_SETTINGS }),
+        });
+        expect(result.problems.some((p) => p.code === 'workers.disabled')).toBe(false);
+        expect(result.problems.some((p) => p.code === 'ocr.disabled')).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('passes with a valid environment and build', async () => {
     const root = await makeRoot();
     try {

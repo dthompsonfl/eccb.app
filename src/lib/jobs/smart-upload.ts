@@ -185,13 +185,40 @@ export interface OcrProcessJobData {
 }
 
 /**
+ * Whether an OCR consumer is expected to exist in this deployment.
+ *
+ * Duplicated here rather than imported from `@/workers/ocr-worker` on purpose:
+ * that module pulls in BullMQ, ioredis and the OCR service graph, none of which
+ * belong in an API route's import path. The two definitions must agree — an
+ * enqueue guard that disagrees with the worker's own gate would either reject
+ * legitimate requests or queue jobs nobody will consume.
+ */
+export function isOcrWorkerEnabled(): boolean {
+  const raw = (process.env.ENABLE_OCR_WORKER ?? '').trim().toLowerCase();
+  if (raw === '') return true;
+  return raw !== 'false' && raw !== '0' && raw !== 'no';
+}
+
+/**
  * Enqueue a non-LLM OCR fallback pass for an existing Smart Upload session.
  *
  * Idempotent per session: a pending job for the same session is removed before
  * enqueuing, so a librarian double-clicking does not run the same OCR twice.
  * A job that is already active is left alone.
+ *
+ * Refuses to enqueue when `ENABLE_OCR_WORKER=false`. Without this the request
+ * succeeds, the job sits in `eccb-ocr` forever, and the session never advances —
+ * a silent failure the operator has no way to see. Failing loudly at the point
+ * of the request is the only place the information still exists.
  */
 export async function queueOcrProcess(data: OcrProcessJobData): Promise<Job> {
+  if (!isOcrWorkerEnabled()) {
+    throw new Error(
+      'OCR re-run is unavailable: the OCR worker is disabled (ENABLE_OCR_WORKER=false). ' +
+        'Enable it in .env and restart the workers process to use this endpoint.',
+    );
+  }
+
   initializeQueues();
   const queue = getQueue('OCR');
 

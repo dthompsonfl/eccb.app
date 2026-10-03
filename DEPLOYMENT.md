@@ -194,17 +194,25 @@ npm run build
 
 ### 8. Systemd Services
 
-The application is **three** long-running processes, not one. A single unit
-running only `next start` leaves the background worker and the WebSocket
-server unstarted, which means no email is sent, the scheduler never runs,
-Smart Upload and OCR never process, and Stand live-sync degrades to polling —
+The application is **two** long-running processes, not one. A single unit
+running only `next start` leaves the background worker unstarted, which means no
+email is sent, the scheduler never runs, and Smart Upload and OCR never process —
 all without any error surfacing, because every process reports healthy.
 
 | Service | Process | Required |
 | --- | --- | --- |
-| `eccb-web` | `next start` | always |
+| `eccb-web` | `scripts/serve.ts` under tsx | always |
 | `eccb-workers` | `tsx src/workers/index.ts` | always |
-| `eccb-sockets` | `tsx src/server/socket-worker.ts` | only when `ENABLE_WEBSOCKETS=true` |
+
+`eccb-web` runs `scripts/serve.ts`, **not** `next start`, because the Stand
+Socket.IO server must be attached to the same `http.Server` and port as Next: a
+WebSocket upgrade is never proxied by a `next.config.ts` rewrite, so a
+separately-bound `SOCKET_PORT` is unreachable from the browser and every client
+silently falls back to polling. `serve.ts` performs that attachment; `next start`
+binds only Next. (Static assets are served correctly either way — verified.)
+
+Do not enable `eccb-sockets.service` on a deployment running `serve.ts`; it binds
+`SOCKET_PORT` for a server nothing can reach.
 
 Ready-made unit files ship in [`deploy/systemd/`](deploy/systemd/) with
 hardening, graceful-shutdown timeouts and drain-aware `TimeoutStopSec`. Use
@@ -212,16 +220,13 @@ them instead of the inline unit below.
 
 ```bash
 sudo mkdir -p /etc/eccb
-sudo cp deploy/systemd/eccb-*.service /etc/systemd/system/
+sudo cp deploy/systemd/eccb-web.service deploy/systemd/eccb-workers.service /etc/systemd/system/
 sudo install -o root -g root -m 600 deploy/systemd/eccb.env.example /etc/eccb/eccb.env
 sudo ${EDITOR:-nano} /etc/eccb/eccb.env   # fill in real values, then chmod 600
 
 sudo chown -R www-data:www-data /var/www/eccb
 sudo systemctl daemon-reload
 sudo systemctl enable --now eccb-web eccb-workers
-
-# Only if ENABLE_WEBSOCKETS=true:
-sudo systemctl enable --now eccb-sockets
 ```
 
 ```bash
@@ -232,6 +237,12 @@ sudo systemctl status eccb-web eccb-workers
 curl -fsS localhost:3000/api/health
 curl -fsS localhost:3001/health    # worker health port
 ```
+
+Readiness now includes `components.sockets`, which reports whether the Stand
+socket server **actually attached** — not merely whether `ENABLE_WEBSOCKETS` is
+set. A deployment configured for real-time sync whose socket failed to bind
+reports `status: "degraded"` there, which is the signal that members would
+otherwise be silently polling.
 
 **Do not inline secrets in the unit.** The old unit hard-coded
 `Environment="NODE_ENV=production"`; all credentials belong in
