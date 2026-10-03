@@ -27,11 +27,11 @@ export default function StandError({ error, reset }: ErrorProps) {
         <p className="text-muted-foreground mt-2 max-w-sm">
           Something went wrong loading the music stand. You can try again or go back.
         </p>
-        {error.message && (
-          <p className="mt-2 text-xs text-muted-foreground/70 font-mono">
-            {error.message}
-          </p>
-        )}
+        {/* The raw error message is logged above, never rendered. It reaches
+            members as internal strings — Prisma constraint names, "fetch
+            failed", a cuid — which is alarming and unreadable, and at 70%
+            opacity on this background it measured ~2.9:1 anyway. If the band
+            office needs to trace a failure, the browser console has it. */}
       </div>
       <div className="flex gap-3">
         <Button onClick={reset} variant="default">

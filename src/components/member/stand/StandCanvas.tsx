@@ -13,6 +13,8 @@ import { usePdf } from './usePdf';
 import { cn } from '@/lib/utils';
 import { Loader2 } from 'lucide-react';
 import { AnnotationLayer } from './AnnotationLayer';
+import { useOptionalTextScale } from '@/components/accessibility/text-scale-context';
+import { getScoreRenderScale } from '@/lib/stand/score-scale';
 
 
 /**
@@ -180,10 +182,27 @@ export const StandCanvas = forwardRef<StandCanvasRef, StandCanvasProps>(
     // PDF.js by the `updatePieceTotalPages` effect further down.
     const spread = useMemo(
       () => (twoPageMode ? visibleSpreadPages() : { left: currentPage, right: null }),
+      // `storeTotalPages` is read by `visibleSpreadPages()` (a zustand selector)
+      // rather than in this callback body, so the lint rule cannot see the
+      // dependency. It is load-bearing: without it the memo returns a stale
+      // single-page result after the real page count arrives and the spread's
+      // right-hand canvas never renders. Verified by reverting it and watching
+      // spread-rendering.test.tsx fail.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       [twoPageMode, visibleSpreadPages, currentPage, storeTotalPages],
     );
 
-    const scale = useMemo(() => zoom / 100, [zoom]);
+    // The musician's zoom and their "text size" preference are independent
+    // controls and must MULTIPLY: someone who has zoomed to 150% to read a hard
+    // passage should not have that silently replaced by their text-size setting.
+    // The score is rasterised by PDF.js rather than laid out in `rem`, so the
+    // root-font-size trick that scales the rest of the app does not reach it —
+    // it has to be applied explicitly here. See src/lib/stand/score-scale.ts.
+    const { scale: textScale } = useOptionalTextScale();
+    const scale = useMemo(
+      () => getScoreRenderScale(zoom, textScale),
+      [zoom, textScale],
+    );
 
     const {
       isLoading,

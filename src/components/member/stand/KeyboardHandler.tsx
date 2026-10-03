@@ -38,6 +38,25 @@ export function useKeyboardNavigation({ enabled = true }: KeyboardHandlerOptions
   const currentPiece = pieces[currentPieceIndex];
   const totalPages = currentPiece?.totalPages ?? 1;
 
+  /**
+   * True when the key event landed on something the member is actually
+   * operating, rather than on the page background.
+   *
+   * This is read from event.target at keydown time, not from the focusin/out
+   * state above. The state can be stale — focusout defers by a setTimeout(0) —
+   * and a stale `false` means this handler swallows keys that belonged to a
+   * control the member had just tabbed to.
+   */
+  const isEventFromControl = useCallback((target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    // Let the focused control keep its own keys: Space and Enter activate a
+    // button, arrows move a slider, letters type into a field.
+    if (target.closest('input, textarea, select, button, a[href], [role="button"], [contenteditable="true"]')) {
+      return true;
+    }
+    return false;
+  }, []);
+
   // Check if an input element is currently focused
   const checkFocus = useCallback(() => {
     const activeElement = document.activeElement;
@@ -98,11 +117,19 @@ export function useKeyboardNavigation({ enabled = true }: KeyboardHandlerOptions
   // Handle keyboard events
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      // Ignore if disabled or input is focused
+      // Ignore if disabled, an input is focused, or the key belongs to a
+      // control the member is currently operating.
       if (!enabled || isInputFocused) return;
+      if (isEventFromControl(event.target)) return;
 
       const key = event.key;
       const ctrlKey = event.ctrlKey || event.metaKey;
+
+      // Never steal a browser or OS shortcut. Ctrl+R reload, Ctrl+F find,
+      // Ctrl+W close tab — turning any of those into "next page" would be
+      // terrifying for someone who did not mean to press it.
+      if (event.altKey || event.shiftKey) return;
+      if (ctrlKey && key !== 'ArrowLeft' && key !== 'ArrowRight') return;
 
       // Prevent default for navigation keys to avoid page scrolling
       const shouldPreventDefault =
@@ -177,6 +204,7 @@ export function useKeyboardNavigation({ enabled = true }: KeyboardHandlerOptions
     [
       enabled,
       isInputFocused,
+      isEventFromControl,
       totalPages,
       nextPageOrPiece,
       prevPageOrPiece,

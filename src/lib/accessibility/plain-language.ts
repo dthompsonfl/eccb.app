@@ -23,6 +23,26 @@ export const ATTENDANCE_STATUS_LABELS: Record<string, string> = {
   LEFT_EARLY: 'Left early',
 };
 
+export const ANNOUNCEMENT_TYPE_LABELS: Record<string, string> = {
+  INFO: 'Notice',
+  WARNING: 'Please note',
+  URGENT: 'Urgent',
+  EVENT: 'Event',
+};
+
+/**
+ * Music difficulty. The database says GRADE_1..GRADE_6; a member reads
+ * "GRADE_4" as a school report, not as a guide to whether they can play it.
+ */
+export const DIFFICULTY_LABELS: Record<string, string> = {
+  GRADE_1: 'Easy',
+  GRADE_2: 'Fairly easy',
+  GRADE_3: 'Medium',
+  GRADE_4: 'Fairly hard',
+  GRADE_5: 'Hard',
+  GRADE_6: 'Very hard',
+};
+
 export const MEMBER_STATUS_LABELS: Record<string, string> = {
   ACTIVE: 'Playing in the band',
   INACTIVE: 'Not playing right now',
@@ -45,4 +65,14 @@ export function attendanceStatusLabel(status: string | null | undefined): string
 export function memberStatusLabel(status: string | null | undefined): string {
   if (!status) return 'Not known yet';
   return MEMBER_STATUS_LABELS[status] ?? status.replace(/_/g, ' ').toLowerCase();
+}
+
+export function announcementTypeLabel(type: string | null | undefined): string {
+  if (!type) return 'Notice';
+  return ANNOUNCEMENT_TYPE_LABELS[type] ?? 'Notice';
+}
+
+export function difficultyLabel(difficulty: string | null | undefined): string {
+  if (!difficulty) return '';
+  return DIFFICULTY_LABELS[difficulty] ?? difficulty.replace(/_/g, ' ').toLowerCase();
 }

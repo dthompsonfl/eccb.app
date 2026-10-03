@@ -13,12 +13,14 @@ import {
   Users,
   Clock,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { UNKNOWN_DURATION_LABEL } from '@/lib/events/program';
 import {
   assignProgramPerformer,
   unassignProgramPerformer,
   reorderEventProgram,
+  regenerateEventProgramOrder,
 } from '@/app/(admin)/admin/events/program-actions';
 
 export interface ProgramBuilderItem {
@@ -198,6 +200,24 @@ export function ProgramBuilder({
             <FileDown className="mr-2 h-4 w-4" />
             PDF
           </a>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={isPending}
+          onClick={() => {
+            startTransition(async () => {
+              const result = await regenerateEventProgramOrder(eventId);
+              if (result.success) {
+                toast.success('Program order updated. The public program and PDF now match.');
+              } else {
+                toast.error(result.error ?? 'Failed to update the program order');
+              }
+            });
+          }}
+        >
+          <RefreshCw className={`mr-2 h-4 w-4${isPending ? ' animate-spin' : ''}`} />
+          Update program order
         </Button>
         {!isPublished && (
           <span className="self-center text-xs text-amber-700 dark:text-amber-300">

@@ -273,8 +273,12 @@ describe('PushNotificationSettings', () => {
       await fireEvent.click(toggle);
 
       await waitFor(() => expect(localUnsubscribe).toHaveBeenCalled());
+      // The DELETE handler is exported from the SUBSCRIBE route. This assertion
+      // previously pinned `/api/push/unsubscribe`, a path that has never existed —
+      // so opting out 404'd and the member kept receiving alerts after turning
+      // them off. See use-push-notifications.ts.
       const del = fetchCalls.find(
-        (c) => c.init?.method === 'DELETE' && c.url.includes('/api/push/unsubscribe'),
+        (c) => c.init?.method === 'DELETE' && c.url.includes('/api/push/subscribe'),
       );
       expect(del).toBeDefined();
       expect(JSON.parse(String(del?.init?.body))).toEqual({

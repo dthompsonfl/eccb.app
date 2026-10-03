@@ -1,6 +1,10 @@
 import { prisma } from '@/lib/db';
 import { requireAuth } from '@/lib/auth/guards';
 import { formatDate, formatRelativeTime } from '@/lib/date';
+import {
+  announcementTypeLabel,
+  eventTypeLabel,
+} from '@/lib/accessibility/plain-language';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
@@ -106,7 +110,7 @@ export default async function MemberNotificationsPage() {
                     </p>
                   </div>
                   <Badge variant={event.type === 'CONCERT' ? 'default' : 'secondary'}>
-                    {event.type}
+                    {eventTypeLabel(event.type)}
                   </Badge>
                 </Link>
               ))}
@@ -156,7 +160,7 @@ export default async function MemberNotificationsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold">{announcement.title}</h3>
                         <Badge variant={typeColors[announcement.type]}>
-                          {announcement.type}
+                          {announcementTypeLabel(announcement.type)}
                         </Badge>
                         {announcement.isPinned && (
                           <Badge variant="outline">Pinned</Badge>

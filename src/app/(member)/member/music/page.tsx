@@ -2,18 +2,15 @@ import { Metadata } from 'next';
 import { requireAuth, getUserWithProfile } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { formatDate } from '@/lib/date';
+import { difficultyLabel } from '@/lib/accessibility/plain-language';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { AuthorizedDownloadButton } from '@/components/music/authorized-download-button';
-import {
-  Music,
-  Search,
-  FileText,
-  Filter,
-  SortAsc,
-} from 'lucide-react';
+import Link from 'next/link';
+import { Music, Search, FileText } from 'lucide-react';
 
 export const metadata: Metadata = {
   title: 'My Music',
@@ -48,9 +45,15 @@ async function getAssignedMusic(memberId: string) {
   });
 }
 
-export default async function MemberMusicPage() {
+interface MemberMusicPageProps {
+  searchParams: Promise<{ q?: string }>;
+}
+
+export default async function MemberMusicPage({ searchParams }: MemberMusicPageProps) {
   const _session = await requireAuth();
   const user = await getUserWithProfile();
+  const { q } = await searchParams;
+  const query = (q ?? '').trim();
 
   if (!user?.member) {
     return (
@@ -64,7 +67,27 @@ export default async function MemberMusicPage() {
     );
   }
 
-  const assignments = await getAssignedMusic(user.member.id);
+  const allAssignments = await getAssignedMusic(user.member.id);
+
+  /* Search was a decorative input: it had no value, no handler and no effect,
+     so a member who typed a title and pressed Enter got the same list back and
+     no explanation. It is a plain GET form now, which means it works with the
+     keyboard alone and without JavaScript. */
+  const assignments = query
+    ? allAssignments.filter(({ piece, partName }) => {
+        const haystack = [
+          piece.title,
+          piece.subtitle,
+          piece.composer?.fullName,
+          piece.arranger?.fullName,
+          partName,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(query.toLowerCase());
+      })
+    : allAssignments;
 
   // Get member's instruments for filtering parts
   const memberInstruments = user.member.instruments.map(i => i.instrument.name);
@@ -80,26 +103,48 @@ export default async function MemberMusicPage() {
         </div>
       </div>
 
-      {/* Search and Filters */}
+      {/* Search.
+          The "Filter" and "Sort" buttons that used to sit here had no onClick
+          at all: tapping them did nothing and said nothing, which for this
+          audience is worse than not offering them. They have been removed
+          rather than left as decoration that lies about being a control. */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search music..."
-                className="pl-9"
-              />
+          <form method="get" action="/member/music" className="flex flex-col gap-3">
+            <Label htmlFor="music-search" className="text-base font-medium">
+              Find a piece
+            </Label>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search
+                  className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  id="music-search"
+                  name="q"
+                  type="search"
+                  defaultValue={query}
+                  placeholder="Type a title or composer"
+                  aria-describedby="music-search-help"
+                  className="pl-10 h-12 text-base"
+                />
+              </div>
+              <Button type="submit" size="lg" className="h-12 px-6 text-base">
+                Search
+              </Button>
+              {query && (
+                <Button asChild variant="outline" size="lg" className="h-12 px-6 text-base">
+                  <Link href="/member/music">Clear</Link>
+                </Button>
+              )}
             </div>
-            <Button variant="outline">
-              <Filter className="mr-2 h-4 w-4" />
-              Filter
-            </Button>
-            <Button variant="outline">
-              <SortAsc className="mr-2 h-4 w-4" />
-              Sort
-            </Button>
-          </div>
+            <p id="music-search-help" className="text-sm text-muted-foreground">
+              {query
+                ? `Showing ${assignments.length} of ${allAssignments.length} pieces for "${query}".`
+                : 'Search by title, composer, or your part name.'}
+            </p>
+          </form>
         </CardContent>
       </Card>
 
@@ -107,12 +152,31 @@ export default async function MemberMusicPage() {
       {assignments.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <Music className="h-16 w-16 text-muted-foreground mb-4" />
-            <h2 className="text-xl font-semibold">No Music Assigned</h2>
-            <p className="text-muted-foreground mt-2 text-center max-w-md">
-              You don't have any music assigned yet. Check back later or contact
-              the librarian if you believe this is an error.
-            </p>
+            <Music className="h-16 w-16 text-muted-foreground mb-4" aria-hidden="true" />
+            {query ? (
+              <>
+                <h2 className="text-xl font-semibold">Nothing matched your search</h2>
+                <p className="text-muted-foreground mt-2 text-center max-w-md">
+                  No piece of your music has &quot;{query}&quot; in its title,
+                  composer or part name. Check the spelling, or search for part of
+                  the title instead.
+                </p>
+                <Button asChild variant="outline" size="lg" className="mt-6 h-12 px-6 text-base">
+                  <Link href="/member/music">Show all my music</Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-semibold">No Music Assigned</h2>
+                <p className="text-muted-foreground mt-2 text-center max-w-md">
+                  You don't have any music assigned yet. Check back later or contact
+                  the librarian if you believe this is an error.
+                </p>
+                <Button asChild variant="outline" size="lg" className="mt-6 h-12 px-6 text-base">
+                  <Link href="/contact">Ask the band office</Link>
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (
@@ -164,7 +228,7 @@ export default async function MemberMusicPage() {
                         )}
                         {piece.difficulty && (
                           <Badge variant="outline">
-                            {piece.difficulty.replace('_', ' ')}
+                            {difficultyLabel(piece.difficulty)}
                           </Badge>
                         )}
                         {assignment.dueDate && (

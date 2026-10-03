@@ -32,6 +32,7 @@ import {
   DialogClose,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { ConfirmActionButton } from '@/components/member/shared/confirm-action-button';
 
 export interface SetlistPiece {
   id: string;
@@ -124,9 +125,10 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
       if (!res.ok) throw new Error('Failed to delete setlist');
       setSetlists((prev) => prev.filter((s) => s.id !== setlistId));
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete setlist';
+      const message = 'We could not delete that setlist. Nothing was changed.';
       console.error('Delete setlist failed:', err);
       setError(message);
+      throw err;
     } finally {
       setDeletingId(null);
     }
@@ -154,7 +156,7 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
             disabled={isLoading}
             aria-label="Refresh setlists"
             title="Refresh setlists"
-            className="h-7 w-7"
+            className="min-w-[44px] min-h-[44px]"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
           </Button>
@@ -165,7 +167,7 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
               onClick={() => setShowCreateDialog(true)}
               aria-label="Create new setlist"
               title="Create setlist"
-              className="h-7 w-7"
+              className="min-w-[44px] min-h-[44px]"
             >
               <PlusIcon className="h-3.5 w-3.5" />
             </Button>
@@ -207,7 +209,7 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 shrink-0"
+                  className="min-w-[44px] min-h-[44px] shrink-0"
                   onClick={() => toggleExpand(setlist.id)}
                   aria-expanded={expandedId === setlist.id}
                   aria-label={expandedId === setlist.id ? 'Collapse' : 'Expand'}
@@ -225,21 +227,25 @@ export function SetlistsPanel({ className, eventId: _eventId, canManage = false 
                   </p>
                 </div>
                 {canManage && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
-                    onClick={() => void handleDelete(setlist.id)}
-                    disabled={deletingId === setlist.id}
-                    aria-label={`Delete ${setlist.name}`}
-                    title="Delete setlist"
+                  <ConfirmActionButton
+                    itemName={`the setlist "${setlist.name}"`}
+                    confirmTitle="Delete this setlist?"
+                    confirmDescription={
+                      `"${setlist.name}" and its ${setlist.pieces.length} piece${
+                        setlist.pieces.length === 1 ? '' : 's'
+                      } will be taken off this concert. This cannot be undone.`
+                    }
+                    onConfirm={() => handleDelete(setlist.id)}
+                    successMessage={`Setlist deleted — ${setlist.name}`}
+                    className="text-muted-foreground hover:text-destructive shrink-0"
+                    aria-label={`Delete setlist ${setlist.name}`}
                   >
                     {deletingId === setlist.id ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <Trash2Icon className="h-3.5 w-3.5" />
                     )}
-                  </Button>
+                  </ConfirmActionButton>
                 )}
               </div>
 

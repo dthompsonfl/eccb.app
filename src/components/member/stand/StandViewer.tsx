@@ -20,6 +20,7 @@ import { KeyboardHandler } from './KeyboardHandler';
 import { MidiHandler } from './MidiHandler';
 import { BluetoothHandler } from './BluetoothHandler';
 import { StandOfflineStatus } from './OfflineStatus';
+import { OfflineStatus as StandAnnotationSyncStatus } from './OfflineStatus';
 import { RosterOverlay } from './RosterOverlay';
 import { Metronome } from './Metronome';
 import { Tuner } from './Tuner';
@@ -33,6 +34,8 @@ import { SetlistsPanel } from './SetlistsPanel';
 import { PracticeTimer } from './PracticeTimer';
 import { AudioLinkEditor } from './AudioLinkEditor';
 import { PartSelector } from './PartSelector';
+import { useOfflineAnnotations } from '@/lib/stand/use-offline-annotations';
+import type { QueuedAnnotation } from '@/lib/stand/offline';
 
 interface SerializedMusicFile {
   id: string;
@@ -110,6 +113,8 @@ interface StandConfig {
   pollingIntervalMs: number;
   practiceTrackingEnabled: boolean;
   audioSyncEnabled: boolean;
+  /** Gates the offline annotation queue. Absent on older payloads => off. */
+  offlineEnabled?: boolean;
 }
 
 interface SerializedPreferences {
@@ -296,6 +301,62 @@ function StandViewerContent({ data }: StandViewerProps) {
   );
 
   useAudioTracker();
+
+  /**
+   * Offline annotation queue.
+   *
+   * This hook was fully implemented and documented as gated on
+   * `stand.allowOfflineSync`, but nothing ever called it — the admin toggle in
+   * Music Stand settings turned a feature on that did not exist at runtime. It
+   * is wired here so a musician who marks their part in a basement rehearsal
+   * room with no signal keeps the mark instead of watching it vanish.
+   *
+   * `send` posts each queued stroke with its client-generated id, which the
+   * annotations route treats as an idempotency key — so a replay that races a
+   * slow original cannot produce the stroke twice on the score.
+   */
+  const offlineQueueEnabled = standConfig?.offlineEnabled === true;
+  // Read the piece straight from the store rather than via the `currentPiece`
+  // alias, which is declared further down and would be a TDZ error here.
+  const offlineMusicId =
+    useStandStore((s) => s.pieces[s.currentPieceIndex]?.id ?? null);
+  const offlineAnnotations = useOfflineAnnotations({
+    musicId: offlineMusicId,
+    enabled: offlineQueueEnabled,
+    send: useCallback(async (items: QueuedAnnotation[]): Promise<string[]> => {
+      const accepted: string[] = [];
+      for (const item of items) {
+        const res = await fetch('/api/stand/annotations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            musicId: item.musicId,
+            page: item.page,
+            layer: item.layer,
+            strokeData: item.strokeData,
+            sectionId: item.sectionId ?? undefined,
+            clientId: item.id,
+          }),
+        });
+        if (res.ok) accepted.push(item.id);
+      }
+      return accepted;
+    }, []),
+  });
+
+  // The hook returns a fresh object every render, so depending on it directly
+  // would re-register the queue on every render. Depend on the stable `enqueue`
+  // callback instead — its identity only changes if `send` changes.
+  const { enqueue: enqueueOffline } = offlineAnnotations;
+  const setOfflineAnnotationQueue = useStandStore((s) => s.setOfflineAnnotationQueue);
+  useEffect(() => {
+    if (!offlineQueueEnabled) {
+      setOfflineAnnotationQueue(null);
+      return;
+    }
+    setOfflineAnnotationQueue({ enqueue: enqueueOffline });
+    return () => setOfflineAnnotationQueue(null);
+  }, [offlineQueueEnabled, enqueueOffline, setOfflineAnnotationQueue]);
 
   useEffect(() => {
     fetch('/api/stand/config')
@@ -717,7 +778,18 @@ function StandViewerContent({ data }: StandViewerProps) {
       <KeyboardHandler />
       <MidiHandler />
       <BluetoothHandler />
-      <StandOfflineStatus />
+      {/* Queue-aware: shows "not yet synced (n)" with a Retry action, where the
+          old indicator only knew online/offline and so could never tell a
+          musician their marks were waiting. */}
+      {offlineQueueEnabled ? (
+        <StandAnnotationSyncStatus
+          state={offlineAnnotations.syncState}
+          pendingCount={offlineAnnotations.queue.length}
+          onRetry={offlineAnnotations.flush}
+        />
+      ) : (
+        <StandOfflineStatus />
+      )}
 
       <div className="flex-1 bg-muted/20 relative overflow-hidden flex">
         <SetlistManager />

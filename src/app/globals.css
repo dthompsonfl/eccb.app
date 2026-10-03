@@ -11,7 +11,12 @@
   --accent-foreground: #1f2937;
   
   --muted: #f3f4f6;
-  --muted-foreground: #6b7280;
+  /* Darkened from #6b7280. Muted helper text is very often set ON a muted
+     surface (bg-muted/50 cards, muted table rows, muted badges), and
+     #6b7280 on --muted measured 4.39:1 — a real AA failure for body text.
+     #616771 is the same hue family and measures 5.18:1 on --muted and
+     5.6:1 on --background, so it passes everywhere the token is used. */
+  --muted-foreground: #616771;
   
   --card: #ffffff;
   --card-foreground: #1f2937;
@@ -19,6 +24,13 @@
   --border: #e5e7eb;
   --input: #e5e7eb;
   --ring: #0f766e;
+  /* Focus ring is its own token, deliberately NOT --primary.
+     --primary is a *fill* colour chosen to look good behind white text; in
+     dark mode #0f766e against a #1e293b card measured only 2.67:1, below
+     the 3:1 WCAG 1.4.11 minimum for a focus indicator — i.e. dark mode had
+     a focus ring nobody could see. #5eead4 (the design system's
+     primary-light) measures 9.89:1 on the dark card. */
+  --focus-ring: #0f766e;
 
   --popover: #ffffff;
   --popover-foreground: #1f2937;
@@ -83,6 +95,7 @@ html {
   --border: #334155;
   --input: #334155;
   --ring: #0f766e;
+  --focus-ring: #5eead4;
 
   --popover: #0f172a;
   --popover-foreground: #f8fafc;
@@ -102,6 +115,7 @@ html {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-focus-ring: var(--focus-ring);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
   
@@ -186,9 +200,13 @@ h1, h2, h3, h4, h5, h6 {
    Accessibility: Focus Visible Styles (WCAG 2.1 AA)
    ============================================================================ */
 
-/* Global focus-visible styles for keyboard navigation */
+/* Global focus-visible styles for keyboard navigation.
+   Uses --focus-ring, not --primary: the ring has to clear 3:1 against
+   whatever it is drawn on in EVERY theme, and --primary does not in dark
+   mode. 3px (not 2px) because a member with unsteady hands or a tremor
+   needs a target they can actually see hold still. */
 *:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -204,7 +222,7 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: 2px;
 }
@@ -215,14 +233,14 @@ textarea:focus-visible,
 [role="menuitem"]:focus-visible,
 [role="tab"]:focus-visible,
 [role="option"]:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 /* High contrast focus for better visibility */
 @media (prefers-contrast: more) {
   *:focus-visible {
-    outline-width: 3px;
+    outline-width: 4px;
     outline-offset: 3px;
   }
 }

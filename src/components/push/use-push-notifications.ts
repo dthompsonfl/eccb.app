@@ -283,13 +283,28 @@ export function usePushNotifications(): PushState & {
     setRefreshing(true);
     try {
       const subscription = await readExistingSubscription();
-      await fetch('/api/push/unsubscribe', {
+      // The unsubscribe handler lives on the SUBSCRIBE route (`export { handleUnsubscribe as DELETE }`),
+      // not at a separate /api/push/unsubscribe path — that path has never existed, so
+      // opting out silently 404'd and left the server-side endpoint row in place.
+      const res = await fetch('/api/push/subscribe', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
           subscription ? { endpoint: subscription.endpoint } : { all: true },
         ),
       });
+
+      // Consent is revoked server-side by setPushConsent, which also deletes every
+      // stored endpoint. Doing it here as well means a member who taps "turn off"
+      // is really off, even if the DELETE above failed.
+      if (!res.ok || !subscription) {
+        await fetch('/api/push/consent', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: false }),
+        }).catch(() => undefined);
+      }
+
       if (subscription) {
         await subscription.unsubscribe().catch(() => undefined);
       }

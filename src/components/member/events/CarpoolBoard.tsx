@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { createCarpoolEntry, deleteCarpoolEntry } from '@/app/actions/carpool';
 import { Trash2 } from 'lucide-react';
 import { useFormStatus } from 'react-dom';
+import { ConfirmActionButton } from '@/components/member/shared/confirm-action-button';
 
 interface CarpoolEntry {
   id: string;
@@ -61,15 +62,21 @@ export function CarpoolBoard({ eventId, entries, currentMemberId }: CarpoolBoard
                      {entry.notes && <div className="text-sm italic">"{entry.notes}"</div>}
 
                      {entry.memberId === currentMemberId && (
-                         <Button
-                           variant="ghost"
-                           size="icon"
-                           className="absolute top-2 right-2 h-6 w-6 text-destructive"
-                           onClick={() => deleteCarpoolEntry(entry.id, eventId)}
-                           aria-label="Delete carpool entry"
+                         <ConfirmActionButton
+                           itemName="this carpool post"
+                           confirmTitle="Take this off the carpool board?"
+                           confirmDescription={
+                             entry.type === 'OFFER'
+                               ? `Your offer of ${entry.seats ?? 1} seat${(entry.seats ?? 1) === 1 ? '' : 's'} from ${entry.location || 'your area'} will be removed.`
+                               : `Your request for a ride from ${entry.location || 'your area'} will be removed.`
+                           }
+                           onConfirm={() => deleteCarpoolEntry(entry.id, eventId)}
+                           successMessage="Taken off the carpool board."
+                           className="absolute top-2 right-2 text-destructive"
+                           aria-label="Take this carpool post off the board"
                          >
-                           <Trash2 className="h-4 w-4" />
-                         </Button>
+                           <Trash2 className="h-5 w-5" />
+                         </ConfirmActionButton>
                      )}
                   </CardContent>
                 </Card>
@@ -91,15 +98,21 @@ export function CarpoolBoard({ eventId, entries, currentMemberId }: CarpoolBoard
                      {entry.notes && <div className="text-sm italic">"{entry.notes}"</div>}
 
                      {entry.memberId === currentMemberId && (
-                         <Button
-                           variant="ghost"
-                           size="icon"
-                           className="absolute top-2 right-2 h-6 w-6 text-destructive"
-                           onClick={() => deleteCarpoolEntry(entry.id, eventId)}
-                           aria-label="Delete carpool entry"
+                         <ConfirmActionButton
+                           itemName="this carpool post"
+                           confirmTitle="Take this off the carpool board?"
+                           confirmDescription={
+                             entry.type === 'OFFER'
+                               ? `Your offer of ${entry.seats ?? 1} seat${(entry.seats ?? 1) === 1 ? '' : 's'} from ${entry.location || 'your area'} will be removed.`
+                               : `Your request for a ride from ${entry.location || 'your area'} will be removed.`
+                           }
+                           onConfirm={() => deleteCarpoolEntry(entry.id, eventId)}
+                           successMessage="Taken off the carpool board."
+                           className="absolute top-2 right-2 text-destructive"
+                           aria-label="Take this carpool post off the board"
                          >
-                           <Trash2 className="h-4 w-4" />
-                         </Button>
+                           <Trash2 className="h-5 w-5" />
+                         </ConfirmActionButton>
                      )}
                   </CardContent>
                 </Card>

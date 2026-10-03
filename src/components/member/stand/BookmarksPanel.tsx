@@ -22,6 +22,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ConfirmActionButton } from '@/components/member/shared/confirm-action-button';
 
 export interface Bookmark {
   id: string;
@@ -79,12 +80,26 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
       if (!res.ok) throw new Error('Failed to remove bookmark');
       setBookmarks((prev) => prev.filter((b) => b.id !== bookmark.id));
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to remove bookmark';
+      // Surfaced to the member by ConfirmActionButton's toast; also kept in the
+      // panel so it is still visible if the toast is missed.
+      const message = 'We could not remove that bookmark. Please try again.';
       console.error('Remove bookmark failed:', err);
       setError(message);
+      throw err;
     } finally {
       setRemovingId(null);
     }
+  };
+
+  /** Undo for a removed bookmark. Re-creating it is a single POST. */
+  const handleRestore = async (pieceId: string) => {
+    const res = await fetch('/api/stand/bookmarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pieceId }),
+    });
+    if (!res.ok) throw new Error('Failed to restore bookmark');
+    await fetchBookmarks();
   };
 
   const handleAddCurrent = async () => {
@@ -125,7 +140,7 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
           disabled={isLoading}
           aria-label="Refresh bookmarks"
           title="Refresh bookmarks"
-          className="h-7 w-7"
+          className="min-w-[44px] min-h-[44px]"
         >
           <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
         </Button>
@@ -189,7 +204,7 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7"
+                    className="min-w-[44px] min-h-[44px]"
                     onClick={() => onSelect(bookmark.pieceId)}
                     aria-label={`Open ${bookmark.title}`}
                     title={`Open ${bookmark.title}`}
@@ -197,21 +212,23 @@ export function BookmarksPanel({ className, onSelect, currentPieceId }: Bookmark
                     <ArrowRight className="h-3.5 w-3.5" />
                   </Button>
                 )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                  onClick={() => void handleRemove(bookmark)}
-                  disabled={removingId === bookmark.id}
+                <ConfirmActionButton
+                  itemName={`the bookmark for ${bookmark.title}`}
+                  confirmTitle="Remove this bookmark?"
+                  confirmDescription={`"${bookmark.title}" will come off your list. If this was a mistake you can put it straight back.`}
+                  onConfirm={() => handleRemove(bookmark)}
+                  onUndo={() => handleRestore(bookmark.pieceId)}
+                  undoLabel="Put it back"
+                  successMessage={`Bookmark removed — ${bookmark.title}`}
+                  className="text-muted-foreground hover:text-destructive"
                   aria-label={`Remove bookmark for ${bookmark.title}`}
-                  title="Remove bookmark"
                 >
                   {removingId === bookmark.id ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <BookmarkXIcon className="h-3.5 w-3.5" />
                   )}
-                </Button>
+                </ConfirmActionButton>
               </div>
             </li>
           ))}

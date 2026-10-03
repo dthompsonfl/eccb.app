@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { requireAuth } from '@/lib/auth/guards';
 import { formatDate } from '@/lib/date';
+import { difficultyLabel } from '@/lib/accessibility/plain-language';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -28,14 +29,8 @@ const difficultyColors: Record<string, 'default' | 'secondary' | 'destructive' |
   GRADE_6: 'destructive',
 };
 
-const difficultyLabels: Record<string, string> = {
-  GRADE_1: 'Grade 1 (Easy)',
-  GRADE_2: 'Grade 2',
-  GRADE_3: 'Grade 3 (Medium)',
-  GRADE_4: 'Grade 4',
-  GRADE_5: 'Grade 5 (Advanced)',
-  GRADE_6: 'Grade 6 (Professional)',
-};
+/* Labels come from the shared plain-language map so the list page and the
+   detail page cannot drift apart — they used to, and did. */
 
 export default async function MemberMusicDetailPage({ params }: MusicDetailPageProps) {
   const resolvedParams = await params;
@@ -157,7 +152,7 @@ export default async function MemberMusicDetailPage({ params }: MusicDetailPageP
                     <dt className="text-sm font-medium text-muted-foreground">Difficulty</dt>
                     <dd className="mt-1">
                       <Badge variant={difficultyColors[piece.difficulty]}>
-                        {difficultyLabels[piece.difficulty]}
+                        {difficultyLabel(piece.difficulty)}
                       </Badge>
                     </dd>
                   </div>

@@ -258,3 +258,118 @@ describe('useKeyboardNavigation hook', () => {
     expect(mockStore.togglePitchPipe).toHaveBeenCalled();
   });
 });
+
+/**
+ * The stand listens on `document` with capture:true, so without these guards it
+ * swallows keys that belong to the control the member is actually using. For a
+ * keyboard user in the stand that means Space not pressing the button they are
+ * looking at, and Ctrl+R reloading the page instead of doing what they asked.
+ */
+describe('useKeyboardNavigation - does not steal keys from controls', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('leaves Space alone when it is pressed on a focused button', () => {
+    render(<TestComponent />);
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+    button.focus();
+
+    act(() => {
+      fireEvent.keyDown(button, { key: ' ' });
+    });
+
+    // The button must be able to use Space to activate itself.
+    expect(mockStore.nextPageOrPiece).not.toHaveBeenCalled();
+
+    button.remove();
+  });
+
+  it('leaves arrow keys alone when they are pressed on a slider thumb', () => {
+    render(<TestComponent />);
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    document.body.appendChild(slider);
+    slider.focus();
+
+    act(() => {
+      fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    });
+
+    // Arrow keys adjust a focused slider; they must not also turn the page.
+    expect(mockStore.nextPageOrPiece).not.toHaveBeenCalled();
+
+    slider.remove();
+  });
+
+  it('leaves single-letter shortcuts alone when typing into a field', () => {
+    render(<TestComponent />);
+    const input = document.createElement('input');
+    input.type = 'text';
+    document.body.appendChild(input);
+    input.focus();
+
+    act(() => {
+      fireEvent.keyDown(input, { key: 'p' });
+    });
+
+    expect(mockStore.togglePitchPipe).not.toHaveBeenCalled();
+
+    input.remove();
+  });
+
+  it('does not hijack browser shortcuts such as Ctrl+R or Ctrl+F', () => {
+    render(<TestComponent />);
+
+    for (const key of ['r', 'f', 'w', 'p']) {
+      act(() => {
+        fireEvent.keyDown(document, { key, ctrlKey: true });
+      });
+    }
+
+    expect(mockStore.nextPageOrPiece).not.toHaveBeenCalled();
+    expect(mockStore.toggleMetronome).not.toHaveBeenCalled();
+    expect(mockStore.toggleTuner).not.toHaveBeenCalled();
+    expect(mockStore.toggleAudioPlayer).not.toHaveBeenCalled();
+    expect(mockStore.togglePitchPipe).not.toHaveBeenCalled();
+  });
+
+  it('does not treat Alt or Shift combinations as stand navigation', () => {
+    render(<TestComponent />);
+
+    act(() => {
+      fireEvent.keyDown(document, { key: 'ArrowRight', altKey: true });
+    });
+    act(() => {
+      fireEvent.keyDown(document, { key: 'ArrowRight', shiftKey: true });
+    });
+
+    expect(mockStore.nextPageOrPiece).not.toHaveBeenCalled();
+  });
+
+  it('still supports the documented Ctrl+Arrow two-page spread navigation', () => {
+    render(<TestComponent />);
+
+    act(() => {
+      fireEvent.keyDown(document, { key: 'ArrowRight', ctrlKey: true });
+    });
+
+    expect(mockStore.nextTwoPages).toHaveBeenCalled();
+    expect(mockStore.nextPageOrPiece).not.toHaveBeenCalled();
+  });
+
+  it('still turns the page when focus is on the page background', () => {
+    render(<TestComponent />);
+
+    act(() => {
+      fireEvent.keyDown(document.body, { key: 'ArrowRight' });
+    });
+
+    expect(mockStore.nextPageOrPiece).toHaveBeenCalled();
+  });
+});
