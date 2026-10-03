@@ -2,6 +2,10 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { useStandStore } from '@/store/standStore';
 import { io as socketIoClient, type Socket } from 'socket.io-client';
 import { logger } from '@/lib/logger';
+import {
+  STAND_SOCKET_ADD_TRAILING_SLASH,
+  STAND_SOCKET_PATH,
+} from '@/lib/websocket/stand-socket-path';
 
 // =============================================================================
 // TYPES
@@ -126,7 +130,23 @@ interface PollingSyncResponse {
 const DEFAULT_RECONNECT_INTERVAL = 3000;
 const DEFAULT_MAX_RECONNECT_ATTEMPTS = 5;
 const DEFAULT_POLLING_INTERVAL = 5000; // 5 seconds for polling fallback
-const SOCKET_PATH = '/api/stand/socket';
+/**
+ * The socket path and its trailing-slash policy are defined once, in
+ * `@/lib/websocket/stand-socket-path`, which `next.config.ts` (the rewrite) and
+ * `src/lib/websocket/stand-socket.ts` (the engine.io server) import too.
+ *
+ * The trailing slash matters: engine.io defaults to requesting `${path}/`,
+ * which Next.js answers with a 308 to the slashless form. A polling handshake is
+ * an ordinary XHR and follows that redirect, which is why the defect hid; a
+ * WebSocket **upgrade cannot follow a redirect**, so it hung until it timed out.
+ * With `transports: ['websocket', 'polling']` that meant every member silently
+ * fell back to polling while `/health` still reported `sockets: true`.
+ *
+ * Verified against a running `start:all`: a raw RFC6455 upgrade to the slashless
+ * path on the app port returns 101 and socket.io replies `40` (connected).
+ */
+const SOCKET_PATH = STAND_SOCKET_PATH;
+const ADD_TRAILING_SLASH = STAND_SOCKET_ADD_TRAILING_SLASH;
 /** Cap on exponential back-off delay (30 s). */
 const MAX_BACKOFF_MS = 30_000;
 /** Heartbeat interval matching the server expectation (30 s). */
@@ -351,6 +371,7 @@ export function useStandSync({
     try {
       const socket = socketIoClient(socketUrl as string, {
         path: SOCKET_PATH,
+        addTrailingSlash: ADD_TRAILING_SLASH,
         query: {
           eventId,
           userId,

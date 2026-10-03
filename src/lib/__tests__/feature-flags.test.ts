@@ -19,8 +19,16 @@ describe('Feature Flags', () => {
     expect(isFeatureEnabled(FEATURES.PRACTICE_TRACKING)).toBe(true);
   });
 
-  it('should return false for STAND_WEBSOCKET_SYNC by default', () => {
+  it('should return true for STAND_WEBSOCKET_SYNC by default', () => {
+    // Realtime WebSocket sync is the supported posture. This default was `false`,
+    // which made the no-rows settings fallback in `@/lib/stand/settings` serve
+    // realtimeMode=polling even on a deployment configured for realtime.
     delete process.env[FEATURES.STAND_WEBSOCKET_SYNC];
+    expect(isFeatureEnabled(FEATURES.STAND_WEBSOCKET_SYNC)).toBe(true);
+  });
+
+  it('should disable STAND_WEBSOCKET_SYNC when env var is "false"', () => {
+    process.env[FEATURES.STAND_WEBSOCKET_SYNC] = 'false';
     expect(isFeatureEnabled(FEATURES.STAND_WEBSOCKET_SYNC)).toBe(false);
   });
 

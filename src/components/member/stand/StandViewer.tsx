@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { useStandStore, type Annotation, StandPiece } from '@/store/standStore';
 import { useStandSync } from '@/hooks/use-stand-sync';
+import { resolvePollingIntervalMs, selectStandTransport } from '@/lib/stand/transport';
 import { useAudioTracker } from '@/hooks/useAudioTracker';
 import { NavigationControls } from './NavigationControls';
 import { Toolbar } from './Toolbar';
@@ -22,6 +23,7 @@ import { BluetoothHandler } from './BluetoothHandler';
 import { StandOfflineStatus } from './OfflineStatus';
 import { OfflineStatus as StandAnnotationSyncStatus } from './OfflineStatus';
 import { RosterOverlay } from './RosterOverlay';
+import { TransportStatus } from './TransportStatus';
 import { Metronome } from './Metronome';
 import { Tuner } from './Tuner';
 import { AudioPlayer } from './AudioPlayer';
@@ -622,14 +624,17 @@ function StandViewerContent({ data }: StandViewerProps) {
   const currentPiece = pieces[currentPieceIndex] ?? null;
   const currentMusicEntry = music[currentPieceIndex] ?? null;
 
-  useStandSync({
+  // Transport selection lives in @/lib/stand/transport so it is unit-testable:
+  // the viewer must open the Socket.IO connection when the admin has set
+  // realtimeMode=websocket, and poll otherwise. See that module for the rules.
+  const standTransport = selectStandTransport(standConfig, typeof window !== 'undefined');
+  const pollingIntervalMs = resolvePollingIntervalMs(standConfig);
+  const sync = useStandSync({
     eventId,
     userId,
     musicId: currentPiece?.id,
-    realtimeEnabled:
-      standConfig?.websocketEnabled === true &&
-      standConfig?.realtimeMode === 'websocket',
-    pollingInterval: standConfig?.pollingIntervalMs ?? 5000,
+    realtimeEnabled: standTransport === 'websocket',
+    pollingInterval: pollingIntervalMs,
     onStateChange: (state) => applyRemoteState(state),
     onRosterChange: (members) => setRoster(members),
     onPresenceChange: (presence) => {
@@ -790,6 +795,15 @@ function StandViewerContent({ data }: StandViewerProps) {
       ) : (
         <StandOfflineStatus />
       )}
+
+      {/* Surface a realtime downgrade instead of silently polling. */}
+      <TransportStatus
+        requested={standTransport}
+        isPollingFallback={sync.isPollingFallback}
+        pollingIntervalMs={pollingIntervalMs}
+        onReconnect={sync.reconnect}
+        className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground"
+      />
 
       <div className="flex-1 bg-muted/20 relative overflow-hidden flex">
         <SetlistManager />

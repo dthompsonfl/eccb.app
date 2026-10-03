@@ -59,9 +59,23 @@ export const STAND_SETTING_KEYS: Array<keyof StandGlobalSettings> = [
   'websocketPort',
 ];
 
+/**
+ * Realtime WebSocket mode is the supported default posture.
+ *
+ * A fresh deployment has no `stand.*` rows, so DEFAULT_SETTINGS is what the
+ * member config endpoint serves and what preflight compares against. Defaulting
+ * to `polling` meant a correctly configured deployment (ENABLE_WEBSOCKETS=true)
+ * still started the Socket.IO server with nobody using it — the exact silent
+ * degradation `scripts/preflight.ts` warns about as `realtime.orphan`.
+ *
+ * `ENABLE_WEBSOCKETS=false` remains an explicit opt-out for operators who want
+ * polling only; anything else (including unset) means websocket.
+ */
+const WEBSOCKETS_EXPLICITLY_OFF = process.env.ENABLE_WEBSOCKETS === 'false';
+
 const DEFAULT_SETTINGS: StandGlobalSettings = {
   enabled: true,
-  realtimeMode: process.env.ENABLE_WEBSOCKETS === 'true' ? 'websocket' : 'polling',
+  realtimeMode: WEBSOCKETS_EXPLICITLY_OFF ? 'polling' : 'websocket',
   maxStrokeDataBytes: 512_000,
   maxAnnotationsPerPage: 100,
   offlineEnabled: false,
@@ -74,7 +88,7 @@ const DEFAULT_SETTINGS: StandGlobalSettings = {
   accessPolicy: 'any_member',
   maintenanceMessage: null,
   pollingIntervalMs: 5_000,
-  websocketEnabled: process.env.ENABLE_WEBSOCKETS === 'true',
+  websocketEnabled: !WEBSOCKETS_EXPLICITLY_OFF,
   websocketPort: parseInt(process.env.SOCKET_PORT || '3226', 10),
 };
 

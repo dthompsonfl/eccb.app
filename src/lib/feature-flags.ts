@@ -33,7 +33,10 @@ export type FeatureKey = (typeof FEATURES)[keyof typeof FEATURES];
 const DEFAULTS: Record<string, boolean> = {
   [FEATURES.MUSIC_STAND]: true,
   [FEATURES.PRACTICE_TRACKING]: true,
-  [FEATURES.STAND_WEBSOCKET_SYNC]: false,
+  // Realtime WebSocket sync is the supported default posture; the standalone
+  // `ENABLE_WEBSOCKETS=false` switch is the opt-out. Defaulting this to false
+  // made the no-rows settings fallback serve realtimeMode=polling.
+  [FEATURES.STAND_WEBSOCKET_SYNC]: true,
   [FEATURES.STAND_AUDIO_SYNC]: false,
   [FEATURES.STAND_OFFLINE]: false,
 };
