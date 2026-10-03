@@ -1,20 +1,62 @@
 /**
  * Process Manager for ECCB Platform
- * 
- * Spawns and manages:
- * - Next.js server
- * - Background workers
- * 
- * Handles graceful shutdown and process lifecycle.
+ *
+ * ONE command that launches every long-running process a real deployment
+ * needs, and fails loudly and early when something is missing.
+ *
+ * Processes started (see `DESIRED_PROCESSES`):
+ *
+ *   1. `next-server`  — the Next.js application. Serves the public site, the
+ *      member portal, every /api route, and proxies /api/stand/socket through
+ *      to the stand socket server.
+ *   2. `workers`      — `src/workers/index.ts`. Hosts ALL of the following in
+ *      a single process, because they share one BullMQ connection and one
+ *      Prisma pool:
+ *        - BullMQ email worker
+ *        - scheduler worker + interval loop (scheduled content, reminders,
+ *          daily cleanup)
+ *        - Smart Upload processor worker
+ *        - OCR worker
+ *        - the embedded Socket.IO stand server (src/lib/websocket/stand-socket)
+ *
+ * There is deliberately NO third child. `src/server/socket-worker.ts` is a
+ * standalone entry point for the systemd deployment; running it here as well
+ * would double-bind SOCKET_PORT and split stand presence across two servers.
+ *
+ * Guarantees this file provides:
+ *   - Preflight validation (env, database, Redis, storage, realtime posture,
+ *     baked rewrite vs runtime SOCKET_PORT) reports EVERY problem at once and
+ *     exits 1 before anything spawns.
+ *   - `/ready` is backed by real HTTP probes of each child, never by a
+ *     non-null `ChildProcess`. A child that spawned and immediately crashed is
+ *     never reported ready.
+ *   - A singleton lock makes a second `start:all` a deterministic error rather
+ *     than a silently duplicated worker fleet.
+ *   - Crashed children are restarted with backoff and **freshly re-resolved
+ *     ports**, so a restart can never inherit a dead port number.
+ *   - SIGINT/SIGTERM stop workers first (letting in-flight BullMQ jobs finish)
+ *     then the web server, then release the lock.
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { createServer } from 'http';
+import { createServer, Server } from 'http';
 import net from 'net';
 import 'dotenv/config';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { prepareStandalone, PrepareStandaloneResult } from './prepare-standalone';
+import { formatPreflightReport, runPreflight } from './preflight';
+import {
+  deriveReadiness,
+  evaluateNextServerProbe,
+  evaluateWorkerProbe,
+  ManagedState,
+  probeHttp,
+  ProbeResult,
+  ReadinessVerdict,
+} from './process-state';
+import { acquireLock, AlreadyRunningError, DEFAULT_LOCK_DIRNAME } from './process-lock';
+import { decideRestart, describeRestartReason } from './restart-policy';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, '..');
@@ -27,9 +69,25 @@ const ROOT_DIR = resolve(__dirname, '..');
 // ============================================================================
 
 const DEFAULT_APP_PORT = 3225;
+const DEFAULT_SOCKET_PORT = 3226;
 const DEFAULT_WORKER_HEALTH_PORT = 3227;
 const DEFAULT_MANAGER_HEALTH_PORT = 3228;
 const MAX_PORT_ATTEMPTS = 25;
+
+/** How often the readiness probes run. */
+const PROBE_INTERVAL_MS = 5000;
+/** Grace period given to a child between SIGTERM and SIGKILL. */
+const SHUTDOWN_GRACE_MS = 30_000;
+/** A child that stays up this long is considered healthy again (restart budget resets). */
+const STABLE_UPTIME_MS = 60_000;
+const MAX_RESTARTS = 5;
+const RESTART_BASE_DELAY_MS = 1000;
+const RESTART_MAX_DELAY_MS = 30_000;
+/**
+ * How long to wait for SOCKET_PORT to be released by a just-killed worker
+ * before concluding another process has claimed it.
+ */
+const SOCKET_PORT_FREE_TIMEOUT_MS = 10_000;
 
 function parsePort(raw: string | undefined, fallback: number): number {
   const n = raw !== undefined && raw !== '' ? parseInt(raw, 10) : NaN;
@@ -78,7 +136,30 @@ async function resolveFreePort(preferred: number, label: string): Promise<number
   throw new Error(`${label}: no free port found in range ${preferred}-${preferred + MAX_PORT_ATTEMPTS - 1}`);
 }
 
+/**
+ * Claim SOCKET_PORT without rolling forward.
+ *
+ * `next.config.ts` evaluates `rewrites()` at BUILD time and freezes the
+ * /api/stand/socket proxy target into `.next/routes-manifest.json`. A
+ * roll-forward here would move the socket server to a port the built proxy
+ * will never call — a silent real-time-sync outage. So this port is claimed
+ * exactly or not at all; a conflict is reported by the preflight check as a
+ * blocking problem with an actionable rebuild instruction.
+ */
+async function claimFixedPort(preferred: number, label: string): Promise<number> {
+  const owner = reservedPorts.get(preferred);
+  if (owner !== undefined && owner !== label) {
+    throw new Error(`${label}: port ${preferred} is already reserved by ${owner} in this run.`);
+  }
+  if (!(await isPortFree(preferred))) {
+    throw new Error(`${label}: port ${preferred} is already in use.`);
+  }
+  reservedPorts.set(preferred, label);
+  return preferred;
+}
+
 let PORT = parsePort(process.env.PORT, DEFAULT_APP_PORT);
+let SOCKET_PORT = parsePort(process.env.SOCKET_PORT, DEFAULT_SOCKET_PORT);
 let WORKER_HEALTH_PORT = parsePort(process.env.WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT);
 let MANAGER_HEALTH_PORT = parsePort(process.env.PROCESS_MANAGER_HEALTH_PORT, DEFAULT_MANAGER_HEALTH_PORT);
 const RESTART_CRASHED_PROCESSES = process.env.RESTART_CRASHED_PROCESSES === 'true';
@@ -105,11 +186,25 @@ interface ManagedProcess {
   env: Record<string, string>;
   restartCount: number;
   lastRestart: number;
+  /** Pending restart timer, so shutdown can cancel it. */
+  restartTimer: NodeJS.Timeout | null;
+  /** Last known-good port assignment, used as the base for a re-resolve. */
+  ports: { app?: number; workerHealth?: number; socket?: number };
 }
 
 const processes: Map<string, ManagedProcess> = new Map();
 let isShuttingDown = false;
-let healthServer: ReturnType<typeof createServer> | null = null;
+let healthServer: Server | null = null;
+let releaseLock: (() => Promise<void>) | null = null;
+let probeTimer: NodeJS.Timeout | null = null;
+
+/**
+ * True when the deployment expects the embedded Socket.IO stand server.
+ *
+ * Read once at startup from the same resolution the preflight check uses, so
+ * readiness gating and the preflight error can never disagree.
+ */
+let websocketsExpected = false;
 
 // ============================================================================
 // Logging
@@ -123,11 +218,118 @@ function log(level: 'info' | 'warn' | 'error' | 'debug', message: string, data?:
 }
 
 // ============================================================================
+// Readiness state
+// ============================================================================
+
+function stateFor(name: string): ManagedState {
+  const managed = processes.get(name);
+  return {
+    name,
+    spawned: managed?.process !== null && managed !== undefined,
+    pid: managed?.process?.pid ?? null,
+    lastProbe: null,
+    failureCount: 0,
+    restartCount: managed?.restartCount ?? 0,
+    lastExit: null,
+    startedAt: null,
+  };
+}
+
+/** Last probe result per component, refreshed by the probe loop. */
+const lastProbes = new Map<string, ProbeResult>();
+
+function currentStates(): ManagedState[] {
+  return [...processes.keys()].map((name) => {
+    const base = stateFor(name);
+    return { ...base, lastProbe: lastProbes.get(name) ?? null };
+  });
+}
+
+/**
+ * Probe every child and cache the result.
+ *
+ * Next.js is probed on `/api/health`, which reports database and Redis
+ * connectivity, so "listening but unable to reach its dependencies" is
+ * reported as not ready. The worker is probed on `/ready`, which already
+ * aggregates queue initialisation and each individual worker.
+ */
+async function runProbes(): Promise<void> {
+  const tasks: Array<Promise<void>> = [];
+
+  if (processes.has('next-server')) {
+    tasks.push(
+      probeHttp(PORT, '/api/health').then((result) => {
+        lastProbes.set('next-server', {
+          ...result,
+          ok: evaluateNextServerProbe(result),
+        });
+      }),
+    );
+  }
+
+  if (processes.has('workers')) {
+    tasks.push(
+      probeHttp(WORKER_HEALTH_PORT, '/ready').then((result) => {
+        lastProbes.set('workers', {
+          ...result,
+          ok: evaluateWorkerProbe(result),
+        });
+      }),
+    );
+  }
+
+  await Promise.allSettled(tasks);
+}
+
+function readinessSnapshot(): {
+  verdict: ReadinessVerdict;
+  components: Record<string, string>;
+  details: Record<string, unknown>;
+} {
+  const states = currentStates();
+  if (states.length === 0) {
+    return { verdict: 'not-ready', components: {}, details: {} };
+  }
+  const result = deriveReadiness(states, { requireSockets: websocketsExpected });
+  return {
+    verdict: result.verdict,
+    components: result.components as Record<string, string>,
+    details: result.details,
+  };
+}
+
+// ============================================================================
 // Process Management
 // ============================================================================
 
 /**
- * Spawn a managed process
+ * Build the command line that runs `src/workers/index.ts` in-process.
+ *
+ * `src/workers/index.ts` is TypeScript and is not compiled, so it needs a
+ * loader. The obvious `npx tsx src/workers/index.ts` is unusable here because
+ * it inserts THREE processes (`npx` → `sh -c tsx` → `node --import tsx`).
+ * The manager would then supervise the outermost one: any kill orphaned the
+ * real worker, which kept its BullMQ connections and held SOCKET_PORT and the
+ * worker health port forever — so a restart could never rebind them and the
+ * worker stayed dead.
+ *
+ * `node --import tsx <entry>` runs the worker in the SAME process, so the
+ * supervised PID is the worker itself: signals reach it, `exit` fires for it,
+ * and its ports are released before the manager probes them.
+ */
+function workerCommandLine(): { command: string; args: string[] } {
+  return {
+    command: process.execPath,
+    args: ['--import', 'tsx', resolve(ROOT_DIR, 'src/workers/index.ts')],
+  };
+}
+
+/**
+ * Spawn a managed process.
+ *
+ * `env` is captured on the ManagedProcess so a restart rebuilds an identical
+ * command line — see `restartProcess` for the port re-resolution that must
+ * happen first.
  */
 function spawnProcess(name: string, command: string, args: string[], env: Record<string, string> = {}): ChildProcess {
   log('info', `Spawning ${name}...`, { command, args });
@@ -141,49 +343,40 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
     shell: false,
   });
 
-  // Handle stdout
-  proc.stdout?.on('data', (data: Buffer) => {
-    const lines = data.toString().trim().split('\n');
-    for (const line of lines) {
-      console.log(`[${name}] ${line}`);
-    }
-  });
+  const forward = (stream: NodeJS.ReadableStream | null, write: (line: string) => void): void => {
+    let buffer = '';
+    stream?.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString();
+      // Chunk boundaries do not align with line boundaries; hold the partial
+      // tail so interleaved output from two children stays readable.
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) write(line);
+    });
+  };
 
-  // Handle stderr
-  proc.stderr?.on('data', (data: Buffer) => {
-    const lines = data.toString().trim().split('\n');
-    for (const line of lines) {
-      console.error(`[${name}] ${line}`);
-    }
-  });
+  forward(proc.stdout, (line) => console.log(`[${name}] ${line}`));
+  forward(proc.stderr, (line) => console.error(`[${name}] ${line}`));
 
-  // Handle process exit
   proc.on('exit', (code, signal) => {
-    log('warn', `Process ${name} exited`, { code, signal });
+    log(code === 0 ? 'info' : 'warn', `Process ${name} exited`, { code, signal });
 
     const managed = processes.get(name);
     if (managed) {
-      managed.process = null;
+      // Clear the cached probe: a probe result from the previous incarnation
+      // must never make a just-crashed child look healthy.
+      lastProbes.delete(name);
+      if (managed.process === proc) managed.process = null;
     }
 
-    // Restart if not shutting down and restart is enabled
-    if (!isShuttingDown && RESTART_CRASHED_PROCESSES && code !== 0) {
-      const now = Date.now();
-      const timeSinceLastRestart = now - (managed?.lastRestart || 0);
-
-      // Only restart if more than 5 seconds since last restart (prevent rapid restart loop)
-      if (timeSinceLastRestart > 5000 && (managed?.restartCount || 0) < 5) {
-        log('info', `Restarting ${name}...`, { restartCount: (managed?.restartCount || 0) + 1 });
-        setTimeout(() => {
-          if (!isShuttingDown && managed) {
-            managed.process = spawnProcess(name, managed.command, managed.args, managed.env);
-            managed.restartCount++;
-            managed.lastRestart = Date.now();
-          }
-        }, 1000);
-      } else if ((managed?.restartCount || 0) >= 5) {
-        log('error', `${name} has crashed too many times, not restarting`, { restartCount: managed?.restartCount });
-      }
+    if (!isShuttingDown && RESTART_CRASHED_PROCESSES && (code !== 0 || signal !== null)) {
+      scheduleRestart(name, code, signal);
+    } else if (!isShuttingDown && (code !== 0 || signal !== null)) {
+      log(
+        'error',
+        `Process ${name} crashed and RESTART_CRASHED_PROCESSES is disabled — the stack is now degraded.`,
+        { code, signal, hint: 'Set RESTART_CRASHED_PROCESSES=true to have the supervisor restart it.' },
+      );
     }
   });
 
@@ -192,6 +385,161 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
   });
 
   return proc;
+}
+
+/**
+ * Restart a crashed child.
+ *
+ * Two defects this replaces:
+ *
+ *  - **Restart storm.** The previous logic re-read `lastRestart` before the
+ *    1s delay and compared against a value only mutated inside the timer, so a
+ *    process failing instantly in a loop consumed its whole restart budget in
+ *    under a second and then gave up silently. Now the delay is exponential,
+ *    the budget resets after `STABLE_UPTIME_MS` of healthy uptime, and giving
+ *    up is logged at error level with the exit code.
+ *
+ *  - **Inherited dead port.** A restart reused the ORIGINAL env, including the
+ *    original `PORT`. If the crash was EADDRINUSE — precisely the reason a
+ *    port gets rolled forward — the restarted child was handed the same dead
+ *    port and crashed identically, five times. Ports are now re-resolved from
+ *    the preferred base before every restart.
+ */
+function scheduleRestart(name: string, exitCode: number | null, exitSignal: NodeJS.Signals | null): void {
+  const managed = processes.get(name);
+  if (!managed) return;
+
+  const decision = decideRestart({
+    enabled: RESTART_CRASHED_PROCESSES,
+    isShuttingDown,
+    exitCode,
+    exitSignal,
+    restartCount: managed.restartCount,
+    lastRestart: managed.lastRestart,
+    now: Date.now(),
+    maxRestarts: MAX_RESTARTS,
+    stableUptimeMs: STABLE_UPTIME_MS,
+    baseDelayMs: RESTART_BASE_DELAY_MS,
+    maxDelayMs: RESTART_MAX_DELAY_MS,
+  });
+
+  if (!decision.shouldRestart) {
+    if (decision.reason === 'budget-exhausted') {
+      log('error', `${name} has crashed ${decision.attempt} times without staying up — not restarting`, {
+        restartCount: decision.attempt,
+        exitCode,
+        exitSignal,
+        hint: 'Fix the underlying failure, then restart the process manager.',
+      });
+    } else if (decision.reason === 'restart-disabled') {
+      log('error', `${name} crashed and the stack is now degraded`, {
+        exitCode,
+        exitSignal,
+        reason: describeRestartReason(decision.reason),
+        hint: 'Set RESTART_CRASHED_PROCESSES=true to have the supervisor restart it.',
+      });
+    }
+    return;
+  }
+
+  managed.restartCount = decision.attempt;
+  // Stamp the ATTEMPT time, not just the last successful spawn. `lastRestart`
+  // doubles as the stability marker, and leaving it at the original boot time
+  // meant the stability window kept expiring during a crash loop — resetting
+  // the budget on every attempt and retrying forever at ~11s intervals.
+  managed.lastRestart = Date.now();
+  log('warn', `Restarting ${name} in ${decision.delayMs}ms`, {
+    attempt: decision.attempt,
+    of: MAX_RESTARTS,
+    exitCode,
+    exitSignal,
+  });
+
+  managed.restartTimer = setTimeout(() => {
+    managed.restartTimer = null;
+    void restartProcess(managed);
+  }, decision.delayMs);
+}
+
+async function restartProcess(managed: ManagedProcess): Promise<void> {
+  if (isShuttingDown) return;
+  try {
+    await refreshPorts(managed);
+    managed.process = spawnProcess(managed.name, managed.command, managed.args, managed.env);
+    managed.lastRestart = Date.now();
+    lastProbes.delete(managed.name);
+  } catch (error) {
+    log('error', `Failed to restart ${managed.name}`, { error: (error as Error).message });
+    // A failed restart must NOT be terminal. Re-enter the policy so the
+    // backoff and the restart budget govern the retries. Without this the
+    // manager would log one error and then sit with the child down forever,
+    // reporting "not ready" without ever trying again.
+    scheduleRestart(managed.name, 1, null);
+  }
+}
+
+/**
+ * Wait for SOCKET_PORT to be released.
+ *
+ * A SIGKILLed child can keep the port bound for a short window (TIME_WAIT on
+ * the listening socket, and the OS reclaiming it asynchronously). Probing
+ * once and giving up turned a transient condition into a permanently dead
+ * worker, so the probe is retried over a bounded window.
+ */
+async function waitForSocketPortFree(port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await isPortFree(port)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/**
+ * Re-resolve the ports a child owns, and rebuild its env/args.
+ *
+ * Called before every restart. `next-server` uses `PORT`; `workers` uses
+ * `WORKER_HEALTH_PORT` and `SOCKET_PORT`.
+ *
+ * SOCKET_PORT is special: `next.config.ts` freezes the /api/stand/socket
+ * rewrite into the build manifest at BUILD time, so the proxy target cannot
+ * follow a roll-forward. The manager therefore re-checks SOCKET_PORT and, if
+ * it is occupied, refuses the restart with an explanation instead of letting
+ * the worker bind somewhere the proxy will never reach.
+ */
+async function refreshPorts(managed: ManagedProcess): Promise<void> {
+  if (managed.name === 'next-server') {
+    const next = await resolveFreePort(parsePort(process.env.PORT, DEFAULT_APP_PORT), 'Next.js server');
+    managed.ports.app = next;
+    PORT = next;
+    managed.env = { ...managed.env, PORT: String(next) };
+    // In `next start` mode the port is also on the command line, so the args
+    // array has to follow the re-resolved value. Detect the flag rather than
+    // the launcher: the child is now `node <next-bin> start -p <port>`.
+    const idx = managed.args.indexOf('-p');
+    if (idx !== -1 && idx + 1 < managed.args.length) managed.args[idx + 1] = String(next);
+    return;
+  }
+
+  if (managed.name === 'workers') {
+    // SOCKET_PORT cannot move, but it is usually only transiently held by the
+    // process that just died. Give the OS a bounded window to release it before
+    // concluding that something else has genuinely claimed the port.
+    if (websocketsExpected && !(await waitForSocketPortFree(SOCKET_PORT, SOCKET_PORT_FREE_TIMEOUT_MS))) {
+      throw new Error(
+        `SOCKET_PORT ${SOCKET_PORT} is still occupied after ${SOCKET_PORT_FREE_TIMEOUT_MS}ms. The production ` +
+          'build proxies /api/stand/socket to that exact port, so the worker cannot move it. Something other ' +
+          'than the previous worker is holding it — stop that, or rebuild against a different SOCKET_PORT.',
+      );
+    }
+    const workerHealth = await resolveFreePort(
+      parsePort(process.env.WORKER_HEALTH_PORT, DEFAULT_WORKER_HEALTH_PORT),
+      'Worker health server',
+    );
+    WORKER_HEALTH_PORT = workerHealth;
+    managed.ports.workerHealth = workerHealth;
+    managed.env = { ...managed.env, WORKER_HEALTH_PORT: String(workerHealth) };
+  }
 }
 
 /**
@@ -213,18 +561,22 @@ function spawnProcess(name: string, command: string, args: string[], env: Record
  */
 function startNextServer(prepared: PrepareStandaloneResult): void {
   if (prepared.mode === 'missing') {
-    log('error', 'No production build available — run `npm run build` before `npm run start:all`');
-    return;
+    throw new Error('No production build available — run `npm run build` before `npm run start:all`');
   }
 
   const useStandalone = prepared.mode === 'standalone';
+  // `next start` fallback runs the Next CLI directly rather than through
+  // `npx next`, for the same reason the workers do: npx inserts a wrapper
+  // process, so the supervised PID would not be the server and a kill would
+  // orphan it with the app port still bound.
+  const nextBin = resolve(ROOT_DIR, 'node_modules/next/dist/bin/next');
   const managed: ManagedProcess = {
     name: 'next-server',
     process: null,
-    command: useStandalone ? 'node' : 'npx',
+    command: useStandalone ? 'node' : process.execPath,
     args: useStandalone
       ? [prepared.standaloneServerPath as string]
-      : ['next', 'start', '-p', String(PORT)],
+      : [nextBin, 'start', '-p', String(PORT)],
     env: {
       PORT: String(PORT),
       ...(useStandalone ? { HOSTNAME: BIND_HOST } : {}),
@@ -233,6 +585,8 @@ function startNextServer(prepared: PrepareStandaloneResult): void {
     },
     restartCount: 0,
     lastRestart: 0,
+    restartTimer: null,
+    ports: { app: PORT },
   };
 
   if (useStandalone) {
@@ -245,55 +599,86 @@ function startNextServer(prepared: PrepareStandaloneResult): void {
   }
 
   managed.process = spawnProcess(managed.name, managed.command, managed.args, managed.env);
+  managed.lastRestart = Date.now();
   processes.set(managed.name, managed);
 }
 
 /**
- * Start the background workers
+ * Start the background workers.
+ *
+ * The env passed here is explicit rather than inherited, because two of these
+ * values must match what the preflight check validated and what the Next.js
+ * rewrite was compiled against:
+ *
+ *   ENABLE_WEBSOCKETS  — whether to start the embedded Socket.IO stand server.
+ *   SOCKET_PORT        — must equal the port baked into the build manifest, or
+ *                        the /api/stand/socket proxy 404s.
+ *   WORKER_HEALTH_PORT — must match the port the manager probes for readiness.
  */
 function startWorkers(): void {
+  const worker = workerCommandLine();
   const managed: ManagedProcess = {
     name: 'workers',
     process: null,
-    command: 'npx',
-    args: ['tsx', 'src/workers/index.ts'],
+    command: worker.command,
+    args: worker.args,
     env: {
       WORKER_HEALTH_PORT: String(WORKER_HEALTH_PORT),
       NODE_ENV: 'production',
+      ENABLE_WEBSOCKETS: websocketsExpected ? 'true' : 'false',
+      SOCKET_PORT: String(SOCKET_PORT),
     },
     restartCount: 0,
     lastRestart: 0,
+    restartTimer: null,
+    ports: { workerHealth: WORKER_HEALTH_PORT, socket: SOCKET_PORT },
   };
 
   managed.process = spawnProcess(managed.name, managed.command, managed.args, managed.env);
+  managed.lastRestart = Date.now();
   processes.set(managed.name, managed);
 }
 
 /**
- * Stop a managed process
+ * Stop a managed process.
+ *
+ * SIGTERM first so the worker can drain in-flight BullMQ jobs, then SIGKILL
+ * after `SHUTDOWN_GRACE_MS`. The grace period is generous on purpose:
+ * `DEPLOYMENT.md` documents that aborting a Smart Upload job mid-transaction
+ * leaves sessions stuck in `IN_PROGRESS`, which requires manual repair.
  */
 async function stopProcess(name: string): Promise<void> {
   const managed = processes.get(name);
-  if (!managed || !managed.process) {
+  if (!managed) return;
+
+  if (managed.restartTimer) {
+    clearTimeout(managed.restartTimer);
+    managed.restartTimer = null;
+  }
+  if (!managed.process) {
+    log('info', `${name} is not running`);
     return;
   }
 
-  log('info', `Stopping ${name}...`);
+  log('info', `Stopping ${name} (pid ${managed.process.pid})...`);
 
   return new Promise((resolve) => {
-    const proc = managed.process!;
+    const proc = managed.process as ChildProcess;
     let resolved = false;
 
+    // Deliberately NOT unref'd: this timer is the backstop that guarantees a
+    // wedged child is killed. If the event loop were otherwise empty it must
+    // still be able to fire.
     const timeout = setTimeout(() => {
       if (!resolved) {
-        log('warn', `${name} did not exit gracefully, forcing kill`);
+        log('warn', `${name} did not exit gracefully after ${SHUTDOWN_GRACE_MS}ms, forcing kill`);
         proc.kill('SIGKILL');
         resolved = true;
         resolve();
       }
-    }, 10000); // 10 second timeout
+    }, SHUTDOWN_GRACE_MS);
 
-    proc.on('exit', () => {
+    proc.once('exit', () => {
       if (!resolved) {
         clearTimeout(timeout);
         resolved = true;
@@ -301,23 +686,22 @@ async function stopProcess(name: string): Promise<void> {
       }
     });
 
-    // Send SIGTERM for graceful shutdown
     proc.kill('SIGTERM');
   });
 }
 
 /**
- * Stop all processes
+ * Stop all processes.
+ *
+ * Workers first: they own the BullMQ queues and the Socket.IO adapter, and
+ * they must be allowed to finish in-flight jobs while the web server is still
+ * accepting traffic. Then the web server, so no request arrives for a
+ * dependency that has already gone away.
  */
 async function stopAllProcesses(): Promise<void> {
   log('info', 'Stopping all processes...');
-
-  // Stop workers first (they need to complete in-progress jobs)
   await stopProcess('workers');
-
-  // Then stop the Next.js server
   await stopProcess('next-server');
-
   log('info', 'All processes stopped');
 }
 
@@ -330,60 +714,49 @@ async function stopAllProcesses(): Promise<void> {
  * preferred port is already taken.
  */
 function startHealthServer(): void {
-  healthServer = createServer(async (req, res) => {
-    const url = req.url || '/';
+  healthServer = createServer((req, res) => {
+    const url = (req.url || '/').split('?')[0];
+    const snapshot = readinessSnapshot();
+
+    const send = (statusCode: number, payload: unknown): void => {
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload, null, url === '/ready' ? 0 : 2));
+    };
 
     if (url === '/health') {
-      const nextServer = processes.get('next-server');
-      const workers = processes.get('workers');
-
-      const health = {
+      // Liveness: is the manager itself up? Always 200 — a 503 here from a
+      // supervisor would restart the manager while its children are draining.
+      send(200, {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        processes: {
-          'next-server': {
-            running: nextServer?.process !== null,
-            pid: nextServer?.process?.pid,
-            restartCount: nextServer?.restartCount || 0,
-          },
-          workers: {
-            running: workers?.process !== null,
-            pid: workers?.process?.pid,
-            restartCount: workers?.restartCount || 0,
-          },
-        },
-      };
-
-      const allRunning = nextServer?.process !== null && workers?.process !== null;
-      res.writeHead(allRunning ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(health, null, 2));
-    } else if (url === '/ready') {
-      // Check if all processes are ready
-      const nextServer = processes.get('next-server');
-      const workers = processes.get('workers');
-      const ready = nextServer?.process !== null && workers?.process !== null;
-      res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ready }));
-    } else {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found' }));
+        verdict: snapshot.verdict,
+        processes: snapshot.components,
+      });
+      return;
     }
+
+    if (url === '/ready') {
+      // Readiness: every child must answer its probe. Never derived from a
+      // non-null ChildProcess.
+      send(snapshot.verdict === 'ready' ? 200 : 503, {
+        ready: snapshot.verdict === 'ready',
+        verdict: snapshot.verdict,
+        timestamp: new Date().toISOString(),
+        processes: snapshot.components,
+        details: snapshot.details,
+      });
+      return;
+    }
+
+    send(404, { error: 'Not found' });
   });
 
-  // Use a different port for the process manager health check.
-  // Rolls forward automatically when occupied.
   const preferred = MANAGER_HEALTH_PORT;
   let port = preferred;
   const tryBind = (): void => {
-    healthServer!.removeAllListeners('error');
-    // Skip only ports claimed by the *other* consumers; this server's own
-    // resolved port stays available so it keeps its preferred port.
-    while (port <= 65535 && reservedPorts.has(port) && reservedPorts.get(port) !== HEALTH_OWNER) {
-      reservedPorts.set(port, HEALTH_OWNER);
-      port++;
-    }
-    healthServer!.once('error', (err: NodeJS.ErrnoException) => {
+    healthServer?.removeAllListeners('error');
+    healthServer?.once('error', (err: NodeJS.ErrnoException) => {
       if (err?.code === 'EADDRINUSE' && port - preferred < MAX_PORT_ATTEMPTS - 1) {
         log('info', `Process manager health port ${port} is busy — trying ${port + 1}`);
         reservedPorts.set(port, HEALTH_OWNER);
@@ -393,21 +766,19 @@ function startHealthServer(): void {
         log('error', 'Process manager health server failed to bind', { error: err.message });
       }
     });
-    healthServer!.listen(port, () => {
-      if (port !== preferred) {
-        log('info', `Process manager health check server listening on next available port ${port} (preferred ${preferred} was busy)`);
-      } else {
-        log('info', `Process manager health check server listening on port ${port}`);
-      }
+    healthServer?.listen(port, () => {
       MANAGER_HEALTH_PORT = port;
+      log(
+        'info',
+        port !== preferred
+          ? `Process manager health server listening on ${port} (preferred ${preferred} was busy)`
+          : `Process manager health server listening on ${port}`,
+      );
     });
   };
   tryBind();
 }
 
-/**
- * Stop the health check server
- */
 function stopHealthServer(): Promise<void> {
   return new Promise((resolve) => {
     if (healthServer) {
@@ -426,9 +797,6 @@ function stopHealthServer(): Promise<void> {
 // Graceful Shutdown
 // ============================================================================
 
-/**
- * Handle graceful shutdown
- */
 async function gracefulShutdown(signal: string): Promise<void> {
   if (isShuttingDown) {
     log('warn', 'Shutdown already in progress, ignoring signal', { signal });
@@ -438,11 +806,22 @@ async function gracefulShutdown(signal: string): Promise<void> {
   isShuttingDown = true;
   log('info', `Received ${signal}, starting graceful shutdown...`);
 
-  // Stop health check server
+  if (probeTimer) {
+    clearInterval(probeTimer);
+    probeTimer = null;
+  }
+
+  // Stop the health check server first so nothing new is routed here while the
+  // children are draining.
   await stopHealthServer();
 
-  // Stop all managed processes
+  // Workers first (in-flight BullMQ jobs finish), then the web server.
   await stopAllProcesses();
+
+  if (releaseLock) {
+    await releaseLock();
+    releaseLock = null;
+  }
 
   log('info', 'Graceful shutdown complete');
   process.exit(0);
@@ -455,39 +834,110 @@ async function gracefulShutdown(signal: string): Promise<void> {
 async function main(): Promise<void> {
   log('info', 'Starting ECCB Process Manager...');
 
-  // Validate the build and copy .next/static + public/ into the standalone
-  // bundle BEFORE anything spawns. Without this the standalone server 404s on
-  // every stylesheet and the site renders unstyled.
-  const prepared = await prepareStandalone();
-  log('info', 'Build preparation complete', {
-    mode: prepared.mode,
-    copied: prepared.copied,
+  // ------------------------------------------------------------------------
+  // Singleton guard. Before anything else, so a second `start:all` fails with
+  // a clear message instead of starting a duplicate worker fleet.
+  // ------------------------------------------------------------------------
+  const lock = await acquireLock(
+    {
+      pid: process.pid,
+      appPort: PORT,
+      workerHealthPort: WORKER_HEALTH_PORT,
+      managerHealthPort: MANAGER_HEALTH_PORT,
+      socketPort: SOCKET_PORT,
+    },
+    { lockDir: resolve(ROOT_DIR, DEFAULT_LOCK_DIRNAME) },
+  ).catch((error: unknown) => {
+    if (error instanceof AlreadyRunningError) throw error;
+    // A lock that cannot be written (read-only .next) must not block a start.
+    log('warn', 'Could not acquire the process-manager lock', { error: (error as Error).message });
+    return null;
   });
-  for (const warning of prepared.warnings) {
-    log('warn', warning);
+  if (lock) {
+    releaseLock = lock.release;
+    log('info', 'Acquired process manager lock', { pid: process.pid, lockDir: DEFAULT_LOCK_DIRNAME });
   }
+
+  // ------------------------------------------------------------------------
+  // Build preparation. Without this the standalone server 404s on every
+  // stylesheet and the site renders unstyled.
+  // ------------------------------------------------------------------------
+  const prepared = await prepareStandalone();
+  log('info', 'Build preparation complete', { mode: prepared.mode, copied: prepared.copied });
+  for (const warning of prepared.warnings) log('warn', warning);
 
   if (prepared.mode === 'missing') {
     log('error', 'Aborting: no production build found. Run `npm run build`, then `npm run start:all`.');
     process.exit(1);
   }
 
-  // Resolve every port BEFORE spawning children so `next start -p` never
-  // hits EADDRINUSE. Each child inherits the resolved value via env.
+  // ------------------------------------------------------------------------
+  // Resolve every port BEFORE spawning children so `next start -p` never hits
+  // EADDRINUSE.
+  //
+  // SOCKET_PORT is deliberately NOT rolled forward. `next.config.ts` freezes
+  // the /api/stand/socket proxy target into the build manifest, so moving the
+  // socket server would leave the proxy calling a port nothing listens on. It
+  // is claimed exactly or not at all; a conflict becomes the preflight
+  // `socket.port-busy` error with the rebuild command, which is far more
+  // useful than a silent real-time-sync outage.
   PORT = await resolveFreePort(PORT, 'Next.js server');
+  SOCKET_PORT = await claimFixedPort(SOCKET_PORT, 'Embedded socket server').catch(() => {
+    // Deliberately not fatal here: preflight turns this into a
+    // `socket.port-busy` problem carrying the rebuild command, which is a far
+    // better operator experience than a bare "port in use" throw.
+    return SOCKET_PORT;
+  });
   WORKER_HEALTH_PORT = await resolveFreePort(WORKER_HEALTH_PORT, 'Worker health server');
   MANAGER_HEALTH_PORT = await resolveFreePort(MANAGER_HEALTH_PORT, HEALTH_OWNER);
   process.env.PORT = String(PORT);
+  process.env.SOCKET_PORT = String(SOCKET_PORT);
   process.env.WORKER_HEALTH_PORT = String(WORKER_HEALTH_PORT);
   process.env.PROCESS_MANAGER_HEALTH_PORT = String(MANAGER_HEALTH_PORT);
 
+  // ------------------------------------------------------------------------
+  // Preflight. Reports every problem at once and exits 1 before spawning.
+  // ------------------------------------------------------------------------
+  const preflight = await runPreflight({
+    ports: { app: PORT, socket: SOCKET_PORT, workerHealth: WORKER_HEALTH_PORT, managerHealth: MANAGER_HEALTH_PORT },
+    isPortBusy: async (port: number) => !(await isPortFree(port)),
+  });
+
+  for (const note of preflight.notes) log('info', `Preflight: ${note}`);
+
+  if (!preflight.ok) {
+    console.error(formatPreflightReport(preflight));
+    log('error', `Aborting: preflight found ${preflight.problems.filter((p) => p.severity === 'error').length} blocking problem(s). No processes were started.`);
+    if (releaseLock) {
+      await releaseLock();
+      releaseLock = null;
+    }
+    process.exit(1);
+  }
+
+  const report = formatPreflightReport(preflight);
+  if (report.trim().length > 0) console.warn(report);
+
+  // The same ENABLE_WEBSOCKETS value the preflight validated is what the
+  // worker child receives, and what gates readiness.
+  websocketsExpected = process.env.ENABLE_WEBSOCKETS === 'true';
+
   log('info', 'Configuration', {
+    mode: prepared.mode,
     port: PORT,
     bindHost: BIND_HOST,
+    socketPort: SOCKET_PORT,
     workerHealthPort: WORKER_HEALTH_PORT,
     managerHealthPort: MANAGER_HEALTH_PORT,
+    standSocketServer: websocketsExpected ? 'enabled' : 'disabled',
     restartCrashedProcesses: RESTART_CRASHED_PROCESSES,
   });
+
+  // Signal handlers are registered BEFORE the first spawn. Previously they
+  // were attached after a 2s sleep following the spawn, so a Ctrl-C in that
+  // window killed the manager with no handler at all, orphaning the children.
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
   // Start health check server
   startHealthServer();
@@ -495,30 +945,56 @@ async function main(): Promise<void> {
   // Start Next.js server
   startNextServer(prepared);
 
-  // Wait a bit before starting workers
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // Wait a bit before starting workers. The web server owns the schema-facing
+  // instrumentation bootstrap; workers can connect to the same database
+  // independently, so this is a courtesy stagger rather than a dependency.
+  await new Promise((r) => setTimeout(r, 2000));
 
-  // Start background workers
+  // Start background workers (also hosts the Socket.IO stand server)
   startWorkers();
 
-  // Setup signal handlers
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  // Begin readiness probing. The first probe runs immediately so a child that
+  // spawned and crashed is visible within one tick rather than one interval.
+  await runProbes();
+  probeTimer = setInterval(() => {
+    void runProbes().then(() => {
+      const snapshot = readinessSnapshot();
+      if (snapshot.verdict === 'not-ready') {
+        log('warn', 'Stack is not ready', { processes: snapshot.components });
+      }
+    });
+  }, PROBE_INTERVAL_MS);
+  probeTimer.unref?.();
 
-  log('info', 'ECCB Process Manager started successfully');
+  const snapshot = readinessSnapshot();
+  log('info', 'ECCB Process Manager started', {
+    readiness: snapshot.verdict,
+    processes: snapshot.components,
+    healthEndpoint: `http://127.0.0.1:${MANAGER_HEALTH_PORT}/health`,
+  });
 
-  // Handle uncaught errors
-  process.on('unhandledRejection', (reason, promise) => {
-    log('error', 'Unhandled Rejection', { reason, promise });
+  // Handle uncaught errors. The previous handler only logged, leaving a
+  // process manager running in an unknown state while still answering
+  // /health with 200 — the worst possible outcome for a supervisor.
+  process.on('unhandledRejection', (reason) => {
+    log('error', 'Unhandled Rejection', { reason: reason instanceof Error ? reason.message : String(reason) });
   });
 
   process.on('uncaughtException', (error) => {
     log('error', 'Uncaught Exception', { error: error.message, stack: error.stack });
+    void gracefulShutdown('uncaughtException');
   });
 }
 
 // Run main
-main().catch((error) => {
-  log('error', 'Failed to start process manager', { error: error.message, stack: error.stack });
+main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  log('error', 'Failed to start process manager', {
+    error: message,
+    ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+  });
+  if (releaseLock) {
+    void releaseLock();
+  }
   process.exit(1);
 });

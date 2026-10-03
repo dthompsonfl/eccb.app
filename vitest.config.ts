@@ -8,7 +8,10 @@ export default defineConfig({
     env: {
       VITEST: 'true',
     },
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // scripts/ holds the process manager, its preflight gate and the port /
+    // readiness helpers. They are plain Node modules but hold real logic, so
+    // they are covered alongside the rest of the suite.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts'],
     exclude: ['node_modules', '.next', 'dist'],
     coverage: {
       provider: 'v8',
