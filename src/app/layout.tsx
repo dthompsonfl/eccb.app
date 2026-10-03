@@ -8,6 +8,7 @@ import { ServiceWorkerRegistration } from '@/components/providers/service-worker
 import { SkipToContent } from '@/components/ui/skip-to-content';
 import { TextScaleProvider } from '@/components/accessibility/text-scale-provider';
 import { TEXT_SCALE_PREPAINT_SCRIPT } from '@/lib/accessibility/text-scale-script';
+import { getSiteUrl } from '@/lib/seo/site-url';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -20,9 +21,16 @@ const oswald = Oswald({
 });
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME || 'Emerald Coast Community Band';
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3225';
+// Resolved and validated rather than interpolated raw: `new URL(...)` below
+// throws on a malformed value at module load, which would take down every route
+// with a 500. getSiteUrl() falls back to the dev origin instead.
+const appUrl = getSiteUrl();
 
 export const metadata: Metadata = {
+  // Required by Next.js to absolutise any relative URL it emits (canonical
+  // alternates, OpenGraph images, sitemap entries). Without it Next falls back
+  // to http://localhost:3000, which publishes a wrong canonical in production.
+  metadataBase: new URL(appUrl),
   title: {
     default: appName,
     template: `%s | ${appName}`,
