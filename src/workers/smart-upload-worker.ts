@@ -35,8 +35,13 @@ import {
 } from "@/lib/smart-upload/quality-gates";
 import {
   buildPartStorageSlug,
-  buildPartFilename,
+  normalizeInstrumentLabel,
+  resolvePartTitle,
 } from "@/lib/smart-upload/part-naming";
+import {
+  analyzePageCoverage,
+  describePageCoverageFailure,
+} from "@/lib/smart-upload/page-coverage";
 import { parseJsonLenient } from "@/lib/smart-upload/json";
 import {
   recordMetricSuccess,
@@ -659,13 +664,24 @@ async function finalizeSmartUploadSession(
         }
       } // end if (gapInstructions.length > 0)
     } catch (gapErr) {
-      logger.warn(
-        "Second pass gap detection failed; proceeding without gap fill",
+      // Previously this logged and continued, which is exactly the silent
+      // page-drop this module exists to prevent: a transient PDF parse failure
+      // would skip gap detection entirely and ship a score with missing parts.
+      // Fail closed instead — force human review so a librarian resplits.
+      logger.error(
+        "Second pass gap detection failed — forcing human review",
         {
           sessionId,
           error: gapErr instanceof Error ? gapErr.message : String(gapErr),
         },
       );
+      updateData.requiresHumanReview = true;
+      updateData.status = "REQUIRES_REVIEW";
+      finalMetadata = {
+        ...finalMetadata,
+        notes: `${finalMetadata.notes ? `${finalMetadata.notes} | ` : ""}Gap detection failed; score requires a manual re-split.`,
+      };
+      updateData.extractedMetadata = finalMetadata;
     }
   }
 
@@ -681,7 +697,13 @@ async function finalizeSmartUploadSession(
         originalPdfBuffer,
         smartSession.fileName.replace(/\.pdf$/i, ""),
         correctedCuttingInstructions,
-        { indexing: "one" },
+        {
+          indexing: "one",
+          metadata: {
+            title: finalMetadata.title,
+            author: finalMetadata.composer,
+          },
+        },
       );
       const newParsedParts: ParsedPartRecord[] = [];
       const tempFiles: string[] = [];
@@ -703,6 +725,19 @@ async function finalizeSmartUploadSession(
           },
         });
         tempFiles.push(partStorageKey);
+        // Name from the work title + instrument, exactly as the first pass
+        // does. Previously this used the bare partName, producing
+        // "1st_Flute.pdf" with no indication of which work it belonged to.
+        const normalised = normalizeInstrumentLabel(
+          part.instruction.partName || part.instruction.instrument,
+        );
+        const resolvedTitle = resolvePartTitle({
+          extractedTitle: finalMetadata.title,
+          uploadedFileName: smartSession.fileName,
+          part: normalised,
+          partNumber: part.instruction.partNumber,
+          pageRange: part.instruction.pageRange,
+        });
         newParsedParts.push({
           partName: part.instruction.partName,
           instrument: part.instruction.instrument,
@@ -710,10 +745,7 @@ async function finalizeSmartUploadSession(
           transposition: part.instruction.transposition,
           partNumber: part.instruction.partNumber,
           storageKey: partStorageKey,
-          fileName: buildPartFilename(
-            part.instruction.partName ||
-              `Part_${part.instruction.partNumber ?? 0}`,
-          ),
+          fileName: resolvedTitle.fileName,
           fileSize: part.buffer.length,
           pageCount: part.pageCount,
           pageRange: part.instruction.pageRange,
@@ -722,16 +754,43 @@ async function finalizeSmartUploadSession(
       updateData.parsedParts = newParsedParts;
       updateData.tempFiles = tempFiles;
       updateData.parseStatus = "PARSED";
+
+      // Verify the pages the splitter actually produced cover the document.
+      // A part can fail to render and take its pages with it; shipping that
+      // would leave a section with no music and no explanation.
+      const producedCoverage = analyzePageCoverage(
+        splitResults.map((result) => result.instruction),
+        totalPages,
+        "one",
+      );
+      if (!producedCoverage.coversAllPagesExactlyOnce) {
+        logger.error(
+          "Second-pass split does not cover every page exactly once",
+          {
+            sessionId,
+            coverageFailure: describePageCoverageFailure(producedCoverage),
+          },
+        );
+        updateData.requiresHumanReview = true;
+      }
+
       logger.info("PDF split completed in second pass", {
         sessionId,
         partsCount: newParsedParts.length,
+        coverageFailure: describePageCoverageFailure(producedCoverage) || "none",
       });
     } else if (parsedParts && parsedParts.length > 0) {
       const splitResults = await splitPdfByCuttingInstructions(
         originalPdfBuffer,
         smartSession.fileName.replace(/\.pdf$/i, ""),
         correctedCuttingInstructions,
-        { indexing: "one" },
+        {
+          indexing: "one",
+          metadata: {
+            title: finalMetadata.title,
+            author: finalMetadata.composer,
+          },
+        },
       );
       const newParsedParts: ParsedPartRecord[] = [];
       for (const part of splitResults) {
@@ -741,6 +800,16 @@ async function finalizeSmartUploadSession(
             pageRange: part.instruction.pageRange,
           }) || `part_${part.instruction.partNumber ?? 0}`;
         const partStorageKey = `smart-upload/${sessionId}/parts/${slug}.pdf`;
+        const normalised = normalizeInstrumentLabel(
+          part.instruction.partName || part.instruction.instrument,
+        );
+        const resolvedTitle = resolvePartTitle({
+          extractedTitle: finalMetadata.title,
+          uploadedFileName: smartSession.fileName,
+          part: normalised,
+          partNumber: part.instruction.partNumber,
+          pageRange: part.instruction.pageRange,
+        });
         await uploadFile(partStorageKey, part.buffer, {
           contentType: "application/pdf",
           metadata: {
@@ -758,19 +827,32 @@ async function finalizeSmartUploadSession(
           transposition: part.instruction.transposition,
           partNumber: part.instruction.partNumber,
           storageKey: partStorageKey,
-          fileName: buildPartFilename(
-            part.instruction.partName ||
-              `Part_${part.instruction.partNumber ?? 0}`,
-          ),
+          fileName: resolvedTitle.fileName,
           fileSize: part.buffer.length,
           pageCount: part.pageCount,
           pageRange: part.instruction.pageRange,
         });
       }
       updateData.parsedParts = newParsedParts;
+
+      // Same coverage proof as the fresh-split branch above.
+      const reSplitCoverage = analyzePageCoverage(
+        splitResults.map((result) => result.instruction),
+        totalPages,
+        "one",
+      );
+      if (!reSplitCoverage.coversAllPagesExactlyOnce) {
+        logger.error("Re-split does not cover every page exactly once", {
+          sessionId,
+          coverageFailure: describePageCoverageFailure(reSplitCoverage),
+        });
+        updateData.requiresHumanReview = true;
+      }
+
       logger.info("Re-split PDF in second pass", {
         sessionId,
         newPartsCount: newParsedParts.length,
+        coverageFailure: describePageCoverageFailure(reSplitCoverage) || "none",
       });
     }
   }

@@ -17,7 +17,11 @@ import { prisma } from "@/lib/db";
 import { deleteFile } from "@/lib/services/storage";
 import { logger } from "@/lib/logger";
 import type { MusicDifficulty, FileType, Prisma } from "@prisma/client";
-import type { ExtractedMetadata, ParsedPartRecord } from "@/types/smart-upload";
+import type {
+  CuttingInstruction,
+  ExtractedMetadata,
+  ParsedPartRecord,
+} from "@/types/smart-upload";
 import {
   normalizeExtractedMetadata,
   normalizePersonName,
@@ -26,6 +30,16 @@ import {
 import { getSectionForLabel } from "./canonical-instruments";
 import { isForbiddenLabel } from "./quality-gates";
 import { normalizeInstrumentLabel } from "./part-naming";
+import {
+  applyRouting,
+  loadRoutingRoster,
+  type RoutablePart,
+  type UnroutedPart,
+} from "./part-routing";
+import {
+  analyzePageCoverage,
+  describePageCoverageFailure,
+} from "./page-coverage";
 import {
   computePartIdentityFingerprint,
   computeWorkFingerprintV2,
@@ -66,6 +80,14 @@ export interface CommitResult {
   partsCommitted: number;
   /** True when commit was idempotent (piece already existed). */
   wasIdempotent: boolean;
+  /**
+   * Parts that no active member could be routed to. Never silently dropped:
+   * the approve route surfaces these so a librarian can assign them by hand.
+   * Empty on an idempotent no-op (routing already happened on the first commit).
+   */
+  unroutedParts: UnroutedPart[];
+  /** Number of MusicAssignment rows this commit created. */
+  assignmentsCreated: number;
 }
 
 // =============================================================================
@@ -103,6 +125,59 @@ async function findOrCreatePerson(
 function normalizeCommitErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 500);
+}
+
+/**
+ * Verify the parts about to be committed tile their own page span with no gap
+ * and no overlap. Returns a human-readable reason string, or `null` when the
+ * parts are contiguous.
+ *
+ * Scope note: this proves contiguity over the span the parts actually occupy
+ * (page 1 through the highest end page). It cannot detect a tail of pages that
+ * the splitter never claimed at all, because nothing on the session records the
+ * original page count in a comparable 1-indexed form — `MusicFile.pageCount` is
+ * only written at commit time. Detecting a truncated tail stays the processor's
+ * and the resplit route's job, both of which do hold the real `totalPages`; this
+ * gate exists to stop an *interior* hole reaching the library, which is the case
+ * those two paths cannot cover after a re-split.
+ */
+function assertPartsCoverTheirPages(
+  parts: readonly ParsedPartRecord[],
+): string | null {
+  const withRanges = parts.filter(
+    (p) =>
+      Array.isArray(p.pageRange) &&
+      p.pageRange.length >= 2 &&
+      Number.isFinite(p.pageRange[0]) &&
+      Number.isFinite(p.pageRange[1]),
+  );
+
+  // No usable ranges at all: nothing to prove. The quality gates separately
+  // require cutting instructions to produce parts, and a single-part upload
+  // legitimately has no range to check.
+  if (withRanges.length !== parts.length) {
+    if (withRanges.length > 0) {
+      const missing = parts.filter((p) => !withRanges.includes(p));
+      return `${missing.length} part(s) have no valid page range (e.g. "${missing[0].partName}")`;
+    }
+    return null;
+  }
+
+  const report = analyzePageCoverage(
+    withRanges.map((p) => ({
+      partName: p.partName,
+      instrument: p.instrument,
+      section: (p.section ?? 'Other') as CuttingInstruction['section'],
+      transposition: (p.transposition ?? 'C') as CuttingInstruction['transposition'],
+      partNumber: p.partNumber ?? 0,
+      pageRange: p.pageRange,
+    })),
+    // The span the produced parts claim to cover.
+    Math.max(...withRanges.map((p) => p.pageRange[1])),
+    'one',
+  );
+
+  return describePageCoverageFailure(report) || null;
 }
 
 // =============================================================================
@@ -166,6 +241,8 @@ export async function commitSmartUploadSessionToLibrary(
         sessionId,
         partsCommitted: partsCount,
         wasIdempotent: true,
+        unroutedParts: [],
+        assignmentsCreated: 0,
       };
     }
   }
@@ -223,6 +300,8 @@ export async function commitSmartUploadSessionToLibrary(
       sessionId,
       partsCommitted: partsCount,
       wasIdempotent: true,
+        unroutedParts: [],
+        assignmentsCreated: 0,
     };
   }
 
@@ -297,6 +376,8 @@ export async function commitSmartUploadSessionToLibrary(
         sessionId,
         partsCommitted: partsCount,
         wasIdempotent: true,
+        unroutedParts: [],
+        assignmentsCreated: 0,
       };
     }
 
@@ -330,6 +411,8 @@ export async function commitSmartUploadSessionToLibrary(
         sessionId,
         partsCommitted: partsCount,
         wasIdempotent: true,
+        unroutedParts: [],
+        assignmentsCreated: 0,
       };
     }
 
@@ -382,12 +465,41 @@ export async function commitSmartUploadSessionToLibrary(
     }
   }
 
+  // ── HARD GATE: every page must land in exactly one part ────────────
+  // This is the last line of defence for the one failure mode that can cost a
+  // musician their music at a concert: a page that belongs to no part at all.
+  // The processor and the resplit route both gate on coverage, but commit is
+  // reachable from the auto-commit worker, the review UI and the second-pass
+  // worker independently, and a part can be re-split or hand-edited in between.
+  // So the invariant is re-proven here, from the persisted parts, immediately
+  // before the transaction opens. It is checked against the actual page ranges
+  // that will become MusicPart rows — not against the instructions the LLM
+  // proposed, which may no longer match what was actually cut.
+  //
+  // totalPages is derived from the union of the produced ranges, so this asserts
+  // contiguity and no-overlap rather than trusting a stored page count. That is
+  // the property that matters: a gap inside the produced set is a lost page, and
+  // a duplicate range is a page handed to two desks.
+  const coverageFailure = assertPartsCoverTheirPages(parsedParts);
+  if (coverageFailure) {
+    throw new Error(
+      `Cannot commit: ${coverageFailure} Re-split the score so every page belongs to exactly one part.`,
+    );
+  }
+
   // 2. Transaction with error handling
   let txResult: {
     musicPiece: { id: string; title: string };
     musicFile: { id: string };
     partsCommitted: number;
+    unroutedParts: UnroutedPart[];
+    assignmentsCreated: number;
   };
+
+  // Set inside the transaction when a part could not be routed, then written onto
+  // the session in the same transaction. Declared out here because the closure
+  // assigns it before the session row is updated.
+  let routingNote: string | null = null;
 
   try {
     txResult = await prisma.$transaction(
@@ -596,6 +708,9 @@ export async function commitSmartUploadSessionToLibrary(
 
         // 2g. MusicParts
         let partsCommitted = 0;
+        // Every MusicPart this commit produced, so routing can hand each desk to
+        // a player. Collected across all three part-creation branches below.
+        const routableParts: RoutablePart[] = [];
 
         if (hasPreSplitParts && parsedParts.length > 0) {
           for (const part of parsedParts) {
@@ -729,7 +844,7 @@ export async function commitSmartUploadSessionToLibrary(
                 finalMusicFileKeys.push(part.storageKey);
               }
 
-              await tx.musicPart.update({
+              const updatedPart = await tx.musicPart.update({
                 where: { id: existingMusicPart.id },
                 data: {
                   partName,
@@ -743,6 +858,12 @@ export async function commitSmartUploadSessionToLibrary(
                   storageKey: part.storageKey ?? null,
                   partFingerprintHash,
                 },
+              });
+              routableParts.push({
+                partId: updatedPart.id,
+                partName,
+                instrumentLabel: instrumentName,
+                section: part.section ?? null,
               });
             } else {
               const partFile = await tx.musicFile.create({
@@ -767,7 +888,7 @@ export async function commitSmartUploadSessionToLibrary(
               });
               finalMusicFileKeys.push(part.storageKey);
 
-              await tx.musicPart.create({
+              const createdPart = await tx.musicPart.create({
                 data: {
                   pieceId: musicPiece.id,
                   instrumentId: instrument.id,
@@ -782,6 +903,12 @@ export async function commitSmartUploadSessionToLibrary(
                   storageKey: part.storageKey ?? null,
                   partFingerprintHash,
                 },
+              });
+              routableParts.push({
+                partId: createdPart.id,
+                partName,
+                instrumentLabel: instrumentName,
+                section: part.section ?? null,
               });
             }
             partsCommitted++;
@@ -815,7 +942,7 @@ export async function commitSmartUploadSessionToLibrary(
                 data: { name: instrumentName, family, sortOrder: 999 },
               });
             }
-            await tx.musicPart.create({
+            const metaPart = await tx.musicPart.create({
               data: {
                 pieceId: musicPiece.id,
                 instrumentId: instrument.id,
@@ -823,6 +950,12 @@ export async function commitSmartUploadSessionToLibrary(
                 fileId: musicFile.id,
                 partFingerprintHash,
               },
+            });
+            routableParts.push({
+              partId: metaPart.id,
+              partName,
+              instrumentLabel: instrumentName,
+              section: getSectionForLabel(instrumentName),
             });
             partsCommitted++;
           }
@@ -853,7 +986,7 @@ export async function commitSmartUploadSessionToLibrary(
                 data: { name: instrumentName, family, sortOrder: 999 },
               });
             }
-            await tx.musicPart.create({
+            const metaPart = await tx.musicPart.create({
               data: {
                 pieceId: musicPiece.id,
                 instrumentId: instrument.id,
@@ -862,8 +995,59 @@ export async function commitSmartUploadSessionToLibrary(
                 partFingerprintHash,
               },
             });
+            routableParts.push({
+              partId: metaPart.id,
+              partName,
+              instrumentLabel: instrumentName,
+              // `family` is the canonical section resolved from this instrument's
+              // label, computed above when the Instrument row was found-or-created.
+              // There is no `part` in scope on this single-instrument branch, so
+              // the previous `part.section` reference did not compile.
+              section: family,
+            });
             partsCommitted++;
           }
+        }
+
+        // 2h. Route each part to the member who plays it.
+        //
+        // This is what makes the product requirement true. Without it the parts
+        // exist in the library but reach nobody: `getPieceAssignmentGrant`
+        // denies every non-staff member who has no MusicAssignment row, so a
+        // committed score would be invisible in "My Music" and the Stand until a
+        // librarian hand-assigned every part. Routing runs inside this
+        // transaction so the assignments cannot outlive a rolled-back commit,
+        // and `applyRouting` is idempotent, so a retry after a crash converges
+        // rather than duplicating.
+        const routing = await applyRouting(tx, {
+          pieceId: musicPiece.id,
+          parts: routableParts,
+          roster: await loadRoutingRoster(),
+          assignedBy: approvedBy,
+        });
+
+        if (routing.unroutedParts.length > 0) {
+          // A part nobody plays is a gap the librarian must close by hand, not a
+          // silent omission. Record it on the session so the review surface can
+          // name it instead of a section simply having no music at the concert.
+          logger.warn("Smart upload: parts could not be routed to any member", {
+            sessionId,
+            pieceId: musicPiece.id,
+            unrouted: routing.unroutedParts.map((u) => ({
+              partName: u.partName,
+              instrument: u.instrumentLabel,
+              reason: u.reason,
+            })),
+          });
+
+          const existingNotes = uploadSession.routingDecision;
+          routingNote = [
+            `${routing.unroutedParts.length} part(s) need manual assignment: ` +
+              routing.unroutedParts.map((u) => `${u.partName} (${u.detail})`).join(' | '),
+            existingNotes,
+          ]
+            .filter(Boolean)
+            .join('\n\n');
         }
 
         // 2g. Mark session approved and commit complete (CAS-style update)
@@ -878,10 +1062,18 @@ export async function commitSmartUploadSessionToLibrary(
             committedPieceId: musicPiece.id,
             committedFileId: musicFile.id,
             commitError: null,
+            ...(routingNote ? { routingDecision: routingNote } : {}),
           },
         });
 
-        return { musicPiece, musicFile, partsCommitted };
+        return {
+          musicPiece,
+          musicFile,
+          partsCommitted,
+          unroutedParts: routing.unroutedParts,
+          assignmentsCreated:
+            routing.assignments.length - routing.alreadyAssigned,
+        };
       },
       { maxWait: 30000, timeout: 60000 },
     );
@@ -933,6 +1125,8 @@ export async function commitSmartUploadSessionToLibrary(
           sessionId,
           partsCommitted: partsCount,
           wasIdempotent: true,
+        unroutedParts: [],
+        assignmentsCreated: 0,
         };
       }
     }
@@ -997,5 +1191,7 @@ export async function commitSmartUploadSessionToLibrary(
     sessionId,
     partsCommitted: txResult.partsCommitted,
     wasIdempotent: false,
+    unroutedParts: txResult.unroutedParts,
+    assignmentsCreated: txResult.assignmentsCreated,
   };
 }

@@ -22,6 +22,10 @@ const mockTx = {
   musicPart: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), count: vi.fn() },
   instrument: { findFirst: vi.fn(), create: vi.fn() },
   smartUploadSession: { update: vi.fn() },
+  // Commit now routes parts to members; these are the collaborators that
+  // make the assignment rows land.
+  musicAssignment: { findMany: vi.fn(async () => []), create: vi.fn(async () => ({ id: 'assign-1' })) },
+  musicAssignmentHistory: { create: vi.fn(async () => ({})) },
 };
 
 vi.mock('@/lib/db', () => ({
@@ -37,6 +41,19 @@ vi.mock('@/lib/db', () => ({
     $transaction: vi.fn(),
   },
 }));
+
+// Routing reads the active roster. Default to an empty band so the existing
+// commit assertions are unaffected; routing itself is covered in
+// __tests__/part-routing.test.ts and commit-routing.test.ts.
+vi.mock('@/lib/smart-upload/part-routing', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@/lib/smart-upload/part-routing')
+  >();
+  return {
+    ...actual,
+    loadRoutingRoster: async () => [],
+  };
+});
 
 vi.mock('@/lib/services/storage', () => ({
   deleteFile: vi.fn().mockResolvedValue(undefined),

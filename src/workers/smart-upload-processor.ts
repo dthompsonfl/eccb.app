@@ -68,6 +68,11 @@ import {
   resolvePartTitle,
 } from "@/lib/smart-upload/part-naming";
 import {
+  analyzePageCoverage,
+  describePageCoverageFailure,
+  findMissingParts,
+} from "@/lib/smart-upload/page-coverage";
+import {
   evaluateQualityGates,
   isForbiddenLabel,
 } from "@/lib/smart-upload/quality-gates";
@@ -688,12 +693,19 @@ export async function processSmartUpload(
         llmFallbackReasons: string[];
       };
       /**
-       * Populated for the "part-naming-fallback" attempt: which parts could not
-       * be named from an extracted canonical title.
+       * Extra, per-strategy context. `parts` is populated for the
+       * "part-naming-fallback" attempt (which parts could not be named from an
+       * extracted canonical title); `missingParts` is populated for the
+       * "parts-not-located" attempt (which expected parts no instruction
+       * covered, i.e. the librarian must be told rather than left guessing).
        */
       details?: {
-        source: string;
-        parts: Array<{ instrument: string; partName: string; fileName: string }>;
+        source?: string;
+        parts?: Array<{ instrument: string; partName: string; fileName: string }>;
+        missingParts?: string[];
+        /** Populated for "split-coverage-incomplete": the exact page numbers. */
+        uncoveredPages?: number[];
+        duplicatedPages?: number[];
       };
     }
 
@@ -1811,6 +1823,17 @@ export async function processSmartUpload(
       instructionValidation.instructions,
       totalPages,
     );
+
+    // Independent proof of the coverage property, computed on the instructions
+    // that are actually about to be split rather than inferred from the gap
+    // helper. Catches duplicated pages as well as missing ones — `buildGap
+    // Instructions` alone would report nothing if two parts overlapped.
+    const coverageReport = analyzePageCoverage(
+      instructionValidation.instructions,
+      totalPages,
+      'zero',
+    );
+
     if (gapInstructions.length > 0) {
       const gapPageCount = gapInstructions.reduce((sum, gap) => {
         if (!gap.pageRange) return sum;
@@ -1823,6 +1846,7 @@ export async function processSmartUpload(
           sessionId,
           gaps: gapInstructions.map((gap) => gap.pageRange),
           gapPageCount,
+          coverageFailure: describePageCoverageFailure(coverageReport),
         },
       );
 
@@ -1952,7 +1976,13 @@ export async function processSmartUpload(
         pdfBuffer,
         smartSession.fileName.replace(/\.pdf$/i, ""),
         validatedInstructions,
-        { indexing: "zero" },
+        {
+          indexing: "zero",
+          metadata: {
+            title: extraction.title ?? undefined,
+            author: extraction.composer ?? undefined,
+          },
+        },
       );
     } catch (err) {
       logger.error("Failed to split PDF during smart upload", {
@@ -1968,7 +1998,82 @@ export async function processSmartUpload(
       return { status: "parse_failed", sessionId };
     }
 
-    // Step 5: Create part records
+    // ── Post-split coverage assertion ───────────────────────────────────────
+// The instructions were proven to cover the document before splitting. Now
+// prove that what the splitter *produced* still does. A part can fail to
+// render and take its pages with it, and a bad instruction set can survive
+// validation with a hole in it.
+//
+// A coverage failure does not discard the upload: the work already done (title,
+// composer, the parts that did render) is worth keeping. It forces human review
+// so the librarian sees exactly which pages or parts are missing, which is the
+// opposite of a silent drop.
+const producedCoverage = analyzePageCoverage(
+  splitResults.map((result) => result.instruction),
+  totalPages,
+  "zero",
+);
+
+const failedPartNames = validatedInstructions
+  .filter(
+    (instruction) =>
+      !splitResults.some(
+        (result) => result.instruction.partName === instruction.partName,
+      ),
+  )
+  .map((instruction) => instruction.partName);
+
+if (
+  splitResults.length < validatedInstructions.length ||
+  !producedCoverage.coversAllPagesExactlyOnce
+) {
+  const coverageFailure = describePageCoverageFailure(producedCoverage);
+  const failureSummary =
+    failedPartNames.length > 0
+      ? `${failedPartNames.length} part(s) could not be produced: ${failedPartNames.join(", ")}`
+      : coverageFailure;
+
+  logger.error(
+    "Split did not produce full page coverage — forcing human review",
+    {
+      sessionId,
+      instructionsRequested: validatedInstructions.length,
+      partsProduced: splitResults.length,
+      failedPartNames,
+      coverageFailure,
+    },
+  );
+
+  strategyHistory.push({
+    strategy: "split-coverage-incomplete",
+    confidence: 0,
+    failureReasons: [
+      `Split did not cover every page exactly once — ${failureSummary}`,
+    ],
+    durationMs: 0,
+    timestamp: new Date().toISOString(),
+    details: {
+      missingParts: failedPartNames,
+      uncoveredPages: producedCoverage.uncoveredPages,
+      duplicatedPages: producedCoverage.duplicatedPages,
+    },
+  });
+
+  extraction.requiresHumanReview = true;
+  extraction.confidenceScore = Math.min(extraction.confidenceScore, 10);
+  extraction.notes = extraction.notes
+    ? `${extraction.notes} | Split incomplete: ${failureSummary}`
+    : `Split incomplete: ${failureSummary}. A librarian must re-split this score.`;
+} else {
+  logger.info("Page coverage verified across all split parts", {
+    sessionId,
+    totalPages,
+    partsProduced: splitResults.length,
+    pageTotal: splitResults.reduce((sum, part) => sum + part.pageCount, 0),
+  });
+}
+
+// Step 5: Create part records
     await progress("saving", 90, "Uploading split parts to storage");
 
     const parsedParts: ParsedPartRecord[] = [];
@@ -2096,6 +2201,37 @@ export async function processSmartUpload(
         timestamp: new Date().toISOString(),
         details: { parts: titleFallbackParts, source: "upload-filename" },
       });
+    }
+
+    // Requirement: a part with no detected boundary must be reported as
+    // "could not locate this part", never silently omitted. Compare the parts
+    // the detector claimed to produce against the instructions we split on and
+    // record any shortfall for the reviewer.
+    const expectedPartNames = validatedInstructions.map(
+      (instruction) => instruction.partName,
+    );
+    const missingParts = findMissingParts(expectedPartNames, parsedParts);
+
+    if (missingParts.length > 0) {
+      logger.warn(
+        "Expected parts could not be located in the score — recording for review",
+        { sessionId, missingParts },
+      );
+
+      strategyHistory.push({
+        strategy: "parts-not-located",
+        confidence: 0,
+        failureReasons: [
+          `${missingParts.length} part(s) could not be located in this score: ${missingParts.join(", ")}`,
+        ],
+        durationMs: 0,
+        timestamp: new Date().toISOString(),
+        details: { missingParts },
+      });
+
+      extraction.notes = extraction.notes
+        ? `${extraction.notes} | Could not locate: ${missingParts.join(", ")}`
+        : `Could not locate: ${missingParts.join(", ")}`;
     }
 
     if (

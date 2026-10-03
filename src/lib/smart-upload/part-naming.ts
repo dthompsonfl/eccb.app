@@ -162,20 +162,88 @@ export function buildPartDisplayName(
 }
 
 /**
+ * Characters no mainstream filesystem accepts, plus the ASCII control range.
+ * Removed outright (not replaced) so a title can never smuggle a path
+ * separator or a NUL byte into an object key.
+ */
+// Stripping control characters is the entire point of this pattern — a NUL
+// or newline in a filename is exactly what we must remove.
+// eslint-disable-next-line no-control-regex
+const UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f/\\:*?"<>|']/g;
+
+/**
+ * Windows reserved device names. A file called `CON.pdf` or `NUL.pdf` cannot be
+ * opened, renamed, or deleted in Explorer — it silently resolves to the device.
+ * Matched case-insensitively against the stem before the extension.
+ */
+const WINDOWS_RESERVED_NAMES = new Set([
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+]);
+
+/** Max characters in the stem, before `.pdf`. */
+const MAX_FILENAME_STEM = 200;
+
+/** Stem used when sanitising leaves nothing usable behind. */
+const FALLBACK_FILENAME_STEM = 'Part';
+
+/**
+ * Reduce arbitrary text to a filesystem-safe, Windows-safe, macOS-safe stem.
+ *
+ * Pure and deterministic: the same input always yields the same stem, so
+ * re-running a split produces byte-identical filenames and never drifts into
+ * a `... (1).pdf` collision.
+ */
+export function sanitizePartFilenameStem(raw: string): string {
+  // Order matters: strip unsafe chars, convert whitespace to underscores, then
+  // deal with dots and trailing separators. Dot cleanup must run *after* the
+  // whitespace pass, otherwise 'trailing.  ' leaves a dangling '_' behind.
+  let stem = (typeof raw === 'string' ? raw : '')
+    .replace(UNSAFE_FILENAME_CHARS, '')
+    .replace(/\s+/g, '_')
+    .replace(/_{2,}/g, '_')
+    // Windows silently drops trailing dots and spaces, which would make the
+    // on-disk name differ from the name we recorded in the database.
+    .replace(/^\.+/, '')
+    .replace(/[.\s]+$/, '')
+    .replace(/_+$/, '')
+    // '_' removal can expose a dot that was sitting just before it
+    // ('trailing.  ' → 'trailing._' → 'trailing.'), so settle once more.
+    .replace(/[.\s]+$/, '');
+
+  if (stem.length > MAX_FILENAME_STEM) {
+    stem = stem.slice(0, MAX_FILENAME_STEM).replace(/[.\s_]+$/, '');
+  }
+
+  if (stem.length === 0) return FALLBACK_FILENAME_STEM;
+
+  // `CON.pdf` is undeletable on Windows, so escape the stem rather than the
+  // name — a leading underscore keeps it readable and unreserved.
+  if (WINDOWS_RESERVED_NAMES.has(stem.toLowerCase())) {
+    stem = `_${stem}`;
+  }
+
+  return stem;
+}
+
+/**
  * Build a safe filesystem filename from a display name.
  *
  * E.g. "American Patrol 1st Bb Clarinet" → "American_Patrol_1st_Bb_Clarinet.pdf"
+ *
+ * The filename carries both the work title and the part name so a musician who
+ * downloads a part and opens it outside the Digital Music Stand can identify it
+ * instantly, and it is safe on Windows, macOS, and Linux.
  */
 export function buildPartFilename(displayName: string): string {
-  return (
-    displayName
-      .trim()
-      .replace(/[/\\:*?"<>|']/g, '') // remove filesystem-unsafe chars
-      .replace(/\s+/g, '_')         // spaces → underscores
-      .replace(/_{2,}/g, '_')       // collapse multiple underscores
-      .slice(0, 200) +              // max 200 chars before extension
-    '.pdf'
+  // Strip an existing extension first so re-naming an already-named part cannot
+  // stack suffixes: 'Work - Flute.pdf' must stay 'Work - Flute.pdf', never
+  // 'Work - Flute.pdf.pdf'.
+  const stem = sanitizePartFilenameStem(
+    (typeof displayName === 'string' ? displayName : '').replace(/\.pdf$/i, ''),
   );
+  return `${stem}.pdf`;
 }
 
 /**
@@ -191,12 +259,16 @@ export function buildPartStorageSlug(
   displayName: string,
   opts?: { partNumber?: number; pageRange?: [number, number] },
 ): string {
-  const base = displayName
-    .trim()
-    .replace(/[^a-zA-Z0-9\-_ ]/g, '')
-    .replace(/\s+/g, '_')
-    .replace(/_{2,}/g, '_')
-    .slice(0, 120); // shortened to leave room for the suffix
+  // Storage keys are stricter than download filenames: object keys are also
+  // used in URLs and cache paths, so anything outside [A-Za-z0-9-_] goes. This
+  // is the pre-existing contract and is kept. The stem sanitiser is still
+  // applied first so an empty base (which would yield a key like `_p1`) and a
+  // Windows reserved stem are handled consistently with the filename builder.
+  const base =
+    sanitizePartFilenameStem(displayName)
+      .replace(/[^a-zA-Z0-9\-_]/g, '')
+      .slice(0, 120)
+      .replace(/[._-]+$/, '') || FALLBACK_FILENAME_STEM;
 
   const parts: string[] = [base];
   if (opts?.partNumber != null) {

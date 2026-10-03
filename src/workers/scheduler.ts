@@ -569,6 +569,77 @@ export async function checkExpiringContent(): Promise<void> {
   }
 }
 
+/**
+ * How long a Smart Upload session may sit in PROCESSING / AUTO_COMMITTING
+ * before we declare it dead.
+ *
+ * Chosen to sit above the longest legitimate run: the pipeline OCRs, renders,
+ * calls vision LLMs, splits and self-heals, which on a large scanned score with
+ * a slow provider can exceed 30 minutes. Below that bound a session is presumed
+ * orphaned.
+ */
+export const SMART_UPLOAD_STALE_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * Fail Smart Upload sessions that have been stuck in a non-terminal processing
+ * state for longer than {@link SMART_UPLOAD_STALE_AFTER_MS}.
+ *
+ * Why this is needed
+ * ------------------
+ * The processor wraps its body in a try/catch that marks the session FAILED, and
+ * BullMQ retries three times with exponential backoff, so an *exception* is
+ * handled. What neither handles is a process that dies without unwinding: an
+ * OOM kill, a container restart, a `SIGKILL` during deploy. The job is then
+ * lost from BullMQ's active set with no future attempt, and the session row is
+ * left in PROCESSING forever. The librarian's UI shows "processing…" for a file
+ * that will never finish, and the fallback policy never gets to route it to
+ * human review because nothing re-evaluates it.
+ *
+ * So the recovery is time-based rather than exception-based: a session nobody is
+ * working on any more is moved to REQUIRES_REVIEW, which is the state a human
+ * can actually act on. It is deliberately NOT marked FAILED — nothing failed, the
+ * worker vanished, and FAILED reads as "this PDF is bad" to an elderly
+ * librarian. REQUIRES_REVIEW reads as "a person needs to look at this", which is
+ * true.
+ */
+export async function reapStaleSmartUploadSessions(): Promise<number> {
+  const cutoff = new Date(Date.now() - SMART_UPLOAD_STALE_AFTER_MS);
+
+  const stale = await prisma.smartUploadSession.findMany({
+    where: {
+      status: { in: ['PROCESSING', 'AUTO_COMMITTING'] },
+      updatedAt: { lt: cutoff },
+    },
+    select: { uploadSessionId: true, status: true, updatedAt: true },
+    take: 100,
+  });
+
+  if (stale.length === 0) return 0;
+
+  const ids = stale.map((s) => s.uploadSessionId);
+
+  const { count } = await prisma.smartUploadSession.updateMany({
+    // Re-assert the predicate so a session that resumed between the read and
+    // the write is not clobbered back into review.
+    where: { uploadSessionId: { in: ids }, updatedAt: { lt: cutoff } },
+    data: {
+      status: 'REQUIRES_REVIEW',
+      requiresHumanReview: true,
+      parseStatus: 'STALE_WORKER_TIMEOUT',
+    },
+  });
+
+  if (count > 0) {
+    logger.warn('Reaped stale Smart Upload sessions left in processing', {
+      count,
+      sessionIds: ids.slice(0, 10),
+      staleAfterMs: SMART_UPLOAD_STALE_AFTER_MS,
+    });
+  }
+
+  return count;
+}
+
 // ============================================================================
 // Worker Creation
 // ============================================================================

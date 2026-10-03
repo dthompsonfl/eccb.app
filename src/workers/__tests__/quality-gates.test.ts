@@ -224,12 +224,21 @@ function makeAutonomousConfig(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Build a valid split result for one part */
+/**
+ * Build a valid split result for one part.
+ *
+ * `startPage` is 0-indexed. Multi-part callers must pass distinct,
+ * non-overlapping ranges: every test document here is 20 pages, so two parts
+ * that both default to `[0, pageCount-1]` would duplicate pages 1-10 and
+ * silently drop 11-20 — an incoherent fixture that the processor's page-coverage
+ * assertion correctly rejects.
+ */
 function makePartResult(
   instrument: string,
   partName: string,
   pageCount: number,
   section = 'Woodwinds',
+  startPage = 0,
 ) {
   return {
     instruction: {
@@ -238,7 +247,7 @@ function makePartResult(
       section,
       transposition: 'C',
       partNumber: 1,
-      pageRange: [0, pageCount - 1] as [number, number],
+      pageRange: [startPage, startPage + pageCount - 1] as [number, number],
     },
     buffer: Buffer.from(`fake-pdf-${instrument}`),
     pageCount,
@@ -485,8 +494,8 @@ describe('Auto-commit Quality Gates (DoD §1.5)', () => {
     });
 
     vi.mocked(splitPdfByCuttingInstructions).mockResolvedValue([
-      makePartResult('Flute', 'Flute', 10),
-      makePartResult('Clarinet', 'Clarinet', 10),
+      makePartResult('Flute', 'Flute', 10, 'Woodwinds', 0),
+      makePartResult('Clarinet', 'Clarinet', 10, 'Woodwinds', 10),
     ] as any);
 
     await processSmartUpload(makeJob());
@@ -568,8 +577,8 @@ describe('Auto-commit Quality Gates (DoD §1.5)', () => {
     });
 
     vi.mocked(splitPdfByCuttingInstructions).mockResolvedValue([
-      makePartResult('Flute', 'Flute', 10),
-      makePartResult('Clarinet', 'Clarinet', 10),
+      makePartResult('Flute', 'Flute', 10, 'Woodwinds', 0),
+      makePartResult('Clarinet', 'Clarinet', 10, 'Woodwinds', 10),
     ] as any);
 
     await processSmartUpload(makeJob());

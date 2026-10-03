@@ -40,6 +40,66 @@ export interface SplitPart {
 export interface SplitPdfOptions {
   indexing?: 'zero' | 'one';
   generateFilename?: (partName: string, pageStart: number, pageEnd: number, index: number) => string;
+  /**
+   * Document metadata stamped into every split part PDF so it displays
+   * correctly in a desktop PDF viewer and in Finder/Explorer.
+   *
+   * `title` is overridden per part with `"<title> — <partName>"` so a musician
+   * who opens a downloaded part outside the Digital Music Stand can tell both
+   * the work and their own part from the viewer's title bar.
+   */
+  metadata?: SplitPdfMetadata;
+}
+
+export interface SplitPdfMetadata {
+  /** Work title, e.g. "Lincolnshire Posy". */
+  title?: string;
+  /** Composer / arranger. */
+  author?: string;
+  /** Subject line, e.g. "Instrument part — 1st Bb Clarinet". */
+  subject?: string;
+  /** Free-form keywords. */
+  keywords?: string;
+}
+
+/** Producer stamped on generated part PDFs. */
+const PART_PDF_PRODUCER = 'ECCB Smart Upload';
+
+/**
+ * Embed document metadata into a part PDF.
+ *
+ * pdf-lib's `copyPages` copies page content only — the document information
+ * dictionary of the source is *not* carried over, so a split part comes out of
+ * the splitter with no title, no author, and no subject at all. This applies
+ * them so macOS Preview, Windows readers, and Finder/Explorer show the work and
+ * the part instead of "untitled".
+ *
+ * Failures are swallowed: metadata is a usability nicety and must never fail a
+ * split that produced perfectly good pages.
+ */
+async function stampPartMetadata(
+  doc: MaybeFlushablePdfDocument,
+  partName: string,
+  metadata: SplitPdfMetadata | undefined,
+): Promise<void> {
+  if (!metadata) return;
+
+  const workTitle = (metadata.title ?? '').trim();
+  const part = partName.trim();
+
+  try {
+    const title = workTitle && part ? `${workTitle} — ${part}` : workTitle || part;
+    if (title) doc.setTitle(title);
+    if (metadata.author?.trim()) doc.setAuthor(metadata.author.trim());
+    if (metadata.subject?.trim()) doc.setSubject(metadata.subject.trim());
+    if (metadata.keywords?.trim()) doc.setKeywords([metadata.keywords.trim()]);
+    doc.setProducer(PART_PDF_PRODUCER);
+  } catch (error) {
+    logger.warn('Failed to stamp metadata onto split part PDF', {
+      partName,
+      ...safeErrorDetails(error),
+    });
+  }
 }
 
 type MaybeFlushablePdfDocument = PDFDocument & {
@@ -77,6 +137,39 @@ function normalizeFiniteInteger(value: unknown): number | null {
  */
 function sanitizeFileName(fileName: string): string {
   return safeString(fileName).replace(/[\\/:*?"<>|]/g, '_');
+}
+
+/**
+ * Stamp metadata onto an already-rendered part PDF buffer.
+ *
+ * The image-based and raw-slice engines build their output documents from
+ * scratch, so they have no information dictionary to fill in at creation time.
+ * This re-opens the finished buffer, stamps it, and returns the new bytes.
+ *
+ * A failure here is non-fatal: the pages are already correct and extracted, so
+ * the original buffer is returned unchanged rather than failing the part.
+ */
+async function stampMetadataIntoBuffer(
+  buffer: Buffer,
+  partName: string,
+  metadata: SplitPdfMetadata | undefined,
+): Promise<Buffer> {
+  if (!metadata) return buffer;
+
+  let doc: MaybeFlushablePdfDocument | undefined;
+  try {
+    doc = (await PDFDocument.load(buffer)) as MaybeFlushablePdfDocument;
+    await stampPartMetadata(doc, partName, metadata);
+    return Buffer.from(await doc.save());
+  } catch (error) {
+    logger.warn('Failed to stamp metadata onto adaptive part buffer', {
+      partName,
+      ...safeErrorDetails(error),
+    });
+    return buffer;
+  } finally {
+    await cleanupPdfDoc(doc);
+  }
 }
 
 /**
@@ -124,6 +217,7 @@ function normalizeSplitRange(
 async function createSplitBuffer(
   sourcePdf: PDFDocument,
   pageIndices: number[],
+  metadata?: { partName: string; metadata?: SplitPdfMetadata },
 ): Promise<{ buffer: Buffer; pageCount: number }> {
   let newPdf: MaybeFlushablePdfDocument | undefined;
 
@@ -133,6 +227,10 @@ async function createSplitBuffer(
 
     for (const page of copiedPages) {
       newPdf.addPage(page);
+    }
+
+    if (metadata) {
+      await stampPartMetadata(newPdf, metadata.partName, metadata.metadata);
     }
 
     const pdfBytes = await newPdf.save();
@@ -354,7 +452,7 @@ export async function splitPdfByCuttingInstructions(
   let sourcePdf: MaybeFlushablePdfDocument | undefined;
 
   try {
-    const { generateFilename, indexing = 'zero' } = options;
+    const { generateFilename, indexing = 'zero', metadata } = options;
     
     // Attempt to open PDF — this might fail on corrupted PDFs
     let opened: { pdfDoc: PDFDocument; pageCount: number };
@@ -450,7 +548,10 @@ export async function splitPdfByCuttingInstructions(
 
         if (sourcePdf) {
           try {
-            split = await createSplitBuffer(sourcePdf, normalizedRange.pageIndices);
+            split = await createSplitBuffer(sourcePdf, normalizedRange.pageIndices, {
+              partName: instruction.partName,
+              metadata,
+            });
           } catch (pdfLibError) {
             // pdf-lib failed on this specific part, attempt adaptive extraction
             const details = safeErrorDetails(pdfLibError);
@@ -476,7 +577,11 @@ export async function splitPdfByCuttingInstructions(
             }
 
             split = {
-              buffer: adaptiveResult.buffer,
+              buffer: await stampMetadataIntoBuffer(
+                adaptiveResult.buffer,
+                instruction.partName,
+                metadata,
+              ),
               pageCount: adaptiveResult.pageCount,
             };
 
@@ -504,7 +609,11 @@ export async function splitPdfByCuttingInstructions(
           }
 
           split = {
-            buffer: adaptiveResult.buffer,
+            buffer: await stampMetadataIntoBuffer(
+              adaptiveResult.buffer,
+              instruction.partName,
+              metadata,
+            ),
             pageCount: adaptiveResult.pageCount,
           };
 

@@ -191,13 +191,16 @@ export async function addJob<T extends JobType>(
   options?: { delay?: number; jobId?: string }
 ): Promise<Job> {
   const queueName = getQueueNameForJob(jobType);
-  const queue = getQueue(
-    queueName === QUEUE_NAMES.EMAIL ? 'EMAIL' :
-    queueName === QUEUE_NAMES.NOTIFICATION ? 'NOTIFICATION' :
-    queueName === QUEUE_NAMES.SCHEDULED ? 'SCHEDULED' :
-    queueName === QUEUE_NAMES.CLEANUP ? 'CLEANUP' :
-    queueName === QUEUE_NAMES.SMART_UPLOAD ? 'SMART_UPLOAD' : 'DEAD_LETTER'
-  );
+  // Map by QUEUE_NAMES value rather than by a chain of comparisons. The previous
+  // chain had no OCR branch and defaulted to DEAD_LETTER, so adding a job type
+  // that routes to the OCR queue would have silently published it to the
+  // dead-letter sink instead of the queue with an OCR worker on it. Fail loudly
+  // on an unmapped queue rather than publishing work where nobody will read it.
+  const queueKey = Object.entries(QUEUE_NAMES).find(([, value]) => value === queueName)?.[0];
+  if (!queueKey) {
+    throw new Error(`No queue registered for job type ${jobType} (queue ${queueName})`);
+  }
+  const queue = getQueue(queueKey as keyof typeof QUEUE_NAMES);
 
   if (!queue) {
     throw new Error(`Queue not initialized: ${queueName}`);

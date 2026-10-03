@@ -9,6 +9,7 @@ import {
   checkScheduledContent,
   checkEventReminders,
   checkExpiringContent,
+  reapStaleSmartUploadSessions,
 } from './scheduler';
 import {
   startSmartUploadProcessorWorker,
@@ -72,6 +73,14 @@ export function isSocketWorkerRunning(): boolean {
   return socketWorkerEnabled && socketHttpServer !== null;
 }
 
+/** Thrown when the Socket.IO stand server could not be started. */
+class SocketWorkerStartupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SocketWorkerStartupError';
+  }
+}
+
 // ============================================================================
 // Scheduler Loop
 // ============================================================================
@@ -87,10 +96,13 @@ async function runSchedulerTick(): Promise<void> {
     
     // Check for scheduled content to publish
     await checkScheduledContent();
-    
+
     // Check for event reminders
     await checkEventReminders();
-    
+
+    // Recover sessions orphaned by a worker that died mid-job. Without this a
+    // SIGKILL/OOM/restart leaves a librarian staring at a permanent spinner.
+    await reapStaleSmartUploadSessions();
   } catch (error) {
     logger.error('Scheduler tick failed', { error: error instanceof Error ? error.message : 'Unknown error' });
   }
@@ -172,17 +184,23 @@ function startHealthServer(): void {
     if (req.url === '/health') {
       try {
         const stats = await getAllQueueStats();
+        const socketsHealthy = !ENABLE_WEBSOCKETS || isSocketWorkerRunning();
+        // When ENABLE_WEBSOCKETS=true the socket server is part of this
+        // process's contract. Excluding it from this check is what allowed a
+        // real-time-sync outage to report itself as healthy.
         const workersHealthy =
           areQueuesInitialized() &&
           isEmailWorkerRunning() &&
           isSchedulerWorkerRunning() &&
           isSmartUploadProcessorWorkerRunning() &&
-          isOcrWorkerRunning();
+          isOcrWorkerRunning() &&
+          socketsHealthy;
 
         const health = {
           status: workersHealthy ? 'healthy' : 'unhealthy',
           timestamp: new Date().toISOString(),
           uptime: process.uptime(),
+          websocketsExpected: ENABLE_WEBSOCKETS,
           workers: {
             email: isEmailWorkerRunning(),
             scheduler: isSchedulerWorkerRunning(),
@@ -209,9 +227,15 @@ function startHealthServer(): void {
         isEmailWorkerRunning() &&
         isSchedulerWorkerRunning() &&
         isSmartUploadProcessorWorkerRunning() &&
-        isOcrWorkerRunning();
+        isOcrWorkerRunning() &&
+        (!ENABLE_WEBSOCKETS || isSocketWorkerRunning());
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ready, ocr: isOcrWorkerRunning(), sockets: isSocketWorkerRunning() }));
+      res.end(JSON.stringify({
+        ready,
+        ocr: isOcrWorkerRunning(),
+        sockets: isSocketWorkerRunning(),
+        websocketsExpected: ENABLE_WEBSOCKETS,
+      }));
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -330,38 +354,70 @@ async function main(): Promise<void> {
   // Start health check server
   startHealthServer();
 
-  // Optionally start embedded WebSocket worker
+  // Optionally start embedded WebSocket worker.
+  //
+  // This block used to swallow every failure: a bind error or a Redis outage
+  // was logged and startup continued with `socketWorkerEnabled = false`. The
+  // worker's /health and /ready then reported `sockets: false` while still
+  // answering 200, so a deployment with real-time sync silently broken looked
+  // completely healthy. When ENABLE_WEBSOCKETS=true the socket server is now
+  // mandatory: a failure aborts startup with a non-zero exit that the
+  // supervisor (and the process manager's readiness probe) can see.
   if (ENABLE_WEBSOCKETS) {
+    // Ports are env-driven (next.config.ts rewrites can only see env, so the
+    // worker must agree with SOCKET_PORT). An explicitly-set SOCKET_PORT wins
+    // over the DB value; otherwise the DB value is used.
+    const settings = await getStandSettings();
+    const socketPort = SOCKET_PORT_EXPLICIT ? SOCKET_PORT : (settings.websocketPort || SOCKET_PORT);
+    logger.info(`Socket port source: ${SOCKET_PORT_EXPLICIT ? `SOCKET_PORT env (${SOCKET_PORT})` : `database setting (${socketPort})`}`);
+
+    const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+    const makeClient = (label: string) => {
+      const c = new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
+      c.on('error', (e) => logger.error(`Socket Redis ${label} error`, { error: e.message }));
+      return c;
+    };
+    socketPubClient = makeClient('pub');
+    socketSubClient = makeClient('sub');
+    socketHttpServer = http.createServer();
+    initializeStandSocketServer(socketHttpServer, socketPubClient, socketSubClient);
+
     try {
-      // Ports are env-driven (next.config.ts rewrites can only see env, so
-      // the worker must agree with SOCKET_PORT). An explicitly-set
-      // SOCKET_PORT wins over the DB value; otherwise the DB value is used.
-      // Either way listenWithFallback rolls forward when busy.
-      const settings = await getStandSettings();
-      const socketPort = SOCKET_PORT_EXPLICIT ? SOCKET_PORT : (settings.websocketPort || SOCKET_PORT);
-      logger.info(`Socket port source: ${SOCKET_PORT_EXPLICIT ? `SOCKET_PORT env (${SOCKET_PORT})` : `database setting (${socketPort})`}`);
-      
-      const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-      const makeClient = (label: string) => {
-        const c = new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
-        c.on('error', (e) => logger.error(`Socket Redis ${label} error`, { error: e.message }));
-        return c;
-      };
-      socketPubClient = makeClient('pub');
-      socketSubClient = makeClient('sub');
-      socketHttpServer = http.createServer();
-      initializeStandSocketServer(
+      // `next.config.ts` freezes the /api/stand/socket proxy target into the
+      // build manifest at BUILD time, so rolling this port forward would leave
+      // the proxy pointing at nothing. When SOCKET_PORT came from the
+      // environment — the process manager always sets it explicitly — bind
+      // exactly that port and fail loudly when it is already taken.
+      const attempts = SOCKET_PORT_EXPLICIT ? 1 : 25;
+      const boundPort = await listenWithFallback(
         socketHttpServer,
-        socketPubClient,
-        socketSubClient,
+        socketPort,
+        'Embedded socket worker',
+        attempts,
+        (m) => logger.info(m),
       );
-      // Auto-roll to the next free port when SOCKET_PORT is occupied.
-      await listenWithFallback(socketHttpServer, socketPort, 'Embedded socket worker', 25, (m) =>
-        logger.info(m),
-      );
+      if (boundPort !== socketPort) {
+        throw new SocketWorkerStartupError(
+          `Embedded socket worker bound port ${boundPort} instead of the configured ${socketPort}. The ` +
+            'build proxies /api/stand/socket to a fixed port, so this deployment would serve no ' +
+            'real-time updates. Free the port, or rebuild with the port you intend to use.',
+        );
+      }
       socketWorkerEnabled = true;
+      logger.info('Embedded socket worker started', { port: boundPort });
     } catch (err) {
-      logger.error('Failed to start socket worker', { error: err instanceof Error ? err.message : err });
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('Failed to start socket worker', { error: message });
+      // Release the half-initialised Redis clients so the failure does not
+      // leave connections dangling for the reaper.
+      await Promise.all([
+        socketPubClient?.quit().catch(() => undefined),
+        socketSubClient?.quit().catch(() => undefined),
+      ]).catch(() => undefined);
+      socketPubClient = null;
+      socketSubClient = null;
+      socketHttpServer = null;
+      throw new SocketWorkerStartupError(message);
     }
   }
 
