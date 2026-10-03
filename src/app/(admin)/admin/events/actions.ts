@@ -6,6 +6,7 @@ import { requirePermission } from '@/lib/auth/guards';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
 import { EventType, AttendanceStatus } from '@prisma/client';
+import { replaceEventAttendance } from '@/lib/attendance/bulk-write';
 import {
   EVENT_CREATE,
   EVENT_EDIT,
@@ -178,27 +179,28 @@ export async function recordAttendance(
   const session = await requirePermission(ATTENDANCE_MARK_ALL);
 
   try {
-    // Delete existing records for this event
-    await prisma.attendance.deleteMany({
-      where: { eventId },
-    });
-
-    // Create new records
-    await prisma.attendance.createMany({
-      data: records.map((record) => ({
+    // Atomic replace, shared with the admin attendance action and the
+    // /api/attendance/bulk route. This third copy of the same write was an
+    // un-transacted deleteMany()+createMany(): a failure between the two wiped
+    // every attendance row for the event. See lib/attendance/bulk-write.
+    const { count } = await prisma.$transaction(async (tx) =>
+      replaceEventAttendance(
+        tx,
         eventId,
-        memberId: record.memberId,
-        status: record.status as AttendanceStatus,
-        notes: record.notes,
-        markedBy: session.user.id,
-      })),
-    });
+        records.map((record) => ({
+          memberId: record.memberId,
+          status: record.status as AttendanceStatus,
+          notes: record.notes,
+        })),
+        session.user.id,
+      ),
+    );
 
     await auditLog({
       action: 'attendance.record',
       entityType: 'Event',
       entityId: eventId,
-      newValues: { recordCount: records.length },
+      newValues: { recordCount: count },
     });
 
     revalidatePath(`/admin/events/${eventId}/attendance`);

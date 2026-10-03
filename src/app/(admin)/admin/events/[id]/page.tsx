@@ -20,6 +20,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 
+import { EventLifecycleActions } from '@/components/admin/events/event-lifecycle-actions';
+
 import { EVENT_VIEW_ALL } from '@/lib/auth/permission-constants';
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -112,6 +114,12 @@ export default async function EventDetailPage({ params }: PageProps) {
               Edit
             </Button>
           </Link>
+          <EventLifecycleActions
+            eventId={id}
+            eventTitle={event.title}
+            isCancelled={event.isCancelled}
+            hasHistory={event.attendance.length > 0 || event.music.length > 0}
+          />
         </div>
       </div>
 
