@@ -63,20 +63,20 @@ model Account {
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  ipAddress String?
-  userAgent String?
+  id             String   @id @default(cuid())
+  userId         String
+  token          String   @unique
+  expiresAt      DateTime
+  ipAddress      String?
+  userAgent      String?
   // Set by the Better Auth admin plugin when an admin impersonates this
   // session. Null for every ordinary session. Never populated by us
   // directly — Better Auth owns the value and `stopImpersonating` clears it
   // by deleting the session row.
   impersonatedBy String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId], map: "session_userId_fkey")
   @@index([impersonatedBy], map: "session_impersonatedBy_fkey")
@@ -88,7 +88,7 @@ model Session {
 /// symmetric ciphertext, never plaintext, and are excluded from API output
 /// by the plugin schema (`returned: false`).
 model TwoFactor {
-  id String @id @default(cuid())
+  id          String @id @default(cuid())
   // TEXT, not String: Better Auth stores symmetric-ciphertext here, which is
   // far wider than the 191 chars a Prisma `String` would give. Verified
   // against the live DB — 10 backup codes overflowed varchar(191) outright.
@@ -288,59 +288,59 @@ model MemberSection {
 }
 
 model MusicPiece {
-  id                  String             @id @default(cuid())
-  title               String
-  subtitle            String?
-  composerId          String?
-  arrangerId          String?
-  publisherId         String?
-  difficulty          MusicDifficulty?
-  duration            Int?
-  genre               String?
-  style               String?
-  instrumentation     String?
-  tags                String?            @db.LongText
-  catalogNumber       String?            @unique
+  id                      String             @id @default(cuid())
+  title                   String
+  subtitle                String?
+  composerId              String?
+  arrangerId              String?
+  publisherId             String?
+  difficulty              MusicDifficulty?
+  duration                Int?
+  genre                   String?
+  style                   String?
+  instrumentation         String?
+  tags                    String?            @db.LongText
+  catalogNumber           String?            @unique
   /// Copyright year of the work, extracted from the score (e.g. 1977).
   /// Nullable: most library entries have no known year.
-  copyrightYear       Int?
+  copyrightYear           Int?
   /// Deliver this work with a recipient-identifying watermark. DEFAULT TRUE:
   /// copyrighted sheet music may only be issued traceably to a named member, so
   /// disabling the watermark is an explicit, audited admin decision.
-  watermarkEnabled    Boolean            @default(true)
+  watermarkEnabled        Boolean            @default(true)
   /// Admin who last set watermarkEnabled to false (null while enabled).
-  watermarkDisabledBy String?
+  watermarkDisabledBy     String?
   /// When the watermark was disabled (null while enabled).
-  watermarkDisabledAt DateTime?
+  watermarkDisabledAt     DateTime?
   /// Justification supplied by the admin who disabled it (licensing evidence).
-  watermarkDisabledReason String?        @db.VarChar(500)
-  notes               String?
-  performanceHistory  String?
-  isArchived          Boolean            @default(false)
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
-  deletedAt           DateTime?
-  confidenceScore     Int?
-  source              String?
-  ensembleType        String?
-  keySignature        String?
-  tempo               String?
-  timeSignature       String?
-  workFingerprintHash String?            @unique @db.Char(64)
-  annotations         Annotation[]
-  audioLinks          AudioLink[]
-  eventMusic          EventMusic[]
-  assignments         MusicAssignment[]
-  files               MusicFile[]
-  parts               MusicPart[]
-  arranger            Person?            @relation("ArrangerPieces", fields: [arrangerId], references: [id])
-  composer            Person?            @relation("ComposerPieces", fields: [composerId], references: [id])
-  publisher           Publisher?         @relation(fields: [publisherId], references: [id])
-  navigationLinksFrom NavigationLink[]   @relation("NavigationLinksFrom")
-  navigationLinksTo   NavigationLink[]   @relation("NavigationLinksTo")
-  practiceLogs        PracticeLog[]
-  standBookmarks      StandBookmark[]
-  setlistItems        StandSetlistItem[]
+  watermarkDisabledReason String?            @db.VarChar(500)
+  notes                   String?
+  performanceHistory      String?
+  isArchived              Boolean            @default(false)
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  deletedAt               DateTime?
+  confidenceScore         Int?
+  source                  String?
+  ensembleType            String?
+  keySignature            String?
+  tempo                   String?
+  timeSignature           String?
+  workFingerprintHash     String?            @unique @db.Char(64)
+  annotations             Annotation[]
+  audioLinks              AudioLink[]
+  eventMusic              EventMusic[]
+  assignments             MusicAssignment[]
+  files                   MusicFile[]
+  parts                   MusicPart[]
+  arranger                Person?            @relation("ArrangerPieces", fields: [arrangerId], references: [id])
+  composer                Person?            @relation("ComposerPieces", fields: [composerId], references: [id])
+  publisher               Publisher?         @relation(fields: [publisherId], references: [id])
+  navigationLinksFrom     NavigationLink[]   @relation("NavigationLinksFrom")
+  navigationLinksTo       NavigationLink[]   @relation("NavigationLinksTo")
+  practiceLogs            PracticeLog[]
+  standBookmarks          StandBookmark[]
+  setlistItems            StandSetlistItem[]
 
   @@index([title])
   @@index([composerId])
@@ -409,71 +409,71 @@ model MusicFileVersion {
 }
 
 model SmartUploadSession {
-  id                  String                          @id @default(cuid())
-  uploadSessionId     String                          @unique
-  fileName            String
-  fileSize            Int
-  mimeType            String
-  storageKey          String
-  extractedMetadata   String?                         @db.LongText
-  confidenceScore     Int?
-  status              SmartUploadStatus               @default(PROCESSING)
-  uploadedBy          String
-  reviewedBy          String?
-  reviewedAt          DateTime?
-  createdAt           DateTime                        @default(now())
-  updatedAt           DateTime                        @updatedAt
-  autoApproved        Boolean                         @default(false)
-  cuttingInstructions String?                         @db.LongText
-  firstPassRaw        String?                         @db.LongText
-  llmModelParams      String?                         @db.LongText
-  llmProvider         String?
-  llmVerifyModel      String?
-  llmVisionModel      String?
-  parseStatus         String?
-  parsedParts         String?                         @db.LongText
-  secondPassRaw       String?                         @db.LongText
-  secondPassResult    String?                         @db.LongText
-  secondPassStatus    String?
-  tempFiles           String?                         @db.LongText
-  routingDecision     String?
-  llmPromptVersion    String?
-  adjudicatorRaw      String?                         @db.LongText
-  adjudicatorResult   String?                         @db.LongText
-  adjudicatorStatus   String?
-  finalConfidence     Int?
-  llmAdjudicatorModel String?
+  id                     String                          @id @default(cuid())
+  uploadSessionId        String                          @unique
+  fileName               String
+  fileSize               Int
+  mimeType               String
+  storageKey             String
+  extractedMetadata      String?                         @db.LongText
+  confidenceScore        Int?
+  status                 SmartUploadStatus               @default(PROCESSING)
+  uploadedBy             String
+  reviewedBy             String?
+  reviewedAt             DateTime?
+  createdAt              DateTime                        @default(now())
+  updatedAt              DateTime                        @updatedAt
+  autoApproved           Boolean                         @default(false)
+  cuttingInstructions    String?                         @db.LongText
+  firstPassRaw           String?                         @db.LongText
+  llmModelParams         String?                         @db.LongText
+  llmProvider            String?
+  llmVerifyModel         String?
+  llmVisionModel         String?
+  parseStatus            String?
+  parsedParts            String?                         @db.LongText
+  secondPassRaw          String?                         @db.LongText
+  secondPassResult       String?                         @db.LongText
+  secondPassStatus       String?
+  tempFiles              String?                         @db.LongText
+  routingDecision        String?
+  llmPromptVersion       String?
+  adjudicatorRaw         String?                         @db.LongText
+  adjudicatorResult      String?                         @db.LongText
+  adjudicatorStatus      String?
+  finalConfidence        Int?
+  llmAdjudicatorModel    String?
   /// LLM provider used for header-label classification (may differ from main provider).
   llmHeaderLabelProvider String?
   /// Model name used for header-label classification.
   llmHeaderLabelModel    String?
-  requiresHumanReview Boolean                         @default(false)
+  requiresHumanReview    Boolean                         @default(false)
   /// Total LLM calls consumed by this session (persisted so retries don't reset the budget).
-  llmCallCount        Int                             @default(0)
+  llmCallCount           Int                             @default(0)
   /// SHA-256 of the original uploaded PDF bytes (hex). Used for fast exact-duplicate detection.
-  sourceSha256        String?                         @db.Char(64)
+  sourceSha256           String?                         @db.Char(64)
   /// JSON array of strategy attempts: [{strategy, confidence, failureReasons, durationMs, timestamp}]
-  strategyHistory     String?                         @db.LongText
+  strategyHistory        String?                         @db.LongText
   /// OCR engine used: tesseract, ocrmypdf, vision_api, native
-  ocrEngineUsed       String?
+  ocrEngineUsed          String?
   /// OCR mode used: header, full, both
-  ocrModeUsed         String?
+  ocrModeUsed            String?
   /// Raw OCR text extracted from PDF (for debugging/provenance). Only stored if smart_upload_store_raw_ocr_text is enabled.
-  rawOcrText          String?                         @db.LongText
+  rawOcrText             String?                         @db.LongText
   /// Character count of raw OCR text (for quick validation)
-  ocrTextChars        Int?
+  ocrTextChars           Int?
   /// Number of commit attempts for this session.
-  commitAttempts      Int                             @default(0)
+  commitAttempts         Int                             @default(0)
   /// Timestamp when commit completed successfully.
-  committedAt         DateTime?
+  committedAt            DateTime?
   /// Committed MusicPiece id (if commit completed).
-  committedPieceId    String?
+  committedPieceId       String?
   /// Committed primary MusicFile id (if commit completed).
-  committedFileId     String?
+  committedFileId        String?
   /// Last commit error message (sanitized).
-  commitError         String?                         @db.Text
+  commitError            String?                         @db.Text
   /// Commit lifecycle status for idempotent ingest tracking
-  commitStatus        SmartUploadSessionCommitStatus? @default(NOT_STARTED)
+  commitStatus           SmartUploadSessionCommitStatus? @default(NOT_STARTED)
 
   @@index([uploadSessionId])
   @@index([status])
@@ -1128,10 +1128,15 @@ model Annotation {
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
   sectionId  String?
+  /// Client-generated idempotency key for offline annotation replay. Nullable so
+  /// every existing (online) caller is exempt from the unique index — see
+  /// prisma/migrations/20261004120000_annotation_client_id/migration.sql.
+  clientId   String?
   music      MusicPiece      @relation(fields: [musicId], references: [id], onDelete: Cascade)
   section    Section?        @relation(fields: [sectionId], references: [id])
   user       User            @relation(fields: [userId], references: [id])
 
+  @@unique([userId, clientId])
   @@index([musicId])
   @@index([userId])
   @@index([layer])
@@ -1185,21 +1190,21 @@ model AudioLink {
 }
 
 model UserPreferences {
-  id                String   @id @default(cuid())
-  userId            String   @unique
-  nightMode         Boolean  @default(false)
-  metronomeSettings String?  @db.LongText
-  midiMappings      String?  @db.LongText
-  otherSettings     String?  @db.LongText
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  nightMode         Boolean   @default(false)
+  metronomeSettings String?   @db.LongText
+  midiMappings      String?   @db.LongText
+  otherSettings     String?   @db.LongText
   /// Web push consent. DEFAULT FALSE — push is strictly opt-in (GDPR).
   /// "Push enabled" is personal data: a row here means this member
   /// affirmatively asked to be reached on this account. Never flip the
   /// default to true.
-  pushEnabled       Boolean  @default(false)
+  pushEnabled       Boolean   @default(false)
   /// When the member granted consent (null = never consented).
   pushConsentedAt   DateTime?
-  updatedAt         DateTime @updatedAt
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt         DateTime  @updatedAt
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
@@ -1312,17 +1317,17 @@ model TaskModelConfig {
 
 enum SmartUploadStatus {
   // ── Active states ────────────────────────────────────────────────────────
-  PROCESSING        // Worker is actively parsing/classifying the upload
-  AUTO_COMMITTING   // Passed quality gates; queued for autonomous commit
+  PROCESSING // Worker is actively parsing/classifying the upload
+  AUTO_COMMITTING // Passed quality gates; queued for autonomous commit
   // ── Terminal / resolution states ────────────────────────────────────────
-  AUTO_COMMITTED    // Successfully committed by the autonomous pipeline
-  REQUIRES_REVIEW   // Processing finished but needs human review (exception)
+  AUTO_COMMITTED // Successfully committed by the autonomous pipeline
+  REQUIRES_REVIEW // Processing finished but needs human review (exception)
   MANUALLY_APPROVED // Human reviewer approved & committed to the library
-  REJECTED          // Human reviewer rejected the upload
-  FAILED            // Unrecoverable processing or commit failure
+  REJECTED // Human reviewer rejected the upload
+  FAILED // Unrecoverable processing or commit failure
   // ── Legacy values (kept for backward-compatibility during migration) ─────
-  PENDING_REVIEW    // @deprecated — use REQUIRES_REVIEW for new sessions
-  APPROVED          // @deprecated — use MANUALLY_APPROVED for new sessions
+  PENDING_REVIEW // @deprecated — use REQUIRES_REVIEW for new sessions
+  APPROVED // @deprecated — use MANUALLY_APPROVED for new sessions
 }
 
 enum SmartUploadSessionCommitStatus {
@@ -1502,7 +1507,6 @@ enum SmartUploadItem_currentStep {
   INGESTED
 }
 
-
 enum SponsorLevel {
   PLATINUM
   GOLD
@@ -1549,17 +1553,17 @@ model Sponsor {
 }
 
 model GalleryAlbum {
-  id          String         @id @default(cuid())
-  title       String
-  slug        String         @unique
-  description String?        @db.Text
-  isPublished Boolean        @default(false)
-  sortOrder   Int            @default(0)
+  id           String         @id @default(cuid())
+  title        String
+  slug         String         @unique
+  description  String?        @db.Text
+  isPublished  Boolean        @default(false)
+  sortOrder    Int            @default(0)
   coverImageId String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  updatedBy   String?
-  images      GalleryImage[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  updatedBy    String?
+  images       GalleryImage[]
 
   @@index([isPublished])
   @@index([sortOrder])
@@ -1586,19 +1590,19 @@ model GalleryImage {
 }
 
 model LeadershipProfile {
-  id          String                @id @default(cuid())
-  name        String
-  role        String
-  profileType LeadershipProfileType @default(VOLUNTEER)
-  bio         String?               @db.Text
+  id           String                @id @default(cuid())
+  name         String
+  role         String
+  profileType  LeadershipProfileType @default(VOLUNTEER)
+  bio          String?               @db.Text
   photoAssetId String?
-  photoUrl    String?
-  email       String?
-  isPublished Boolean              @default(false)
-  sortOrder   Int                  @default(0)
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
-  updatedBy   String?
+  photoUrl     String?
+  email        String?
+  isPublished  Boolean               @default(false)
+  sortOrder    Int                   @default(0)
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  updatedBy    String?
 
   @@index([profileType])
   @@index([isPublished])
@@ -1606,19 +1610,19 @@ model LeadershipProfile {
 }
 
 model ContactSubmission {
-  id          String                  @id @default(cuid())
-  name        String
-  email       String
-  subject     String
-  message     String                  @db.LongText
-  status      ContactSubmissionStatus @default(NEW)
-  ipAddress   String?
-  userAgent   String?
-  responseNotes String?               @db.Text
-  handledBy   String?
-  handledAt   DateTime?
-  createdAt   DateTime                @default(now())
-  updatedAt   DateTime                @updatedAt
+  id            String                  @id @default(cuid())
+  name          String
+  email         String
+  subject       String
+  message       String                  @db.LongText
+  status        ContactSubmissionStatus @default(NEW)
+  ipAddress     String?
+  userAgent     String?
+  responseNotes String?                 @db.Text
+  handledBy     String?
+  handledAt     DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
 
   @@index([status])
   @@index([createdAt])
