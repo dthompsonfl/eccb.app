@@ -51,6 +51,17 @@ export const RATE_LIMIT_CONFIGS = {
   // Push subscribe/unsubscribe — a member re-registering on every page load
   // must not be able to hammer the subscription table
   'push-subscribe': { limit: 20, window: 60 }, // 20 per minute
+  // GDPR Art. 15/20 data export. The handler runs ~25 aggregate queries and
+  // serialises a full personal-data document, so the ceiling is deliberately
+  // far below `api`: 3 downloads per hour per IP is generous for a member
+  // grabbing a copy of their information and still stops a loop or a bored
+  // teenager using this as a database enumeration oracle.
+  'privacy-export': { limit: 3, window: 3600 }, // 3 per hour
+  // GDPR Art. 17 erasure. Requests, confirmations and cancellations all share
+  // this bucket: 5 per hour is far more than any real member needs (request,
+  // change mind, request again) and low enough that an attacker cannot grind
+  // through the name-to-confirm check.
+  'privacy-erasure': { limit: 5, window: 3600 }, // 5 per hour
 } as const;
 
 export type RateLimitType = keyof typeof RATE_LIMIT_CONFIGS;

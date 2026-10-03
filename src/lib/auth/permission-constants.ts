@@ -192,6 +192,12 @@ export const SYSTEM_CONFIG = 'system.config';
 /** View audit logs */
 export const AUDIT_VIEW = 'audit.view';
 
+/** Export another member's personal data on their behalf (GDPR Art. 15/20) */
+export const PRIVACY_EXPORT = 'privacy.export';
+
+/** Execute an erasure for another member (GDPR Art. 17) — a far bigger action */
+export const PRIVACY_ERASURE = 'privacy.erase';
+
 // =============================================================================
 // PERMISSION TYPE
 // =============================================================================
@@ -251,7 +257,9 @@ export type Permission =
   | typeof REPORT_EXPORT
   | typeof USER_MANAGE
   | typeof SYSTEM_CONFIG
-  | typeof AUDIT_VIEW;
+  | typeof AUDIT_VIEW
+  | typeof PRIVACY_EXPORT
+  | typeof PRIVACY_ERASURE;
 
 // =============================================================================
 // PERMISSION GROUPS
@@ -325,6 +333,8 @@ export const ADMIN_PERMISSIONS = [
   USER_MANAGE,
   SYSTEM_CONFIG,
   AUDIT_VIEW,
+  PRIVACY_EXPORT,
+  PRIVACY_ERASURE,
 ] as const;
 
 /** All stand (Digital Music Stand) permissions */

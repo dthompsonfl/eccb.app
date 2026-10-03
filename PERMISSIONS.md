@@ -211,6 +211,18 @@ Permissions follow the pattern: `resource.action.scope`
 | `report.export` | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
 | `system.config` | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | `audit.view` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| `privacy.export` | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| `privacy.erase` | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+**`privacy.export` and `privacy.erase` (GDPR Art. 15/17/20).** Neither is ever
+required for the self-service path: a member exporting or erasing *their own*
+data needs only a session, and the code checks identity before permission
+(`authorizeErasure` / `canExportFor` in `src/lib/privacy/erasure.ts`). These
+permissions exist solely for a staff member acting **on behalf of** somebody
+else. `privacy.erase` is deliberately narrower than `privacy.export` — an
+auditor may need to see what a subject holds without being able to destroy it —
+and an admin erasure additionally demands the *target's* name be typed, is
+separately audited, and returns a full manifest.
 
 ---
 
