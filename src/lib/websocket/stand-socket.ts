@@ -8,6 +8,37 @@
  *  - Per-event rooms with heartbeat-based presence TTL
  *  - Zod-validated incoming messages
  *  - Graceful shutdown with adapter close
+ *
+ * ── ONE shared state, TWO transports ─────────────────────────────────────────
+ * Shared stand state (page / piece / night mode) and the presence roster are
+ * owned exclusively by `@/lib/stand/sync-state` — the SAME module the polling
+ * route `/api/stand/sync` uses. This module deliberately has NO state keyspace
+ * of its own.
+ *
+ * Previously the socket server kept a parallel `stand:room:<eventId>:state`
+ * string with a different shape from the polling route's
+ * `eccb:stand:sync:state:<eventId>`. A director's page turn over WebSocket was
+ * therefore invisible to a polling client and vice-versa: during a rehearsal
+ * half the band followed the conductor and half did not. One keyspace, one
+ * shape, one TTL policy — see the sync-state module header for the rationale.
+ *
+ * The only key this module still owns is `stand:room:<eventId>:clients`, a
+ * socketId → ConnectedClient hash. That is pure transport bookkeeping (which
+ * socket is attached right now) used by the admin status endpoint; it is never
+ * read as stand state and is not actorable by a client.
+ *
+ * ── Director-only page control ───────────────────────────────────────────────
+ * Page turns, piece changes and night-mode toggles are the conductor's job.
+ * The `command` and `mode` branches check `ctx.isDirector` — from
+ * `buildAccessContext`, the canonical stand RBAC context, the same one the
+ * polling route guards with. Without it any authenticated stand-visible member
+ * could seize the conductor's page for the entire band. Presence messages and
+ * each member's own heartbeat remain open to everyone, as before.
+ *
+ * ── Failure policy ───────────────────────────────────────────────────────────
+ * There is no local fallback. A Redis failure raises
+ * `StandStateUnavailableError`, which is reported to the offending socket as an
+ * explicit `error` and NEVER broadcast to the room as if it had synced.
  */
 
 import { Server as SocketIOServer, type Socket } from 'socket.io';
@@ -15,7 +46,17 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import { Redis } from 'ioredis';
 import http from 'node:http';
 import { prisma } from '@/lib/db';
-import { canAccessEvent } from '@/lib/stand/access';
+import { buildAccessContext, canAccessEvent } from '@/lib/stand/access';
+import {
+  StandStateUnavailableError,
+  clearPresence,
+  getActivePresence,
+  getStandState,
+  touchPresence,
+  updateStandState,
+  type StandPresenceEntry,
+  type StandSyncState,
+} from '@/lib/stand/sync-state';
 import { logger } from '@/lib/logger';
 import { getSocketCorsOrigins } from '@/lib/allowed-origins';
 import { z } from 'zod';
@@ -24,10 +65,11 @@ import { z } from 'zod';
 // CONSTANTS
 // =============================================================================
 
-/** TTL for a client's presence entry. Heartbeats must refresh before expiry. */
-const PRESENCE_TTL_SECONDS = 90;
-/** TTL for stand state (kept alive while any client is in the room). */
-const STATE_TTL_SECONDS = 3600; // 1 hour
+/**
+ * TTL for the socket-connection bookkeeping hash. Stand state and presence TTLs
+ * are owned by `@/lib/stand/sync-state` and are deliberately NOT redefined here.
+ */
+const CLIENTS_TTL_SECONDS = 3600; // 1 hour
 /** Heartbeat interval expected from each socket client (ms). */
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -45,13 +87,17 @@ export interface ConnectedClient {
   joinedAt: string; // ISO
 }
 
-export interface StandState {
-  eventId: string;
-  currentPage?: number;
-  currentPieceIndex?: number;
-  nightMode?: boolean;
-  lastUpdated: string; // ISO
-}
+/**
+ * Stand state as seen by socket clients.
+ *
+ * This is an ALIAS of the canonical `StandSyncState` from
+ * `@/lib/stand/sync-state`, not a second shape. Both transports read and write
+ * the same Redis key, so both emit the same object to their clients.
+ */
+export type StandState = StandSyncState;
+
+/** Re-exported so socket consumers need not import the sync-state module. */
+export type StandPresence = StandPresenceEntry;
 
 // =============================================================================
 // ZOD SCHEMAS
@@ -102,13 +148,17 @@ export type StandMessage = z.infer<typeof baseMessageSchema>;
 // REDIS KEY HELPERS
 // =============================================================================
 
+/**
+ * The ONLY keyspace this module owns.
+ *
+ * Stand state and presence are NOT here — they belong to
+ * `@/lib/stand/sync-state` (`eccb:stand:sync:*`), which the polling route also
+ * uses. Keeping a second, differently-shaped state key here is what previously
+ * made a director's page turn invisible across transports.
+ */
 const Keys = {
-  /** Hash: socketId → JSON(ConnectedClient) */
+  /** Hash: socketId → JSON(ConnectedClient). Transport bookkeeping only. */
   roomClients: (eventId: string) => `stand:room:${eventId}:clients`,
-  /** String: JSON(StandState) */
-  roomState: (eventId: string) => `stand:room:${eventId}:state`,
-  /** Hash: userId → ISO timestamp of last heartbeat */
-  presence: (eventId: string) => `stand:room:${eventId}:presence`,
 };
 
 // =============================================================================
@@ -118,9 +168,7 @@ const Keys = {
 async function redisAddClient(redis: Redis, client: ConnectedClient): Promise<void> {
   const key = Keys.roomClients(client.eventId);
   await redis.hset(key, client.socketId, JSON.stringify(client));
-  await redis.expire(key, STATE_TTL_SECONDS);
-  await redis.hset(Keys.presence(client.eventId), client.userId, new Date().toISOString());
-  await redis.expire(Keys.presence(client.eventId), STATE_TTL_SECONDS);
+  await redis.expire(key, CLIENTS_TTL_SECONDS);
 }
 
 async function redisRemoveClient(
@@ -141,43 +189,18 @@ async function redisGetClients(redis: Redis, eventId: string): Promise<Connected
   return Object.values(hash).map((v) => JSON.parse(v) as ConnectedClient);
 }
 
-async function redisGetState(redis: Redis, eventId: string): Promise<StandState | null> {
-  const raw = await redis.get(Keys.roomState(eventId));
-  if (!raw) return null;
-  return JSON.parse(raw) as StandState;
-}
-
-async function redisUpdateState(
+/**
+ * Remove a user's presence entry only when they have no other live socket in
+ * the room. A member with the stand open on their laptop and their phone must
+ * not be dropped from the roster when one of the two disconnects.
+ */
+async function clearPresenceIfLastSocket(
   redis: Redis,
   eventId: string,
-  updates: Partial<StandState>,
-): Promise<StandState> {
-  const existing = await redisGetState(redis, eventId);
-  const next: StandState = {
-    ...(existing ?? { eventId }),
-    ...updates,
-    eventId,
-    lastUpdated: new Date().toISOString(),
-  };
-  await redis.set(Keys.roomState(eventId), JSON.stringify(next), 'EX', STATE_TTL_SECONDS);
-  return next;
-}
-
-async function redisHeartbeat(redis: Redis, eventId: string, userId: string): Promise<void> {
-  await redis.hset(Keys.presence(eventId), userId, new Date().toISOString());
-  await redis.expire(Keys.presence(eventId), STATE_TTL_SECONDS);
-}
-
-async function pruneStalePresence(redis: Redis, eventId: string): Promise<void> {
-  const hash = await redis.hgetall(Keys.presence(eventId));
-  if (!hash) return;
-  const cutoff = Date.now() - PRESENCE_TTL_SECONDS * 1_000;
-  const stale = Object.entries(hash)
-    .filter(([, ts]) => new Date(ts).getTime() < cutoff)
-    .map(([uid]) => uid);
-  if (stale.length > 0) {
-    await redis.hdel(Keys.presence(eventId), ...stale);
-  }
+  userId: string,
+): Promise<void> {
+  const remaining = (await redisGetClients(redis, eventId)).some((c) => c.userId === userId);
+  if (!remaining) await clearPresence(eventId, userId);
 }
 
 // =============================================================================
@@ -318,7 +341,10 @@ export function initializeStandSocketServer(
       return;
     }
 
-    const hasAccess = await canAccessEvent(userId, eventId);
+    const [hasAccess, accessCtx] = await Promise.all([
+      canAccessEvent(userId, eventId),
+      buildAccessContext(userId),
+    ]);
     if (!hasAccess) {
       logger.warn('[WS] Unauthorised event access', { userId, eventId });
       socket.emit('error', { message: 'Access denied' });
@@ -342,6 +368,19 @@ export function initializeStandSocketServer(
     await redisAddClient(pubClient, client);
 
     try {
+      await touchPresence({
+        userId,
+        name: userInfo.name,
+        section: userInfo.section,
+        eventId,
+      });
+    } catch (err) {
+      // Presence is best-effort onboarding: the client still gets state and can
+      // heartbeat later. State reads below are NOT best-effort.
+      logger.warn('[WS] Presence touch failed on join', { userId, eventId, error: err });
+    }
+
+    try {
       await prisma.standSession.upsert({
         where: { eventId_userId: { eventId, userId } },
         create: { eventId, userId, lastSeenAt: new Date() },
@@ -351,19 +390,21 @@ export function initializeStandSocketServer(
       logger.error('[WS] standSession upsert failed', { error: err });
     }
 
-    // Hydrate new client with current state + roster
-    const [currentState, clients] = await Promise.all([
-      redisGetState(pubClient, eventId),
-      redisGetClients(pubClient, eventId),
+    // Hydrate new client with current state + roster. Both come from the shared
+    // sync-state module, so a director's page turn over EITHER transport is what
+    // this client sees here.
+    const [currentState, presence] = await Promise.all([
+      getStandState(eventId),
+      getActivePresence(eventId),
     ]);
     socket.emit('state', currentState);
     socket.emit('roster', {
       type: 'roster',
-      members: clients.map((c) => ({
-        userId: c.userId,
-        name: c.name,
-        section: c.section,
-        joinedAt: c.joinedAt,
+      members: presence.map((p) => ({
+        userId: p.userId,
+        name: p.name,
+        section: p.section,
+        joinedAt: p.lastSeen,
       })),
     });
 
@@ -376,7 +417,27 @@ export function initializeStandSocketServer(
       status: 'joined',
     } as StandMessage);
 
-    logger.info('[WS] Client joined', { socketId: socket.id, userId, eventId });
+    logger.info('[WS] Client joined', {
+      socketId: socket.id,
+      userId,
+      eventId,
+      isDirector: accessCtx.isDirector,
+    });
+
+    /** Page turns, piece changes and night mode are the conductor's job only. */
+    const requireDirector = (): boolean => {
+      if (accessCtx.isDirector) return true;
+      logger.warn('[WS] Rejected privileged stand command', {
+        socketId: socket.id,
+        userId,
+        eventId,
+      });
+      socket.emit('error', {
+        message: 'Only a director can control the stand for this event',
+        code: 'STAND_COMMAND_FORBIDDEN',
+      });
+      return false;
+    };
 
     // ── Message handler ───────────────────────────────────────────────────
     socket.on('message', async (data: unknown) => {
@@ -386,39 +447,86 @@ export function initializeStandSocketServer(
         return;
       }
 
-      switch (msg.type) {
-        case 'heartbeat':
-          await redisHeartbeat(pubClient, eventId, userId);
-          break;
+      try {
+        switch (msg.type) {
+          case 'heartbeat':
+            // Open to everyone: it only refreshes the sender's own presence.
+            await touchPresence({
+              userId,
+              name: userInfo.name,
+              section: userInfo.section,
+              eventId,
+            });
+            break;
 
-        case 'command': {
-          let patch: Partial<StandState> = {};
-          if (msg.action === 'setPage' && msg.page !== undefined)
-            patch = { currentPage: msg.page };
-          else if (msg.action === 'setPiece' && msg.pieceIndex !== undefined)
-            patch = { currentPieceIndex: msg.pieceIndex };
-          else if (msg.action === 'toggleNightMode') {
-            const cur = await redisGetState(pubClient, eventId);
-            patch = { nightMode: msg.value ?? !cur?.nightMode };
+          case 'command': {
+            if (!requireDirector()) break;
+
+            if (msg.action === 'setPage' && msg.page !== undefined) {
+              await updateStandState(eventId, { currentPage: msg.page });
+            } else if (msg.action === 'setPiece' && msg.pieceIndex !== undefined) {
+              await updateStandState(eventId, { currentPieceIndex: msg.pieceIndex });
+            } else if (msg.action === 'toggleNightMode') {
+              const currentState = await getStandState(eventId);
+              await updateStandState(eventId, {
+                nightMode: msg.value ?? !currentState?.nightMode,
+              });
+            }
+            io!.to(eventId).emit('message', msg);
+            break;
           }
-          await redisUpdateState(pubClient, eventId, patch);
-          io!.to(eventId).emit('message', msg);
-          break;
+
+          case 'mode':
+            if (msg.name === 'nightMode') {
+              // nightMode changes what every player sees → director-only.
+              if (!requireDirector()) break;
+              if (typeof msg.value === 'boolean') {
+                await updateStandState(eventId, { nightMode: msg.value });
+              }
+            }
+            io!.to(eventId).emit('message', msg);
+            break;
+
+          case 'annotation':
+            io!.to(eventId).emit('message', msg);
+            break;
+
+          case 'presence':
+            if (msg.status === 'joined') {
+              await touchPresence({
+                userId,
+                name: userInfo.name,
+                section: userInfo.section,
+                eventId,
+              });
+            } else {
+              await clearPresence(eventId, userId);
+            }
+            break;
         }
-
-        case 'mode':
-          if (msg.name === 'nightMode') {
-            await redisUpdateState(pubClient, eventId, { nightMode: msg.value as boolean });
-          }
-          io!.to(eventId).emit('message', msg);
-          break;
-
-        case 'annotation':
-          io!.to(eventId).emit('message', msg);
-          break;
-
-        case 'presence':
-          break;
+      } catch (err) {
+        if (err instanceof StandStateUnavailableError) {
+          // Fail LOUD to the sender and broadcast NOTHING. A silent partial
+          // sync is worse than an explicit error mid-rehearsal.
+          logger.error('[WS] Stand state unavailable', {
+            socketId: socket.id,
+            eventId,
+            error: err,
+          });
+          socket.emit('error', {
+            message:
+              'The music stand is temporarily unable to sync. Please try again in a moment.',
+            code: 'STAND_SYNC_UNAVAILABLE',
+          });
+          return;
+        }
+        logger.error('[WS] Message handling failed', {
+          socketId: socket.id,
+          eventId,
+          type: msg.type,
+          error: err,
+        });
+        socket.emit('error', { message: 'Failed to process message' });
       }
     });
 
@@ -426,8 +534,17 @@ export function initializeStandSocketServer(
     socket.on('disconnect', async (reason) => {
       logger.info('[WS] Client disconnected', { socketId: socket.id, userId, eventId, reason });
       const removed = await redisRemoveClient(pubClient, eventId, socket.id);
-      await pruneStalePresence(pubClient, eventId);
       if (removed) {
+        try {
+          await clearPresenceIfLastSocket(pubClient, eventId, removed.userId);
+        } catch (err) {
+          // The presence TTL (30s) reaps the entry anyway.
+          logger.warn('[WS] Presence clear failed on disconnect', {
+            eventId,
+            userId: removed.userId,
+            error: err,
+          });
+        }
         socket.to(eventId).emit('message', {
           type: 'presence',
           userId: removed.userId,
@@ -487,11 +604,16 @@ export async function getActiveRooms(
   }
 }
 
+/**
+ * Current stand state for an event, read from the SAME shared key the polling
+ * route reads. `redis` is accepted for call-site compatibility but deliberately
+ * unused: state lives in `@/lib/stand/sync-state`, which owns its own client.
+ */
 export async function getEventStandState(
-  redis: Redis,
+  _redis: Redis,
   eventId: string,
 ): Promise<StandState | null> {
-  return redisGetState(redis, eventId);
+  return getStandState(eventId);
 }
 
 // =============================================================================

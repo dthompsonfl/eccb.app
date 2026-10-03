@@ -6,6 +6,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { z } from 'zod';
@@ -14,6 +15,7 @@ import {
   annotationVisibilityFilter,
   assertCanWriteLayer,
   canAccessPiece,
+  type StandAccessContext,
 } from '@/lib/stand/access';
 import { getStandSettings } from '@/lib/stand/settings';
 import {
@@ -35,6 +37,19 @@ const annotationCreateSchema = z.object({
   layer: layerSchema,
   strokeData: z.record(z.string(), z.unknown()),
   sectionId: cuidSchema.nullable().optional(),
+  /**
+   * Client-generated idempotency key.
+   *
+   * The offline annotation queue replays strokes after reconnecting. A replay
+   * that arrives after the original request actually succeeded — the timeout
+   * case the queue exists for — must not create a second copy of the same
+   * pencil stroke. The (userId, clientId) unique index makes that a database
+   * guarantee rather than an application-level check that two concurrent
+   * replays can both pass.
+   *
+   * Bounded to 64 chars to match the column width.
+   */
+  clientId: z.string().min(8).max(64).optional(),
 });
 
 function normalizeStrokeData(strokeData: unknown): Record<string, unknown> {
@@ -109,17 +124,41 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // Hoisted so the catch block can recognise an idempotency conflict. They are
+  // assigned inside the try; if the failure happens before assignment they
+  // stay undefined and the catch falls through to the normal 500 path.
+  let clientId: string | undefined;
+  let ctx: StandAccessContext | undefined;
+
   try {
     const rateLimited = await applyRateLimit(request, 'stand-annotation');
     if (rateLimited) return rateLimited;
 
-    const ctx = await requireStandAccess();
-    if (ctx instanceof Response) return ctx;
+    const access = await requireStandAccess();
+    if (access instanceof Response) return access;
+    ctx = access;
 
     const parsed = await parseBody(request, annotationCreateSchema);
     if (parsed instanceof Response) return parsed;
 
     const { musicId, page, layer, strokeData, sectionId } = parsed;
+    clientId = parsed.clientId;
+
+    // Idempotent replay: a queued stroke that was already accepted returns the
+    // original row rather than creating a duplicate. Checked BEFORE the
+    // permission and limit checks so a replay is never rejected as "annotation
+    // limit reached" for a stroke that already exists.
+    if (clientId) {
+      const existing = await prisma.annotation.findUnique({
+        where: { userId_clientId: { userId: ctx.userId, clientId } },
+      });
+      if (existing) {
+        return jsonOk(
+          { annotation: { ...existing, strokeData: normalizeStrokeData(existing.strokeData) } },
+          200,
+        );
+      }
+    }
 
     const hasPieceAccess = await canAccessPiece(ctx.userId, musicId);
     if (!hasPieceAccess) return json404('Piece not found');
@@ -152,6 +191,7 @@ export async function POST(request: NextRequest) {
         layer,
         strokeData: strokeJson,
         userId: ctx.userId,
+        clientId: clientId ?? null,
         sectionId:
           layer === 'SECTION'
             ? (sectionId ?? ctx.userSectionIds[0] ?? null)
@@ -169,6 +209,28 @@ export async function POST(request: NextRequest) {
       201
     );
   } catch (error) {
+    // The read-then-create above is an optimisation, not the guarantee. Two
+    // concurrent replays of the same queued stroke can both miss the read and
+    // both reach create(); the (userId, clientId) index rejects the loser. That
+    // rejection is the idempotency mechanism WORKING, so it is reported to the
+    // client as success with the winning row — not as a 500 that would leave the
+    // stroke queued forever and retry the same conflict on every reconnect.
+    if (
+      clientId &&
+      ctx &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      const winner = await prisma.annotation.findUnique({
+        where: { userId_clientId: { userId: ctx.userId, clientId } },
+      });
+      if (winner) {
+        return jsonOk(
+          { annotation: { ...winner, strokeData: normalizeStrokeData(winner.strokeData) } },
+          200,
+        );
+      }
+    }
     console.error('[Annotations POST]', error);
     return json500();
   }

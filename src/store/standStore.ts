@@ -13,6 +13,7 @@ import {
   type NormalizedCropRect,
   type SpreadPages,
 } from '@/lib/stand/navigation';
+import type { QueuedAnnotation } from '@/lib/stand/offline';
 
 // Roster member type used for presence overlay
 export interface StandRosterMember {
@@ -32,6 +33,16 @@ export interface Annotation {
   userId?: string;
   createdAt: string;
   updatedAt?: string;
+}
+
+/**
+ * The slice of the offline queue the store needs in order to defer a write.
+ *
+ * Declared structurally (rather than importing the hook's return type) so the
+ * store stays free of React and can be unit-tested in a plain module scope.
+ */
+export interface OfflineAnnotationQueue {
+  enqueue: (annotation: Omit<QueuedAnnotation, 'attempts'>) => Promise<void>;
 }
 
 export interface NavigationLink {
@@ -95,6 +106,14 @@ export interface StandState {
     section: Record<string, Annotation[]>;
     director: Record<string, Annotation[]>;
   };
+  /**
+   * Offline write-queue bridge, registered by StandViewer.
+   *
+   * Deliberately NOT in PERSISTED_VIEW_KEYS: the queue holds live IndexedDB
+   * handles, and rehydrating a stale one from localStorage after a reload would
+   * let `addAnnotation` enqueue into a queue that no longer flushes.
+   */
+  offlineAnnotationQueue: OfflineAnnotationQueue | null;
   selectedLayer: 'PERSONAL' | 'SECTION' | 'DIRECTOR';
 
   // Tool state
@@ -168,6 +187,12 @@ export interface StandState {
   loadAnnotations: (pieceId: string, pageNumber: number) => Promise<void>;
   setAnnotations: (annotations: Annotation[]) => void;
   addAnnotation: (annotation: Annotation) => Promise<void>;
+  /**
+   * Register the offline annotation queue so strokes survive a dropped
+   * connection. Set by StandViewer once the queue hook mounts; null (the
+   * default) means offline queuing is off and `addAnnotation` posts directly.
+   */
+  setOfflineAnnotationQueue: (queue: OfflineAnnotationQueue | null) => void;
   updateAnnotation: (annotation: Annotation) => Promise<void>;
   deleteAnnotation: (id: string) => Promise<void>;
   setLayer: (layer: 'PERSONAL' | 'SECTION' | 'DIRECTOR') => void;
@@ -343,6 +368,7 @@ const initialState = {
   roster: [],
   editMode: false,
   userContext: null,
+  offlineAnnotationQueue: null,
 
   // audio
   audioLinks: [],
@@ -392,6 +418,18 @@ function apiFetch(input: RequestInfo, init?: RequestInit) {
 // Helper to build annotation key
 function annotationKey(pieceId: string, pageNumber: number): string {
   return `${pieceId}-${pageNumber}`;
+}
+
+/**
+ * True when the browser reports no network connection.
+ *
+ * Treated as "unknown, assume online" during SSR and in test environments that
+ * do not stub `navigator.onLine`, so a missing global can never silently divert
+ * every annotation into the offline queue.
+ */
+function isOffline(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return navigator.onLine === false;
 }
 
 /**
@@ -770,7 +808,47 @@ export const useStandStore = create<StandState>()(
     set({ annotations: grouped });
   },
 
+  setOfflineAnnotationQueue: (queue: OfflineAnnotationQueue | null) =>
+    set({ offlineAnnotationQueue: queue }),
+
   addAnnotation: async (annotation: Annotation) => {
+    // Offline path: when the connection is down and a queue is registered,
+    // persist the stroke to IndexedDB instead of firing a request that will
+    // fail. The stroke is added to local state either way, so the musician sees
+    // their mark immediately; `flush()` replays it once the signal returns.
+    const queue = get().offlineAnnotationQueue;
+    if (queue && isOffline()) {
+      const key = annotationKey(annotation.pieceId, annotation.pageNumber);
+      const layer = annotation.layer.toLowerCase() as 'personal' | 'section' | 'director';
+
+      // The queue's own id is the idempotency key, so it must be generated ONCE
+      // here and reused as the optimistic local id. Generating a second id at
+      // flush time would make the replay look like a brand-new stroke.
+      const queued: QueuedAnnotation = {
+        id: annotation.id,
+        musicId: annotation.pieceId,
+        page: annotation.pageNumber,
+        layer: annotation.layer,
+        strokeData: annotation.strokeData as Record<string, unknown>,
+        sectionId: annotation.sectionId ?? null,
+        createdAt: annotation.createdAt,
+        attempts: 0,
+      };
+
+      set((state) => ({
+        annotations: {
+          ...state.annotations,
+          [layer]: {
+            ...state.annotations[layer],
+            [key]: [...(state.annotations[layer][key] || []), annotation],
+          },
+        },
+      }));
+
+      await queue.enqueue(queued);
+      return;
+    }
+
     try {
       const res = await apiFetch('/api/stand/annotations', {
         method: 'POST',

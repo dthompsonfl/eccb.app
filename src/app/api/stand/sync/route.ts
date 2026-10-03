@@ -2,7 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { z } from 'zod';
-import { annotationVisibilityFilter, requireEventStandAccess } from '@/lib/stand/access';
+import {
+  annotationVisibilityFilter,
+  requireEventStandAccess,
+} from '@/lib/stand/access';
+import {
+  StandStateUnavailableError,
+  clearPresence,
+  getActivePresence,
+  getStandState,
+  touchPresence,
+  updateStandState,
+} from '@/lib/stand/sync-state';
 import { recordTelemetry } from '@/lib/stand/telemetry';
 
 export const runtime = 'nodejs';
@@ -22,6 +33,21 @@ export const dynamic = 'force-dynamic';
  * GET - Returns current sync state for a music piece (polling)
  * POST - Broadcasts a sync event (polling)
  * WebSocket Upgrade - Real-time bidirectional sync (requires custom server)
+ *
+ * ── State ownership ───────────────────────────────────────────────────────────
+ * Shared stand state (current page, current piece, night mode) and the presence
+ * roster live in Redis, NOT in process memory — see `@/lib/stand/sync-state` for
+ * the key scheme, TTLs and the rationale. Process-local Maps cannot work in a
+ * multi-process deployment and are wiped on every deploy, which silently breaks
+ * "the director turns the page and the whole band follows".
+ *
+ * Only a director (ctx.isDirector) may drive those fields, whether they arrive
+ * as an explicit `command` or as a bare state broadcast. Any other stand-visible
+ * member gets 403. Without this, any attendee with stand access could hijack the
+ * conductor's page for the entire band.
+ *
+ * Degradation: if Redis is unavailable this endpoint returns 503 and never a
+ * fabricated `success: true`. See the failure policy in `@/lib/stand/sync-state`.
  */
 
 const syncStateSchema = z.object({
@@ -52,67 +78,40 @@ const presenceSchema = z.object({
   status: z.enum(['joined', 'left']),
 });
 
-const ACTIVE_PRESENCE_WINDOW_MS = 30_000;
+/**
+ * Fields that define what the whole band is looking at. Only a director may
+ * write them; everyone else is limited to presence and their own session.
+ */
+const DIRECTOR_CONTROLLED_FIELDS = ['currentPage', 'currentPieceIndex', 'nightMode'] as const;
 
-// In-memory sync state (for simple polling and WebSocket state sharing)
-// In production with custom server, use Redis for distributed state
-const standStateMap = new Map<
-  string,
-  {
-    eventId: string;
-    musicId?: string;
-    currentPage?: number;
-    currentPieceIndex?: number;
-    nightMode?: boolean;
-    lastUpdated: Date;
-  }
->();
-
-// In-memory presence tracking
-const presenceMap = new Map<
-  string,
-  {
-    userId: string;
-    name: string;
-    section?: string;
-    eventId: string;
-    lastSeen: Date;
-  }
->();
-
-function getStandState(eventId: string) {
-  return standStateMap.get(eventId);
+/** True when a bare broadcast carries any director-controlled field. */
+function carriesDirectorControl(syncData: Record<string, unknown>): boolean {
+  return DIRECTOR_CONTROLLED_FIELDS.some((field) => syncData[field] !== undefined);
 }
 
-function updateStandState(eventId: string, updates: Partial<{
-  musicId: string;
-  currentPage: number;
-  currentPieceIndex: number;
-  nightMode: boolean;
-}>) {
-  let state = standStateMap.get(eventId);
-  if (!state) {
-    state = {
-      eventId,
-      lastUpdated: new Date(),
-    };
-  }
-
-  state = {
-    ...state,
-    ...updates,
-    lastUpdated: new Date(),
-  };
-
-  standStateMap.set(eventId, state);
-  return state;
-}
-
-function getActiveUsers(eventId: string) {
-  const cutoff = new Date(Date.now() - ACTIVE_PRESENCE_WINDOW_MS);
-  return Array.from(presenceMap.values()).filter(
-    (p) => p.eventId === eventId && p.lastSeen > cutoff
+function forbiddenCommand(): NextResponse {
+  return NextResponse.json(
+    { error: 'Only a director can control the stand for this event' },
+    { status: 403 }
   );
+}
+
+function stateUnavailable(_error: StandStateUnavailableError): NextResponse {
+  return NextResponse.json(
+    {
+      error: 'The music stand is temporarily unable to sync. Please try again in a moment.',
+      code: 'STAND_SYNC_UNAVAILABLE',
+    },
+    { status: 503 }
+  );
+}
+
+async function touchStandSession(eventId: string, userId: string): Promise<void> {
+  await prisma.standSession.upsert({
+    where: { eventId_userId: { eventId, userId } },
+    create: { eventId, userId, lastSeenAt: new Date() },
+    update: { lastSeenAt: new Date() },
+  });
 }
 
 /**
@@ -138,8 +137,8 @@ export async function GET(request: NextRequest) {
 
     recordTelemetry({ event: 'stand.sync.poll', userId: ctx.userId, eventId });
 
-    const state = getStandState(eventId);
-    const activeUsers = getActiveUsers(eventId);
+    const state = await getStandState(eventId);
+    const activeUsers = await getActivePresence(eventId);
 
     let recentAnnotations: unknown[] = [];
     if (musicId) {
@@ -162,7 +161,7 @@ export async function GET(request: NextRequest) {
       currentPage: state?.currentPage,
       currentPieceIndex: state?.currentPieceIndex,
       nightMode: state?.nightMode,
-      lastSyncAt: state?.lastUpdated?.toISOString() || new Date().toISOString(),
+      lastSyncAt: state?.lastUpdated ?? new Date().toISOString(),
       activeUsers: activeUsers.length,
       activeUserList: activeUsers.map((u) => ({
         userId: u.userId,
@@ -172,11 +171,9 @@ export async function GET(request: NextRequest) {
       recentAnnotations,
     });
   } catch (error) {
+    if (error instanceof StandStateUnavailableError) return stateUnavailable(error);
     console.error('Error fetching sync state:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
@@ -187,6 +184,12 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit the write path. GET (polling) was already limited but POST
+    // was not, so any stand-visible member could drive the shared state and
+    // the presence roster in Redis without bound.
+    const rateLimited = await applyRateLimit(request, 'stand-sync');
+    if (rateLimited) return rateLimited;
+
     const body = await request.json();
     const { eventId, ...syncData } = body;
 
@@ -210,15 +213,18 @@ export async function POST(request: NextRequest) {
     if (syncData.command) {
       const commandValidation = commandSchema.safeParse(syncData.command);
       if (commandValidation.success) {
+        // Page turns are the conductor's job — never a player's.
+        if (!ctx.isDirector) return forbiddenCommand();
+
         const { action, page, pieceIndex, value } = commandValidation.data;
 
         if (action === 'setPage' && page) {
-          updateStandState(eventId, { currentPage: page });
+          await updateStandState(eventId, { currentPage: page });
         } else if (action === 'setPiece' && pieceIndex !== undefined) {
-          updateStandState(eventId, { currentPieceIndex: pieceIndex });
+          await updateStandState(eventId, { currentPieceIndex: pieceIndex });
         } else if (action === 'toggleNightMode') {
-          const currentState = getStandState(eventId);
-          updateStandState(eventId, { nightMode: value ?? !currentState?.nightMode });
+          const currentState = await getStandState(eventId);
+          await updateStandState(eventId, { nightMode: value ?? !currentState?.nightMode });
         }
 
         return NextResponse.json({
@@ -232,11 +238,12 @@ export async function POST(request: NextRequest) {
     if (syncData.mode) {
       const modeValidation = modeSchema.safeParse(syncData.mode);
       if (modeValidation.success) {
-        if (
-          modeValidation.data.name === 'nightMode' &&
-          typeof modeValidation.data.value === 'boolean'
-        ) {
-          updateStandState(eventId, { nightMode: modeValidation.data.value });
+        if (modeValidation.data.name === 'nightMode') {
+          // nightMode changes what every player sees.
+          if (!ctx.isDirector) return forbiddenCommand();
+          if (typeof modeValidation.data.value === 'boolean') {
+            await updateStandState(eventId, { nightMode: modeValidation.data.value });
+          }
         }
 
         return NextResponse.json({
@@ -253,33 +260,17 @@ export async function POST(request: NextRequest) {
         const { status } = presenceValidation.data;
 
         if (status === 'joined') {
-          presenceMap.set(`${eventId}:${ctx.userId}`, {
+          await touchPresence({
             userId: ctx.userId,
             name: userName,
             section: userSection,
             eventId,
-            lastSeen: new Date(),
           });
         } else {
-          presenceMap.delete(`${eventId}:${ctx.userId}`);
+          await clearPresence(eventId, ctx.userId);
         }
 
-        await prisma.standSession.upsert({
-          where: {
-            eventId_userId: {
-              eventId,
-              userId: ctx.userId,
-            },
-          },
-          create: {
-            eventId,
-            userId: ctx.userId,
-            lastSeenAt: new Date(),
-          },
-          update: {
-            lastSeenAt: new Date(),
-          },
-        });
+        await touchStandSession(eventId, ctx.userId);
 
         return NextResponse.json({
           success: true,
@@ -288,9 +279,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // A bare state broadcast from the viewer. It carries the same
+    // director-controlled fields as an explicit command, so it needs the same
+    // authorization check — otherwise the guard is trivially bypassed.
+    if (!ctx.isDirector && carriesDirectorControl(syncData)) {
+      return forbiddenCommand();
+    }
+
     const validated = syncStateSchema.parse({ eventId, ...syncData });
 
-    const state = updateStandState(eventId, {
+    const state = await updateStandState(eventId, {
       ...(validated.musicId !== undefined ? { musicId: validated.musicId } : {}),
       ...(validated.currentPage !== undefined ? { currentPage: validated.currentPage } : {}),
       ...(validated.currentPieceIndex !== undefined
@@ -299,38 +297,19 @@ export async function POST(request: NextRequest) {
       ...(validated.nightMode !== undefined ? { nightMode: validated.nightMode } : {}),
     });
 
-    await prisma.standSession.upsert({
-      where: {
-        eventId_userId: {
-          eventId: validated.eventId,
-          userId: ctx.userId,
-        },
-      },
-      create: {
-        eventId: validated.eventId,
-        userId: ctx.userId,
-        lastSeenAt: new Date(),
-      },
-      update: {
-        lastSeenAt: new Date(),
-      },
-    });
+    await touchStandSession(eventId, ctx.userId);
 
     return NextResponse.json({
       success: true,
-      lastSyncAt: state.lastUpdated.toISOString(),
+      lastSyncAt: state.lastUpdated,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation error', details: error.issues },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Validation error', details: error.issues }, { status: 400 });
     }
+    if (error instanceof StandStateUnavailableError) return stateUnavailable(error);
     console.error('Error updating sync state:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
+
