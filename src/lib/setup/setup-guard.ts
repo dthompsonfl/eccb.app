@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'crypto';
 import { env } from '@/lib/env';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { extractSessionToken } from '@/lib/websocket/stand-socket-path';
 
 /**
  * Authorization guard for setup and repair operations.
@@ -102,9 +103,14 @@ function parseCookies(header: string): Record<string, string> {
  */
 async function getSessionUserId(request: Request): Promise<string | null> {
   const cookie = request.headers.get('cookie');
-  const token =
+  // Strip Better Auth's `.signature` suffix before the lookup: the cookie holds
+  // `${token}.${hmac}` and only the part before the dot is the Session.token
+  // column value. Without this the query matches nothing and every setup-guard
+  // check fails closed for a genuinely signed-in super admin.
+  const raw =
     parseCookies(cookie ?? '')['better-auth.session_token'] ??
     parseCookies(cookie ?? '')['__Secure-better-auth.session_token'];
+  const token = extractSessionToken(raw);
 
   if (!token) return null;
 

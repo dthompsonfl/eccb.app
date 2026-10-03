@@ -59,6 +59,10 @@ import {
 } from '@/lib/stand/sync-state';
 import { logger } from '@/lib/logger';
 import { getSocketCorsOrigins } from '@/lib/allowed-origins';
+import {
+  extractSessionToken,
+  STAND_SOCKET_SERVER_PATH,
+} from '@/lib/websocket/stand-socket-path';
 import { z } from 'zod';
 
 // =============================================================================
@@ -303,7 +307,10 @@ export function initializeStandSocketServer(
   const origin = appUrl ? [appUrl] : getSocketCorsOrigins();
 
   io = new SocketIOServer(httpServer, {
-    path: '/api/stand/socket',
+    // Shared with next.config.ts's rewrite and the browser hook — see
+    // `stand-socket-path.ts` for why the three shapes are deliberately not all
+    // identical.
+    path: STAND_SOCKET_SERVER_PATH,
     cors: { origin, methods: ['GET', 'POST'], credentials: true },
     pingTimeout: 60_000,
     pingInterval: 25_000,
@@ -316,10 +323,11 @@ export function initializeStandSocketServer(
 
   // ── Auth middleware ───────────────────────────────────────────────────────
   io.use(async (socket, next) => {
-    const token =
+    const token = extractSessionToken(
       (socket.handshake.auth?.token as string | undefined) ??
-      (socket.handshake.query?.token as string | undefined) ??
-      extractCookieValue(socket.handshake.headers?.cookie, 'better-auth.session_token');
+        (socket.handshake.query?.token as string | undefined) ??
+        extractCookieValue(socket.handshake.headers?.cookie, 'better-auth.session_token'),
+    );
 
     const userId = await validateSession(token);
     if (!userId) {
