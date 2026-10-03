@@ -34,6 +34,15 @@ const ALLOWLIST = new Set([
   'docs/SECURITY.md',
   'src/lib/setup/env-manager.ts', // describes keys, no values
   'src/lib/env.ts', // zod schema, no values
+  // Fixture values, not credentials. These tests must contain secret-SHAPED
+  // strings or they would not be able to assert the secret-denylist and
+  // cookie-signature-stripping behaviour they exist to prove:
+  //   PASSWORD_HASH  — obviously fake bcrypt body ('abcdefghijklmnopqrstuv...')
+  //   SESSION_TOKEN  — literal words, not a random token
+  //   TOTP_SECRET    — the well-known 'JBSWY3DPEHPK3PXP' documentation value
+  //   VALID_TOKEN    — literally 'session-token-in-db'
+  'src/lib/privacy/__tests__/export.test.ts',
+  'src/lib/websocket/__tests__/stand-socket-upgrade.test.ts',
 ]);
 
 /** Variable names whose *values* must never be committed. */
