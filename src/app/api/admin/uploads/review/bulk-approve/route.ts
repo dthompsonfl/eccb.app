@@ -10,6 +10,7 @@ import type { ExtractedMetadata } from '@/types/smart-upload';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 import { parseSmartUploadJsonField } from '@/lib/smart-upload/persistence';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -26,6 +27,12 @@ const bulkApproveSchema = z.object({
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const csrfResult = validateCSRF(request);
     if (!csrfResult.valid) {

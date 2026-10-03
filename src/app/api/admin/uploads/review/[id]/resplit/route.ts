@@ -9,13 +9,15 @@ import { downloadFile } from '@/lib/services/storage';
 import { splitPdfByCuttingInstructions, validatePdfBuffer } from '@/lib/services/pdf-splitter';
 import { validateAndNormalizeInstructions } from '@/lib/services/cutting-instructions';
 import { buildPartFilename, buildPartStorageSlug, normalizeInstrumentLabel } from '@/lib/smart-upload/part-naming';
+import { analyzePageCoverage, describePageCoverageFailure } from '@/lib/smart-upload/page-coverage';
 import { uploadFile } from '@/lib/services/storage';
 import type { CuttingInstruction, ParsedPartRecord } from '@/types/smart-upload';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 import { parseSmartUploadJsonArray, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
-// Validation Schema
+  // Validation Schema
 // =============================================================================
 
 const resplitSchema = z.object({
@@ -33,14 +35,21 @@ const resplitSchema = z.object({
 });
 
 // =============================================================================
-// POST /api/admin/uploads/review/[id]/resplit
-// Re-split PDF based on edited cutting instructions
+  // POST /api/admin/uploads/review/[id]/resplit
+  // Re-split PDF based on edited cutting instructions
 // =============================================================================
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  {
+params }: { params: Promise<{ id: string }> }
 ) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const csrfResult = validateCSRF(request);
     if (!csrfResult.valid) {
@@ -126,10 +135,22 @@ export async function POST(
       }, { status: 400 });
     }
 
-    // Check for gaps
-    if (instructionValidation.warnings.some((w: string) => w.includes('gap') || w.includes('uncovered'))) {
+    // Coverage is the hard requirement: every page must land in exactly one part.
+    // Check the actual coverage report rather than substring-matching the warning
+    // text, which missed duplicate pages entirely and depended on message wording.
+    const coverageReport = analyzePageCoverage(
+      instructionValidation.instructions,
+      totalPages,
+      'zero',
+    );
+
+    if (!coverageReport.coversAllPagesExactlyOnce) {
       return NextResponse.json({
-        error: 'Cutting instructions have uncovered pages',
+        error: 'Cutting instructions do not cover every page exactly once',
+        reason: describePageCoverageFailure(coverageReport),
+        uncoveredPages: coverageReport.uncoveredPages,
+        duplicatedPages: coverageReport.duplicatedPages,
+        unlocatableParts: coverageReport.unlocatableParts,
         warnings: instructionValidation.warnings,
       }, { status: 400 });
     }
@@ -150,8 +171,43 @@ export async function POST(
       pdfBuffer,
       uploadSession.fileName.replace(/\.pdf$/i, ''),
       instructionValidation.instructions,
-      { indexing: 'zero' }
+      {
+        indexing: 'zero',
+        metadata: {
+          title: uploadSession.fileName.replace(/\.pdf$/i, ''),
+        },
+      }
     );
+
+    // The instruction ranges were proven to cover every page, but a part can
+    // still fail to render. Confirm what came out before writing it to storage.
+    const producedCoverage = analyzePageCoverage(
+      splitResults.map((result) => result.instruction),
+      totalPages,
+      'zero',
+    );
+    if (splitResults.length !== instructionValidation.instructions.length) {
+      return NextResponse.json(
+        {
+          error: 'Re-split produced fewer parts than requested — no pages were written',
+          requested: instructionValidation.instructions.length,
+          produced: splitResults.length,
+          reason: describePageCoverageFailure(producedCoverage),
+        },
+        { status: 500 },
+      );
+    }
+    if (!producedCoverage.coversAllPagesExactlyOnce) {
+      return NextResponse.json(
+        {
+          error: 'Re-split did not cover every page exactly once — no pages were written',
+          reason: describePageCoverageFailure(producedCoverage),
+          uncoveredPages: producedCoverage.uncoveredPages,
+          duplicatedPages: producedCoverage.duplicatedPages,
+        },
+        { status: 500 },
+      );
+    }
 
     // Upload new parts
     const parsedParts: ParsedPartRecord[] = [];
@@ -159,10 +215,21 @@ export async function POST(
 
     for (const result of splitResults) {
       const normalised = normalizeInstrumentLabel(result.instruction.instrument);
-      const displayName = `${uploadSession.fileName.replace(/\.pdf$/i, '')} ${normalised.instrument}`;
-      const slug = buildPartStorageSlug(displayName);
+      // Pass partNumber + pageRange: without them two parts with the same
+      // display name produced the same storage key and the second silently
+      // overwrote the first, losing a player's music entirely.
+      const slug =
+        buildPartStorageSlug(
+          `${uploadSession.fileName.replace(/\.pdf$/i, '')} ${normalised.instrument}`,
+          {
+            partNumber: result.instruction.partNumber,
+            pageRange: result.instruction.pageRange,
+          },
+        ) || `part_${result.instruction.partNumber ?? 0}`;
       const partStorageKey = `smart-upload/${id}/parts/resplit/${slug}.pdf`;
-      const partFileName = buildPartFilename(displayName);
+      const partFileName = buildPartFilename(
+        `${uploadSession.fileName.replace(/\.pdf$/i, '')} ${normalised.instrument}`,
+      );
 
       await uploadFile(partStorageKey, result.buffer, {
         contentType: 'application/pdf',
@@ -244,7 +311,7 @@ export async function POST(
 }
 
 // =============================================================================
-// OPTIONS handler for CORS
+  // OPTIONS handler for CORS
 // =============================================================================
 
 export async function OPTIONS() {

@@ -37,6 +37,14 @@ vi.mock('@/lib/csrf', () => ({
   validateCSRF: vi.fn().mockReturnValue({ valid: true }),
 }));
 
+// Mock rate limit — always allow. The route applies the real
+// applyRateLimit() (src/lib/rate-limit.ts) to this admin mutation;
+// stubbing it here keeps the suite off Redis, matching the pattern
+// used by the other rate-limited route tests.
+vi.mock('@/lib/rate-limit', () => ({
+  applyRateLimit: vi.fn().mockResolvedValue(null),
+}));
+
 import { NextRequest } from 'next/server';
 
 // We'll dynamically import the route module inside beforeEach so that

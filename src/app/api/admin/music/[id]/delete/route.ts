@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
 
 import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
+import { applyRateLimit } from '@/lib/rate-limit';
 /**
  * POST /api/admin/music/[id]/delete
  * Soft delete (move to trash) a music piece
@@ -12,6 +13,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const session = await getSession();
     if (!session?.user?.id) {

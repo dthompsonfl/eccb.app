@@ -168,6 +168,11 @@ describe('Approve Upload Session API', () => {
       musicPieceTitle: 'Stars and Stripes Forever',
       musicFileId: 'file-1',
       partsCommitted: 1,
+      wasIdempotent: false,
+      // Routing now happens inside commit: 1 part handed to 1 player, nothing
+      // left unrouted.
+      assignmentsCreated: 1,
+      unroutedParts: [],
     });
   });
 
@@ -351,6 +356,66 @@ describe('Approve Upload Session API', () => {
         expect.objectContaining({ title: 'Stars and Stripes Forever', composer: 'John Philip Sousa' }),
         TEST_USER_ID,
       );
+    });
+
+    it('reports how many parts were routed to players', async () => {
+      mockFindUnique
+        .mockResolvedValueOnce({ status: 'PENDING_REVIEW' })
+        .mockResolvedValueOnce({ status: 'APPROVED', reviewedAt: new Date() });
+
+      const request = new NextRequest('http://localhost/api/admin/uploads/review/session-1/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Stars and Stripes Forever' }),
+      });
+
+      const response = await POST(request, { params: Promise.resolve({ id: SESSION_ID }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.assignmentsCreated).toBe(1);
+      expect(data.message).toContain('routed 1 part(s) to players');
+    });
+
+    it('SURFACES a part that could not be routed to any member', async () => {
+      // A silent drop here is the failure mode: the librarian believes every
+      // part was delivered, and a section turns up at the concert with no music.
+      mockCommitSmartUploadSession.mockResolvedValue({
+        musicPieceId: 'piece-1',
+        musicPieceTitle: 'Semper Fidelis',
+        musicFileId: 'file-1',
+        partsCommitted: 2,
+        wasIdempotent: false,
+        assignmentsCreated: 1,
+        unroutedParts: [
+          {
+            partId: 'part-tb',
+            partName: 'Trombone',
+            instrumentLabel: 'Trombone',
+            canonicalInstrument: 'Trombone',
+            reason: 'NO_MEMBER_FOR_INSTRUMENT',
+            detail: 'No active member plays Trombone.',
+          },
+        ],
+      });
+      mockFindUnique
+        .mockResolvedValueOnce({ status: 'PENDING_REVIEW' })
+        .mockResolvedValueOnce({ status: 'APPROVED', reviewedAt: new Date() });
+
+      const request = new NextRequest('http://localhost/api/admin/uploads/review/session-1/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Semper Fidelis' }),
+      });
+
+      const response = await POST(request, { params: Promise.resolve({ id: SESSION_ID }) });
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data.unroutedParts).toHaveLength(1);
+      expect(data.unroutedParts[0].partName).toBe('Trombone');
+      expect(data.message).toContain('need manual assignment');
+      expect(data.message).toContain('No active member plays Trombone.');
     });
 
     it('should approve session with all optional fields', async () => {

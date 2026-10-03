@@ -26,14 +26,60 @@ interface AssignMusicDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * Shape returned by GET /api/members.
+ *
+ * This mirrors the route's Prisma `include` EXACTLY — the dialog used to
+ * declare `user`, `primaryInstrument` and `section`, none of which the route
+ * returns. `user` is NULL for members with no linked login, `instruments` and
+ * `sections` are arrays of join rows, so the component threw on first render
+ * for every member that the "route a part to the right player" flow depends on.
+ */
+interface MemberInstrumentRow {
+  id: string;
+  isPrimary: boolean;
+  instrument: { id: string; name: string; family: string };
+}
+
+interface MemberSectionRow {
+  id: string;
+  sectionId: string;
+  isLeader: boolean;
+  section: { id: string; name: string };
+}
+
 interface Member {
   id: string;
-  user: {
-    name: string;
-    email: string;
-  };
-  primaryInstrument: { name: string } | null;
-  section: { name: string } | null;
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+  user: { id: string; name: string; email: string; image?: string | null } | null;
+  instruments: MemberInstrumentRow[];
+  sections: MemberSectionRow[];
+}
+
+/**
+ * Display name for a member, falling back through the fields that always exist.
+ * A member with no linked user account has no `user.name`; reading it
+ * unconditionally was the second crash on this path.
+ */
+function memberName(member: Member): string {
+  const fromUser = member.user?.name?.trim();
+  if (fromUser) return fromUser;
+  const fromProfile = [member.firstName, member.lastName].filter(Boolean).join(' ').trim();
+  return fromProfile || 'Unnamed member';
+}
+
+/** Primary instrument name, or the first listed instrument as a fallback. */
+function memberInstrumentName(member: Member): string | null {
+  if (member.instruments.length === 0) return null;
+  const primary = member.instruments.find((i) => i.isPrimary) ?? member.instruments[0];
+  return primary.instrument?.name ?? null;
+}
+
+/** First section name, or null when the member is not seated. */
+function memberSectionName(member: Member): string | null {
+  return member.sections[0]?.section?.name ?? null;
 }
 
 export function AssignMusicDialog({
@@ -57,13 +103,14 @@ export function AssignMusicDialog({
   const loadMembers = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/members?status=ACTIVE');
+      const response = await fetch('/api/members?status=ACTIVE&limit=100');
       if (response.ok) {
-        const data = await response.json();
-        setMembers(data.members || []);
+        const data: { members?: Member[] } = await response.json();
+        setMembers(Array.isArray(data.members) ? data.members : []);
       }
     } catch (error) {
-      console.error('Failed to load members:', (error as any)[0]);
+      console.error('Failed to load members:', error);
+      toast.error('Could not load members');
     } finally {
       setIsLoading(false);
     }
@@ -71,13 +118,16 @@ export function AssignMusicDialog({
 
   const filteredMembers = members.filter((member) => {
     const query = searchQuery.toLowerCase();
-    return (
-      !existingMemberIds.includes(member.id) &&
-      (member.user.name.toLowerCase().includes(query) ||
-        member.user.email.toLowerCase().includes(query) ||
-        member.primaryInstrument?.name.toLowerCase().includes(query) ||
-        member.section?.name.toLowerCase().includes(query))
-    );
+    const haystack = [
+      memberName(member),
+      member.email ?? '',
+      member.user?.email ?? '',
+      memberInstrumentName(member) ?? '',
+      memberSectionName(member) ?? '',
+    ]
+      .join(' ')
+      .toLowerCase();
+    return !existingMemberIds.includes(member.id) && haystack.includes(query);
   });
 
   const handleToggle = (memberId: string) => {
@@ -185,10 +235,10 @@ export function AssignMusicDialog({
                         onCheckedChange={() => handleToggle(member.id)}
                       />
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{member.user.name}</p>
+                        <p className="font-medium truncate">{memberName(member)}</p>
                         <p className="text-xs text-muted-foreground truncate">
-                          {member.primaryInstrument?.name || 'No instrument'} •{' '}
-                          {member.section?.name || 'No section'}
+                          {memberInstrumentName(member) || 'No instrument'} •{' '}
+                          {memberSectionName(member) || 'No section'}
                         </p>
                       </div>
                     </div>

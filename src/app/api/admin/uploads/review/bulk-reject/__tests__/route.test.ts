@@ -42,6 +42,14 @@ vi.mock('@/lib/services/smart-upload-cleanup', () => ({
   cleanupSmartUploadTempFiles: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock rate limit — always allow. The route applies the real
+// applyRateLimit() (src/lib/rate-limit.ts) to this admin mutation;
+// stubbing it here keeps the suite off Redis, matching the pattern
+// used by the other rate-limited route tests.
+vi.mock('@/lib/rate-limit', () => ({
+  applyRateLimit: vi.fn().mockResolvedValue(null),
+}));
+
 import { getSession } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db';
 import { cleanupSmartUploadTempFiles } from '@/lib/services/smart-upload-cleanup';

@@ -18,6 +18,7 @@ import { requirePermission } from '@/lib/auth/permissions';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { getPrimaryApiKey } from '@/lib/llm/api-key-service';
+import { applyRateLimit } from '@/lib/rate-limit';
 
 // =============================================================================
 // Constants
@@ -167,6 +168,12 @@ async function getDiscoveryApiKey(provider: 'gemini' | 'openrouter'): Promise<st
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const csrfResult = validateCSRF(request);
     if (!csrfResult.valid) {

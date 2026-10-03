@@ -78,12 +78,20 @@ interface ModelInfo {
   priceDisplay: string;
   recommended: boolean;
   recommendationReason?: string;
+  /** How the page-image verdict was reached — used for the "needs checking" note. */
+  visionSource?: 'structured' | 'providerRule' | 'keyword' | 'unknown';
+  /** Effective page-image cap for this model, or null when unknown. */
+  maxImagesPerRequest?: number | null;
 }
 
 interface ModelsResponse {
   models: ModelInfo[];
   recommendedModel: string | null;
   warning?: string;
+  /** Plain-language note shown when a provider could not be fully queried. */
+  notice?: string;
+  /** True when some models' page-image support was inferred rather than confirmed. */
+  detectionIsHeuristic?: boolean;
 }
 
 // =============================================================================
@@ -169,6 +177,11 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
     adjudicator?: string | null;
   }>({});
 
+  /** Plain-language explanation shown when a provider cannot supply a model list. */
+  const [customNote, setCustomNote] = useState<string | null>(null);
+  /** Plain-language notice from the API (e.g. "no API key saved for X"). */
+  const [providerNotice, setProviderNotice] = useState<string | null>(null);
+
   // Derived aggregate loading/error state for the UI
   const isLoadingModels = stepLoading.vision || stepLoading.verification || stepLoading.header || stepLoading.adjudicator;
   const modelError = stepError.vision || stepError.verification || stepError.header || stepError.adjudicator || null;
@@ -246,9 +259,16 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
       }
 
       if (providerVal === 'custom') {
+        // Custom servers have no capability metadata, so an empty dropdown with
+        // no explanation is the worst outcome. Tell the admin how to fill it in.
         setModels([]);
+        setErr(null);
+        setCustomNote(
+          'Custom provider: Smart Upload cannot check which models read page images. Type the model name your server uses, or use the "Add custom model" field below.',
+        );
         return;
       }
+      setCustomNote(null);
 
       setLoading(true);
       setErr(null);
@@ -294,10 +314,15 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
         if (data.warning) {
           toast.warning(data.warning);
         }
+
+        // `notice` is a non-urgent, actionable fact (e.g. no API key saved yet).
+        // Shown inline rather than as a toast so it persists for the admin.
+        setProviderNotice(data.notice ?? null);
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return;
         const message = error instanceof Error ? error.message : 'Failed to fetch models';
         setErr(message);
+        setProviderNotice(null);
         toast.error(message);
       } finally {
         setLoading(false);
@@ -572,6 +597,14 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
               <div className="rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800 flex gap-2">
                 <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
                 <span>{modelError}</span>
+              </div>
+            )}
+
+            {/* Plain-language provider note (e.g. no API key saved yet) */}
+            {(providerNotice || customNote) && (
+              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 flex gap-2">
+                <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                <span>{providerNotice || customNote}</span>
               </div>
             )}
 

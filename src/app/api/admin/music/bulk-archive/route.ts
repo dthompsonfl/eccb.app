@@ -7,6 +7,7 @@ import { logger } from '@/lib/logger';
 import { z } from 'zod';
 
 import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
+import { applyRateLimit } from '@/lib/rate-limit';
 const bulkArchiveSchema = z.object({
   ids: z.array(z.string()).min(1),
   archived: z.boolean(),
@@ -17,6 +18,12 @@ const bulkArchiveSchema = z.object({
  * Archive or unarchive multiple music pieces
  */
 export async function POST(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const session = await getSession();
     if (!session?.user?.id) {

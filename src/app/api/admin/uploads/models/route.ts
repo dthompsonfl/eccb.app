@@ -3,11 +3,42 @@ import { getSession } from '@/lib/auth/guards';
 import { checkUserPermission } from '@/lib/auth/permissions';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/db';
-import { LLM_PROVIDERS, type LLMProviderValue } from '@/lib/llm/providers';
+import {
+  LLM_PROVIDERS,
+  LLM_PROVIDER_VALUES,
+  getProviderMeta,
+  type LLMProviderValue,
+} from '@/lib/llm/providers';
 import { getPrimaryApiKey } from '@/lib/llm/api-key-service';
 import { validateOutboundEndpoint } from '@/lib/network/safe-endpoint';
+import {
+  classifyVisionCapability,
+  classifyProviderHttpStatus,
+  describeImageCap,
+  describeProviderIssue,
+  extractCapabilities,
+  extractOllamaShowCapabilities,
+  resolveMaxImagesPerRequest,
+  type CapabilitySource,
+  type ProviderCapabilities,
+  type ProviderIssueKind,
+  type RawModelEntry,
+} from '@/lib/llm/model-capabilities';
 
 import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
+
+/** Plain-language 4xx/5xx responses the admin UI can render verbatim. */
+class ProviderIssueError extends Error {
+  readonly status: number;
+  readonly kind: ProviderIssueKind;
+
+  constructor(status: number, kind: ProviderIssueKind, message: string) {
+    super(message);
+    this.name = 'ProviderIssueError';
+    this.status = status;
+    this.kind = kind;
+  }
+}
 /**
  * Resolve the effective endpoint URL for a provider.
  * If `clientEndpoint` is provided, use it; otherwise fall back to DB or provider default.
@@ -30,7 +61,7 @@ async function resolveEndpoint(provider: Provider, clientEndpoint?: string): Pro
 // Enhanced Types with Recommendation Support
 // =============================================================================
 
-type Provider = 'glm-ocr' | 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'openrouter' | 'mistral' | 'groq' | 'ollama-cloud' | 'custom';
+type Provider = LLMProviderValue;
 
 interface ModelInfo {
   id: string;
@@ -47,6 +78,14 @@ interface ModelInfo {
   recommended: boolean;
   recommendationReason?: string;
   recommendationScore: number;
+  /**
+   * How the vision verdict was reached: 'structured' (provider told us),
+   * 'providerRule' (certain provider-level truth), 'keyword' (name matching
+   * fallback) or 'unknown'. Surfaced so the UI never overstates certainty.
+   */
+  visionSource: CapabilitySource;
+  /** Effective page-image cap for this model, or null when unknown/unlimited. */
+  maxImagesPerRequest: number | null;
 }
 
 interface ModelsResponse {
@@ -55,6 +94,10 @@ interface ModelsResponse {
   filteredForVision: boolean;
   recommendedModel: string | null;
   warning?: string;
+  /** Plain-language summary when the provider could not be fully queried. */
+  notice?: string;
+  /** True when any model's vision flag came from keyword matching or is unknown. */
+  detectionIsHeuristic: boolean;
 }
 
 // =============================================================================
@@ -187,15 +230,22 @@ const GEMINI_PRICES: Record<string, number> = {
 
 // =============================================================================
 // Vision Model Keywords
+//
+// NOTE: name matching is a LAST-RESORT FALLBACK only. The authoritative
+// decision lives in `classifyVisionCapability` (lib/llm/model-capabilities.ts),
+// which prefers structured provider metadata. These lists are consulted ONLY
+// when a provider returns no capability metadata for a model — see
+// VISION_KEYWORDS in that module for the canonical list and full rationale.
 // =============================================================================
 
-const OLLAMA_VISION_KEYWORDS = [
-  'vision', 'vl', 'llava', 'bakllava', 'moondream', 'cogvlm',
-  'minicpm-v', 'qwen2-vl', 'qwen2.5-vl', 'gemma3', 'llama3.2-vision',
-  'mistral', 'phi3-vision', 'internvl', 'pixtral',
-];
+/** Hard-coded provider fetches, per-provider labels for admin messaging. */
+const PROVIDER_LABELS: Record<Provider, string> = Object.fromEntries(
+  LLM_PROVIDER_VALUES.map((value) => [value, getProviderMeta(value)?.label ?? value]),
+) as Record<Provider, string>;
 
-const OPENAI_VISION_KEYWORDS = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision'];
+function providerLabel(provider: Provider): string {
+  return PROVIDER_LABELS[provider] ?? provider;
+}
 
 // =============================================================================
 // Helper Functions
@@ -227,31 +277,49 @@ function getProviderNote(modelId: string, provider: Provider): string | undefine
   return undefined;
 }
 
-function isVisionModel(modelName: string, provider: Provider, keywords: string[]): boolean {
-  const lowerName = modelName.toLowerCase();
-  
-  if (provider === 'gemini') {
-    // All Gemini generateContent models support vision
-    return true;
+/**
+ * Build a ModelInfo with a provider-authoritative vision verdict and the
+ * effective per-model image cap. All provider fetchers go through this so the
+ * capability rules stay in one tested place.
+ */
+function buildModelInfo(
+  id: string,
+  provider: Provider,
+  overrides: Partial<ModelInfo> = {},
+  capabilities: ProviderCapabilities = {},
+): ModelInfo {
+  const verdict = classifyVisionCapability(id, provider, capabilities);
+  const providerCap = getProviderMeta(provider)?.maxImagesPerRequest;
+
+  return {
+    id,
+    name: overrides.name ?? id,
+    isVision: overrides.isVision ?? verdict.isVision,
+    supportsStructuredOutput: overrides.supportsStructuredOutput ?? false,
+    contextWindow: overrides.contextWindow ?? null,
+    pricePerToken: overrides.pricePerToken ?? null,
+    priceDisplay: overrides.priceDisplay ?? formatPrice(overrides.pricePerToken ?? null),
+    isDeprecated: overrides.isDeprecated ?? false,
+    releaseDate: overrides.releaseDate ?? null,
+    providerNote: overrides.providerNote,
+    recommended: false,
+    recommendationScore: 0,
+    visionSource: verdict.source,
+    maxImagesPerRequest: resolveMaxImagesPerRequest(provider, id, providerCap, overrides.maxImagesPerRequest),
+  };
+}
+
+/** Marks the best candidate and returns the same array (mutating in place). */
+function applyRecommendation(
+  models: ModelInfo[],
+  reason: string,
+): ModelInfo[] {
+  const recommended = selectRecommendedModel(models);
+  if (recommended) {
+    recommended.recommended = true;
+    recommended.recommendationReason = reason;
   }
-  
-  if (provider === 'anthropic') {
-    // All Claude 3+ models support vision
-    return lowerName.includes('claude-3');
-  }
-  
-  if (provider === 'openrouter') {
-    // Check modality hints from API or common patterns
-    return (
-      lowerName.includes('vision') ||
-      lowerName.includes('vl') ||
-      lowerName.includes('gpt-4o') ||
-      lowerName.includes('gemini') ||
-      lowerName.includes('claude-3')
-    );
-  }
-  
-  return keywords.some((keyword) => lowerName.includes(keyword.toLowerCase()));
+  return models;
 }
 
 function getModelMetadata(modelId: string, provider: Provider): Partial<ModelMetadata> {
@@ -270,23 +338,25 @@ function getModelMetadata(modelId: string, provider: Provider): Partial<ModelMet
 }
 
 function getGlmOcrModels(): ModelInfo[] {
+  const label = providerLabel('glm-ocr');
   return [
-    {
-      id: 'zai-org/GLM-OCR',
-      name: 'zai-org/GLM-OCR',
-      isVision: true,
-      supportsStructuredOutput: false,
-      contextWindow: null,
-      pricePerToken: null,
-      priceDisplay: 'Local GPU',
-      isDeprecated: false,
-      releaseDate: null,
-      providerNote: 'Image-based OCR only. Native PDF input stays disabled for Smart Upload.',
-      recommended: true,
-      recommendationReason: 'Best fit for local Smart Upload OCR migration',
-      recommendationScore: 1000,
-    },
-  ];
+    buildModelInfo(
+      'zai-org/GLM-OCR',
+      'glm-ocr',
+      {
+        priceDisplay: 'Local GPU',
+        maxImagesPerRequest: 1,
+        providerNote:
+          'Image-based OCR only. Pages are sent one at a time. Native PDF input stays disabled for Smart Upload.',
+      },
+      { ollamaCapabilities: ['vision'] },
+    ),
+  ].map((m) => {
+    m.recommended = true;
+    m.recommendationReason = `Best fit for local Smart Upload OCR (${label})`;
+    m.recommendationScore = 1000;
+    return m;
+  });
 }
 
 function calculateRecommendationScore(model: ModelInfo): number {
@@ -373,241 +443,336 @@ function selectRecommendedModel(models: ModelInfo[]): ModelInfo | null {
 
 // =============================================================================
 // Provider API Calls
+//
+// Every fetcher follows the same contract:
+//  - bounded timeout, so one slow provider cannot hang the request
+//  - upstream failures become ProviderIssueError with a plain-language message
+//  - vision detection reads STRUCTURED metadata the provider actually returned
+//  - the API key is only ever sent as a header/param, never logged or returned
 // =============================================================================
 
-async function fetchOllamaModels(endpoint: string): Promise<ModelInfo[]> {
-  const response = await fetch(`${endpoint}/api/tags`, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(5_000),
-  });
+const FETCH_TIMEOUT_MS = 8_000;
+
+/** JSON GET with timeout + plain-language error mapping. */
+async function fetchProviderJson(
+  url: string,
+  provider: Provider,
+  init: RequestInit = {},
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { 'Content-Type': 'application/json', ...(init.headers ?? {}) },
+    });
+  } catch (error) {
+    // Network error, DNS failure, or timeout — never surface the raw cause.
+    const kind: ProviderIssueKind =
+      error instanceof Error && error.name === 'TimeoutError' ? 'unreachable' : 'unreachable';
+    throw new ProviderIssueError(
+      502,
+      kind,
+      describeProviderIssue(providerLabel(provider), kind),
+    );
+  }
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Ollama API error: ${response.status} - ${errorText}`);
+    const kind = classifyProviderHttpStatus(response.status);
+    throw new ProviderIssueError(
+      response.status === 401 || response.status === 403 ? 401 : 502,
+      kind,
+      describeProviderIssue(providerLabel(provider), kind),
+    );
   }
 
-  const data = await response.json();
-  const models: ModelInfo[] = (data.models || []).map((model: { name: string }) => {
-    const isVision = isVisionModel(model.name, 'ollama', OLLAMA_VISION_KEYWORDS);
-    return {
-      id: model.name,
-      name: model.name,
-      isVision,
-      supportsStructuredOutput: true, // Assume true for most Ollama models
-      contextWindow: null, // Unknown without inspecting model details
-      pricePerToken: null,
-      priceDisplay: 'Local (no cost)',
-      isDeprecated: false,
-      releaseDate: null,
-      recommended: false,
-      recommendationScore: 0,
-    };
+  try {
+    return await response.json();
+  } catch {
+    throw new ProviderIssueError(
+      502,
+      'unknown',
+      describeProviderIssue(providerLabel(provider), 'unknown'),
+    );
+  }
+}
+
+/** Reads an array of raw model entries out of an arbitrary provider payload. */
+function readModelArray(payload: unknown): RawModelEntry[] {
+  if (Array.isArray(payload)) return payload as RawModelEntry[];
+  if (typeof payload !== 'object' || payload === null) return [];
+  const record = payload as Record<string, unknown>;
+  for (const key of ['data', 'models', 'result']) {
+    if (Array.isArray(record[key])) return record[key] as RawModelEntry[];
+  }
+  return [];
+}
+
+/**
+ * Ollama `/api/show` is a per-model POST that reports a real `capabilities`
+ * array. We probe it concurrently (bounded) so vision detection is authoritative
+ * rather than keyword-guessed, and fall back to keywords if the probe fails.
+ */
+async function fetchOllamaShowCapabilities(
+  endpoint: string,
+  modelName: string,
+): Promise<string[] | undefined> {
+  try {
+    const response = await fetch(`${endpoint}/api/show`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelName }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) return undefined;
+    return extractOllamaShowCapabilities(await response.json());
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runs `worker` over `items` with a bounded number of in-flight requests. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await worker(items[index]);
+    }
   });
 
-  // Mark recommended model
-  const recommended = selectRecommendedModel(models);
-  if (recommended) {
-    recommended.recommended = true;
-    recommended.recommendationReason = 'Best vision model available locally';
-  }
-
-  return models;
+  await Promise.all(runners);
+  return results;
 }
+
+interface OllamaFetchResult {
+  models: ModelInfo[];
+  /** True when at least one model could not be capability-probed. */
+  probeFailed: boolean;
+}
+
+async function fetchOllamaModels(
+  endpoint: string,
+  provider: Provider,
+): Promise<OllamaFetchResult> {
+  const data = await fetchProviderJson(`${endpoint}/api/tags`, provider);
+  const entries = readModelArray(data);
+
+  const named = entries
+    .map((entry) => (typeof entry.name === 'string' ? entry.name : entry.model))
+    .filter((n): n is string => typeof n === 'string');
+
+  const capabilitiesByModel = new Map<string, string[] | undefined>();
+  await mapWithConcurrency(named, 4, async (modelName) => {
+    capabilitiesByModel.set(
+      modelName,
+      await fetchOllamaShowCapabilities(endpoint, modelName),
+    );
+  });
+
+  let probeFailed = false;
+
+  const models: ModelInfo[] = named.map((modelName) => {
+    const probed = capabilitiesByModel.get(modelName);
+    if (!probed) probeFailed = true;
+    return buildModelInfo(
+      modelName,
+      provider,
+      { priceDisplay: 'Local (no cost)' },
+      probed ? { ollamaCapabilities: probed } : {},
+    );
+  });
+
+  applyRecommendation(models, 'Best vision model available locally');
+
+  return { models, probeFailed };
+}
+/**
+ * OpenAI `/v1/models` returns no per-model modality metadata on every account
+ * tier, so structured metadata is used when present and the keyword fallback
+ * applies otherwise. Text-only model families are excluded explicitly so the
+ * keyword list cannot promote them into the vision dropdown.
+ */
+const OPENAI_TEXT_ONLY_PREFIXES = ['text-embedding', 'dall-e', 'tts-', 'whisper', 'omni-moderation'];
 
 async function fetchOpenAIModels(apiKey: string): Promise<ModelInfo[]> {
-  const response = await fetch('https://api.openai.com/v1/models', {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+  const data = await fetchProviderJson('https://api.openai.com/v1/models', 'openai', {
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
-  }
+  const models: ModelInfo[] = readModelArray(data)
+    .filter((entry) => typeof entry.id === 'string')
+    .map((entry) => {
+      const id = entry.id as string;
+      const metadata = getModelMetadata(id, 'openai');
+      const pricePerToken = OPENAI_PRICES[id] ?? null;
 
-  const data = await response.json();
-  const models: ModelInfo[] = (data.data || [])
-    .map((model: { id: string }) => {
-      const metadata = getModelMetadata(model.id, 'openai');
-      const isVision = isVisionModel(model.id, 'openai', OPENAI_VISION_KEYWORDS);
-      const pricePerToken = OPENAI_PRICES[model.id] ?? null;
-      
-      return {
-        id: model.id,
-        name: model.id,
-        isVision,
-        supportsStructuredOutput: metadata.supportsStructuredOutput ?? false,
-        contextWindow: metadata.contextWindow ?? null,
-        pricePerToken,
-        priceDisplay: formatPrice(pricePerToken),
-        isDeprecated: metadata.isDeprecated ?? false,
-        releaseDate: metadata.releaseDate ?? null,
-        providerNote: getProviderNote(model.id, 'openai'),
-        recommended: false,
-        recommendationScore: 0,
-      };
+      return buildModelInfo(
+        id,
+        'openai',
+        {
+          name: id,
+          supportsStructuredOutput: metadata.supportsStructuredOutput ?? false,
+          contextWindow: metadata.contextWindow ?? null,
+          pricePerToken,
+          isDeprecated: metadata.isDeprecated ?? false,
+          releaseDate: metadata.releaseDate ?? null,
+          providerNote: getProviderNote(id, 'openai'),
+        },
+        extractCapabilities(entry),
+      );
     })
-    .filter((m: ModelInfo) => m.isVision); // Only return vision-capable models
+    .filter((m) => !OPENAI_TEXT_ONLY_PREFIXES.some((prefix) => m.id.toLowerCase().startsWith(prefix)))
+    .filter((m) => m.isVision);
 
-  // Mark recommended model
-  const recommended = selectRecommendedModel(models);
-  if (recommended) {
-    recommended.recommended = true;
-    recommended.recommendationReason = 'Best balance of cost, quality, and recency';
-  }
+  applyRecommendation(models, 'Best balance of cost, quality, and recency');
 
   return models;
 }
 
-function fetchAnthropicModels(): ModelInfo[] {
-  // Anthropic has no public list-models endpoint - use curated list
-  const models = Object.keys(ANTHROPIC_METADATA);
+/**
+ * Anthropic exposes `/v1/models`; we query it and merge the curated metadata
+ * table so context window / structured-output details survive. Falls back to
+ * the curated list when the key is absent or the call fails — the list is the
+ * only source of Anthropic capability facts in this codebase.
+ */
+async function fetchAnthropicModels(apiKey: string | undefined): Promise<ModelInfo[]> {
+  const ids = new Set(Object.keys(ANTHROPIC_METADATA));
 
-  const modelInfos: ModelInfo[] = models.map((id) => {
-    const metadata = ANTHROPIC_METADATA[id];
-    return {
-      id,
-      name: id,
-      isVision: true, // All Claude 3+ models support vision
-      supportsStructuredOutput: metadata.supportsStructuredOutput,
-      contextWindow: metadata.contextWindow,
-      pricePerToken: null, // Anthropic pricing varies by tier
-      priceDisplay: 'Pricing varies by usage tier',
-      isDeprecated: metadata.isDeprecated,
-      releaseDate: metadata.releaseDate,
-      providerNote: 'Requires Anthropic API key',
-      recommended: false,
-      recommendationScore: 0,
-    };
-  });
-
-  // Mark recommended model
-  const recommended = selectRecommendedModel(modelInfos);
-  if (recommended) {
-    recommended.recommended = true;
-    recommended.recommendationReason = 'Best vision model with strong OCR accuracy';
-  }
-
-  return modelInfos;
-}
-
-async function fetchGeminiModels(apiKey: string): Promise<ModelInfo[]> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  const models: ModelInfo[] = (data.models || [])
-    .filter((model: { name: string; supportedGenerationMethods?: string[] }) => {
-      // Must support generateContent (not just embeddings)
-      if (!model.supportedGenerationMethods?.includes('generateContent')) {
-        return false;
+  if (apiKey) {
+    try {
+      const data = await fetchProviderJson('https://api.anthropic.com/v1/models?limit=100', 'anthropic', {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      });
+      for (const entry of readModelArray(data)) {
+        if (typeof entry.id === 'string') ids.add(entry.id);
       }
-      // Exclude embed and aqa models
-      const name = model.name.toLowerCase();
-      return !name.includes('embed') && !name.includes('aqa');
-    })
-    .map((model: { name: string }) => {
-      const modelId = model.name;
-      const metadata = getModelMetadata(modelId, 'gemini');
-      const pricePerToken = GEMINI_PRICES[modelId] ?? null;
-      
-      return {
-        id: modelId,
-        name: modelId.replace('models/', ''),
-        isVision: true, // All Gemini models with generateContent support vision
-        supportsStructuredOutput: metadata.supportsStructuredOutput ?? true,
-        contextWindow: metadata.contextWindow ?? 1000000,
-        pricePerToken,
-        priceDisplay: formatPrice(pricePerToken),
-        isDeprecated: metadata.isDeprecated ?? false,
-        releaseDate: metadata.releaseDate ?? null,
-        providerNote: getProviderNote(modelId, 'gemini'),
-        recommended: false,
-        recommendationScore: 0,
-      };
+    } catch (error) {
+      // A failed listing must not blank the provider — keep the curated list.
+      logger.info('Anthropic live model listing unavailable, using curated list', {
+        reason: error instanceof ProviderIssueError ? error.kind : 'unknown',
+      });
+    }
+  }
+
+  const models: ModelInfo[] = [...ids]
+    .filter((id) => /claude/i.test(id))
+    .map((id) => {
+      const metadata = ANTHROPIC_METADATA[id];
+      return buildModelInfo(id, 'anthropic', {
+        name: id,
+        // Anthropic publishes no modality field; every Claude 3+ accepts images.
+        isVision: true,
+        supportsStructuredOutput: metadata?.supportsStructuredOutput ?? true,
+        contextWindow: metadata?.contextWindow ?? null,
+        priceDisplay: 'Pricing varies by usage tier',
+        isDeprecated: metadata?.isDeprecated ?? false,
+        releaseDate: metadata?.releaseDate ?? null,
+        providerNote: apiKey ? undefined : 'No API key saved yet — add one in Settings before using this model.',
+      });
     });
 
-  // Mark recommended model
-  const recommended = selectRecommendedModel(models);
-  if (recommended) {
-    recommended.recommended = true;
-    recommended.recommendationReason = 'Generous free tier with excellent vision capabilities';
-  }
+  applyRecommendation(models, 'Best vision model with strong OCR accuracy');
 
   return models;
 }
 
+/**
+ * Gemini returns `supportedGenerationMethods` per model — real structured
+ * metadata. Only models reachable via `generateContent` can accept images, so
+ * that field is the gate; embedding/retrieval/AQA models are excluded.
+ */
+async function fetchGeminiModels(apiKey: string): Promise<ModelInfo[]> {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=200';
+  const data = await fetchProviderJson(url, 'gemini', {
+    headers: { 'x-goog-api-key': apiKey },
+  });
+
+  const models: ModelInfo[] = readModelArray(data)
+    .filter((entry) => typeof entry.name === 'string')
+    .map((entry) => {
+      const modelId = entry.name as string;
+      const metadata = getModelMetadata(modelId, 'gemini');
+      const pricePerToken = GEMINI_PRICES[modelId] ?? null;
+
+      return buildModelInfo(
+        modelId,
+        'gemini',
+        {
+          name: modelId.replace('models/', ''),
+          supportsStructuredOutput: metadata.supportsStructuredOutput ?? true,
+          contextWindow: metadata.contextWindow ?? 1000000,
+          pricePerToken,
+          isDeprecated: metadata.isDeprecated ?? false,
+          releaseDate: metadata.releaseDate ?? null,
+          providerNote: getProviderNote(modelId, 'gemini'),
+        },
+        extractCapabilities(entry),
+      );
+    })
+    // Not generative → cannot read page images, whatever the name suggests.
+    .filter((m) => m.isVision);
+
+  applyRecommendation(models, 'Generous free tier with excellent vision capabilities');
+
+  return models;
+}
+
+/**
+ * OpenRouter returns authoritative `architecture.input_modalities`. The old
+ * code matched only the exact string 'text+image->text', which silently dropped
+ * 235 of 295 image-capable models (every model that also accepts file, audio or
+ * video input). Verified live against the OpenRouter catalogue.
+ *
+ * `pricing.prompt` is a decimal STRING, not a number — it is parsed here so
+ * free-tier models are detected as free instead of falling through to "$0".
+ */
 async function fetchOpenRouterModels(apiKey: string): Promise<ModelInfo[]> {
-  const response = await fetch('https://openrouter.ai/api/v1/models', {
-    method: 'GET',
+  const data = await fetchProviderJson('https://openrouter.ai/api/v1/models', 'openrouter', {
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
       // OpenRouter recommends these headers for attribution
       'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://eccb.app',
       'X-Title': 'ECCB Smart Upload',
     },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-  }
+  const models: ModelInfo[] = readModelArray(data)
+    .filter((entry) => typeof entry.id === 'string')
+    .map((entry) => {
+      const id = entry.id as string;
+      const name = typeof entry.name === 'string' ? entry.name : id;
+      const pricing = (entry.pricing ?? {}) as Record<string, unknown>;
+      const contextWindow =
+        typeof entry.context_length === 'number' ? entry.context_length : null;
+      const pricePerToken = parsePrice(pricing.prompt);
 
-  const data = await response.json();
-  const models: ModelInfo[] = (data.data || [])
-    .map((model: {
-      id: string;
-      name?: string;
-      architecture?: { modality?: string };
-      pricing?: { prompt?: number | null };
-      context_length?: number;
-    }) => {
-      const modality = model.architecture?.modality;
-      const isVision =
-        modality === 'text+image->text' ||
-        model.id.toLowerCase().includes('vision') ||
-        model.id.toLowerCase().includes('vl') ||
-        model.id.toLowerCase().includes('gpt-4o') ||
-        model.id.toLowerCase().includes('gemini') ||
-        model.id.toLowerCase().includes('claude-3');
-      const pricePerToken = model.pricing?.prompt ?? null;
-
-      let providerNote: string | undefined;
-      if (pricePerToken === 0 || pricePerToken === null) {
-        providerNote = 'Rate limit: 20 RPM (free tier)';
-      }
-
-      return {
-        id: model.id,
-        name: model.name || model.id,
-        isVision,
-        supportsStructuredOutput: true, // Most OpenRouter models support this
-        contextWindow: model.context_length ?? null,
-        pricePerToken,
-        priceDisplay: formatPrice(pricePerToken),
-        isDeprecated: false, // OpenRouter filters deprecated models
-        releaseDate: null, // Not provided by OpenRouter API
-        providerNote,
-        recommended: false,
-        recommendationScore: 0,
-      };
+      return buildModelInfo(
+        id,
+        'openrouter',
+        {
+          name,
+          supportsStructuredOutput: true,
+          contextWindow,
+          pricePerToken,
+          isDeprecated: false, // OpenRouter omits deprecated models
+          releaseDate: null, // Not provided by the OpenRouter API
+          providerNote:
+            pricePerToken === null || pricePerToken === 0
+              ? 'Free tier available — rate limited to about 20 requests per minute.'
+              : undefined,
+        },
+        extractCapabilities(entry),
+      );
     })
-    .filter((m: ModelInfo) => m.isVision);
+    .filter((m) => m.isVision);
 
-  // Mark recommended model
   const recommended = selectRecommendedModel(models);
   if (recommended) {
     recommended.recommended = true;
@@ -617,6 +782,20 @@ async function fetchOpenRouterModels(apiKey: string): Promise<ModelInfo[]> {
   return models;
 }
 
+/**
+ * Parses a provider price. Providers return prices as decimal STRINGS
+ * (OpenRouter) or numbers (tables in this file); anything else becomes null so
+ * it is never mistaken for a free model.
+ */
+function parsePrice(raw: unknown): number | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 function pricePerTokenToDisplay(price: number | null): string {
   if (price === null || price === 0) return 'Free tier available';
   if (price < 0.000001) return 'Very low cost option';
@@ -624,43 +803,47 @@ function pricePerTokenToDisplay(price: number | null): string {
   return 'Premium quality model';
 }
 
-async function fetchCustomModels(endpoint: string, apiKey?: string): Promise<ModelInfo[]> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
+/**
+ * OpenAI-compatible `/models` listing, used by Custom, Mistral and Groq.
+ *
+ * Vision detection is marked `unknown` rather than guessed: these endpoints
+ * return no capability metadata, and claiming a text-only model can read page
+ * images is exactly the failure that wastes an admin's paid requests. Models
+ * are returned unfiltered with `filteredForVision: false`, and the UI says so.
+ */
+async function fetchOpenAICompatibleModels(
+  endpoint: string,
+  provider: Provider,
+  apiKey?: string,
+): Promise<ModelInfo[]> {
+  const headers: Record<string, string> = {};
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-  const response = await fetch(`${endpoint}/models`, {
-    method: 'GET',
-    headers,
-  });
+  const data = await fetchProviderJson(`${endpoint}/models`, provider, { headers });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Custom API error: ${response.status} - ${errorText}`);
-  }
+  return readModelArray(data)
+    .map((entry) => {
+      const id =
+        (typeof entry.id === 'string' && entry.id) ||
+        (typeof entry.name === 'string' && entry.name) ||
+        null;
+      if (!id) return null;
 
-  const data = await response.json();
-  const modelArray = Array.isArray(data) ? data : data.models || [];
-
-  const models: ModelInfo[] = modelArray.map((model: { id?: string; name?: string }) => {
-    const id = model.id ?? model.name ?? 'unknown';
-    return {
-      id,
-      name: model.name ?? id,
-      isVision: false, // Custom provider - no filtering
-      supportsStructuredOutput: false,
-      contextWindow: null,
-      pricePerToken: null,
-      priceDisplay: 'Unknown',
-      isDeprecated: false,
-      releaseDate: null,
-      recommended: false,
-      recommendationScore: 0,
-    };
-  });
-
-  return models;
+      return buildModelInfo(
+        id,
+        provider,
+        {
+          name: typeof entry.name === 'string' ? entry.name : id,
+          supportsStructuredOutput: false,
+          contextWindow: null,
+          pricePerToken: null,
+          priceDisplay: provider === 'mistral' ? 'See Mistral pricing' : 'See Groq pricing',
+          providerNote: 'Page-image support could not be confirmed — check the model docs.',
+        },
+        extractCapabilities(entry),
+      );
+    })
+    .filter((m): m is ModelInfo => m !== null);
 }
 
 // =============================================================================
@@ -693,190 +876,229 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const validProviders: Provider[] = ['ollama', 'openai', 'anthropic', 'gemini', 'openrouter', 'mistral', 'groq', 'ollama-cloud', 'custom'];
-    if (!validProviders.includes(provider)) {
+    // Validate against the canonical provider list — a hard-coded copy here once
+    // drifted and rejected `glm-ocr` with a raw "Invalid provider" error.
+    const validProviders: readonly Provider[] = LLM_PROVIDER_VALUES;
+    if (!LLM_PROVIDER_VALUES.includes(provider)) {
       return NextResponse.json(
-        { error: `Invalid provider: ${provider}. Must be one of: ${validProviders.join(', ')}` },
-        { status: 400 }
+        { error: `That provider is not supported. Choose one of: ${validProviders.join(', ')}.` },
+        { status: 400 },
       );
     }
 
-    // Resolve API key from encrypted APIKey table and endpoint
-    const apiKey = await getPrimaryApiKey(provider as LLMProviderValue);
+    // Resolve API key from the encrypted APIKey table and the endpoint.
+    const apiKey = await getPrimaryApiKey(provider);
     const endpoint = await resolveEndpoint(provider, clientEndpoint);
+    const meta = getProviderMeta(provider);
 
-    // Only validate endpoint for providers that actually use it
-    let safeEndpoint = endpoint;
+    // Providers that call out to a self-chosen URL need SSRF validation.
     const providersUsingEndpoint = ['ollama', 'ollama-cloud', 'custom'];
+    let safeEndpoint = endpoint;
     if (providersUsingEndpoint.includes(provider) && endpoint) {
-      const endpointPolicy = provider === 'ollama' || provider === 'ollama-cloud'
-        ? 'allow-local'
-        : 'strict-public';
+      const endpointPolicy = provider === 'custom' ? 'strict-public' : 'allow-local';
       const validatedEndpoint = validateOutboundEndpoint(endpoint, endpointPolicy);
 
       if (!validatedEndpoint.valid) {
-        return NextResponse.json({ error: validatedEndpoint.error }, { status: 400 });
+        return NextResponse.json(
+          { error: describeProviderIssue(providerLabel(provider), 'invalid-endpoint') },
+          { status: 400 },
+        );
       }
 
       safeEndpoint = validatedEndpoint.url.toString();
     }
 
-    // Fetch models based on provider
+    // ---------------------------------------------------------------------
+    // Fetch models for the selected provider.
+    //
+    // Each branch is independent: the request targets exactly one provider, so
+    // a failure here can only affect that provider's dropdown. Failures raise
+    // ProviderIssueError, which is converted to a plain-language response below
+    // instead of a blank list or a raw upstream error.
+    // ---------------------------------------------------------------------
     let models: ModelInfo[];
     let filteredForVision = false;
     let warning: string | undefined;
+    let notice: string | undefined;
+
+    /** Missing-credential guard shared by every key-requiring provider. */
+    const requireApiKey = (): void => {
+      if (!apiKey?.trim()) {
+        throw new ProviderIssueError(
+          400,
+          'missing-api-key',
+          describeProviderIssue(providerLabel(provider), 'missing-api-key'),
+        );
+      }
+    };
+
+    /** Empty-result guard: never show a bare dropdown with nothing in it. */
+    const requireModels = (found: ModelInfo[]): ModelInfo[] => {
+      if (found.length === 0) {
+        throw new ProviderIssueError(
+          200,
+          'no-models',
+          describeProviderIssue(providerLabel(provider), 'no-models'),
+        );
+      }
+      return found;
+    };
 
     switch (provider) {
       case 'glm-ocr': {
         models = getGlmOcrModels();
         filteredForVision = true;
-        warning = 'GLM-OCR runs as a local image-based OCR provider. Keep full-PDF sending disabled.';
+        warning =
+          'GLM-OCR runs as a local image-based OCR provider and reads one page image at a time. Keep full-PDF sending disabled.';
         break;
       }
 
-      case 'ollama': {
-        const ollamaEndpoint = safeEndpoint || 'http://localhost:11434';
-        models = await fetchOllamaModels(ollamaEndpoint);
+      case 'ollama':
+      case 'ollama-cloud': {
+        const ollamaEndpoint = safeEndpoint || meta?.defaultEndpoint || 'http://localhost:11434';
+        const result = await fetchOllamaModels(ollamaEndpoint, provider);
+        models = requireModels(result.models);
         filteredForVision = true;
+        if (result.probeFailed) {
+          warning =
+            `${providerLabel(provider)} did not report page-image capability for every model, so some were matched by name. Pick a model you know can read images.`;
+        }
         break;
       }
 
       case 'openai': {
-        if (!apiKey) {
-          return NextResponse.json(
-            { error: 'Missing required parameter: apiKey for openai provider' },
-            { status: 400 }
-          );
-        }
-        models = await fetchOpenAIModels(apiKey);
+        requireApiKey();
+        models = requireModels(await fetchOpenAIModels(apiKey));
         filteredForVision = true;
         break;
       }
 
       case 'anthropic': {
-        models = fetchAnthropicModels();
+        models = requireModels(await fetchAnthropicModels(apiKey));
         filteredForVision = true;
+        if (!apiKey?.trim()) {
+          notice = describeProviderIssue(providerLabel(provider), 'missing-api-key');
+        }
         break;
       }
 
       case 'gemini': {
-        if (!apiKey) {
-          return NextResponse.json(
-            { error: 'Missing required parameter: apiKey for gemini provider' },
-            { status: 400 }
-          );
-        }
-        models = await fetchGeminiModels(apiKey);
+        requireApiKey();
+        models = requireModels(await fetchGeminiModels(apiKey));
         filteredForVision = true;
         break;
       }
 
       case 'openrouter': {
-        if (!apiKey) {
-          return NextResponse.json(
-            { error: 'Missing required parameter: apiKey for openrouter provider' },
-            { status: 400 }
-          );
-        }
-        models = await fetchOpenRouterModels(apiKey);
+        requireApiKey();
+        models = requireModels(await fetchOpenRouterModels(apiKey));
         filteredForVision = true;
+        break;
+      }
+
+      case 'mistral': {
+        requireApiKey();
+        models = await fetchOpenAICompatibleModels('https://api.mistral.ai/v1', provider, apiKey);
+        warning =
+          'Mistral does not report which models can read page images, so this list is unfiltered. Choose a model documented as vision-capable (for example Pixtral).';
+        break;
+      }
+
+      case 'groq': {
+        requireApiKey();
+        models = await fetchOpenAICompatibleModels('https://api.groq.com/openai/v1', provider, apiKey);
+        warning =
+          'Groq does not report which models can read page images, so this list is unfiltered. Only Groq vision models accept page images, and they accept 1 page per request.';
         break;
       }
 
       case 'custom': {
         if (!safeEndpoint) {
-          return NextResponse.json(
-            { error: 'Missing required parameter: endpoint for custom provider' },
-            { status: 400 }
+          throw new ProviderIssueError(
+            400,
+            'missing-endpoint',
+            describeProviderIssue(providerLabel(provider), 'missing-endpoint'),
           );
         }
-        models = await fetchCustomModels(safeEndpoint, apiKey);
-        warning = 'Custom provider: vision capability detection unavailable. Please verify model supports vision.';
+        models = await fetchOpenAICompatibleModels(safeEndpoint, provider, apiKey);
+        warning =
+          'Custom provider: this server does not report page-image capability, so the list is unfiltered. Choose a model you know can read images.';
         break;
       }
-
-      case 'mistral': {
-        if (!apiKey) {
-          return NextResponse.json(
-            { error: 'Missing required parameter: apiKey for mistral provider' },
-            { status: 400 }
-          );
-        }
-        // Mistral uses an OpenAI-compatible API at https://api.mistral.ai/v1
-        models = await fetchCustomModels('https://api.mistral.ai/v1', apiKey);
-        filteredForVision = true;
-        warning = 'Mistral: vision capability detection is best-effort. Verify your model supports vision.';
-        break;
-      }
-
-      case 'groq': {
-        if (!apiKey) {
-          return NextResponse.json(
-            { error: 'Missing required parameter: apiKey for groq provider' },
-            { status: 400 }
-          );
-        }
-        // Groq uses an OpenAI-compatible API at https://api.groq.com/openai/v1
-        models = await fetchCustomModels('https://api.groq.com/openai/v1', apiKey);
-        filteredForVision = true;
-        warning = 'Groq: vision capability detection is best-effort. Verify your model supports vision.';
-        break;
-      }
-
-      case 'ollama-cloud': {
-        // Ollama instance at a remote URL (same API as local Ollama)
-        const ollamaCloudEndpoint = safeEndpoint || 'http://localhost:11434';
-        models = await fetchOllamaModels(ollamaCloudEndpoint);
-        filteredForVision = true;
-        break;
-      }
-
-      default:
-        return NextResponse.json({ error: 'Unknown provider' }, { status: 400 });
     }
 
-    // Sort models by recommendation (recommended first), then by price
+    // Sort models by recommendation (recommended first), then by price.
+    // Models whose image support is unconfirmed sort last so an admin is
+    // steered toward a verified choice.
     models.sort((a, b) => {
       if (a.recommended && !b.recommended) return -1;
       if (!a.recommended && b.recommended) return 1;
+      const aUnknown = a.visionSource === 'unknown' ? 1 : 0;
+      const bUnknown = b.visionSource === 'unknown' ? 1 : 0;
+      if (aUnknown !== bUnknown) return aUnknown - bUnknown;
       return (a.pricePerToken ?? Infinity) - (b.pricePerToken ?? Infinity);
     });
 
     const recommendedModel = models.find((m) => m.recommended)?.id ?? null;
+    const detectionIsHeuristic = models.some(
+      (m) => m.visionSource === 'keyword' || m.visionSource === 'unknown',
+    );
 
     const response: ModelsResponse = {
       models,
       totalCount: models.length,
       filteredForVision,
       recommendedModel,
+      detectionIsHeuristic,
     };
 
-    if (warning) {
-      response.warning = warning;
+    if (warning) response.warning = warning;
+    if (notice) response.notice = notice;
+
+    const capNote = describeImageCap(meta?.maxImagesPerRequest ?? null, providerLabel(provider));
+    if (capNote) {
+      response.warning = response.warning ? `${response.warning} ${capNote}` : capNote;
     }
 
     logger.info('Fetched models from provider', {
       provider,
       modelCount: models.length,
       filteredForVision,
+      detectionIsHeuristic,
       recommendedModel,
       userId: session.user.id,
     });
 
     return NextResponse.json(response);
   } catch (error) {
+    // Provider failures already carry a plain-language, actionable message.
+    // Log without the key and return the message the admin can act on.
+    if (error instanceof ProviderIssueError) {
+      logger.info('Provider model discovery issue', {
+        kind: error.kind,
+        status: error.status,
+      });
+
+      return NextResponse.json(
+        { error: error.message, kind: error.kind, models: [], totalCount: 0 },
+        { status: error.status === 200 ? 404 : error.status },
+      );
+    }
+
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Failed to fetch models from provider', {
-      error: errorMessage,
-    });
+    logger.error('Failed to fetch models from provider', { error: errorMessage });
 
     return NextResponse.json(
-      { error: 'Failed to fetch models from provider.' },
-      { status: 502 }
+      {
+        error: 'Could not load the model list. Try again in a moment.',
+        kind: 'unknown',
+        models: [],
+        totalCount: 0,
+      },
+      { status: 502 },
     );
   }
 }
-
 // =============================================================================
 // OPTIONS
 // =============================================================================

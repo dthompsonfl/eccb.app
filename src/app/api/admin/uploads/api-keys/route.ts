@@ -17,6 +17,7 @@ import {
 import { LLM_PROVIDER_VALUES } from '@/lib/llm/providers';
 
 import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
 // Schemas
 // =============================================================================
@@ -84,6 +85,12 @@ export async function GET(req: NextRequest) {
 // =============================================================================
 
 export async function POST(req: NextRequest) {
+  // Rate limit this admin mutation. Without it a hijacked or over-
+  // privileged session could hammer destructive or AI-spending
+  // endpoints without bound.
+  const rateLimited = await applyRateLimit(req, 'adminAction');
+  if (rateLimited) return rateLimited;
+
   try {
     // CSRF validation FIRST (defense in depth)
     const csrf = validateCSRF(req);

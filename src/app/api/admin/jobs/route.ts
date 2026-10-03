@@ -21,6 +21,7 @@ import { checkUserPermission } from '@/lib/auth/permissions';
 import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { z } from 'zod';
+import { applyRateLimit } from '@/lib/rate-limit';
 
 // ============================================================================
 // Request Validation
@@ -114,6 +115,12 @@ export async function GET(request: NextRequest) {
 // ============================================================================
 
 export async function POST(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     // Validate CSRF
     const csrfResult = validateCSRF(request);
@@ -207,6 +214,12 @@ export async function POST(request: NextRequest) {
 // ============================================================================
 
 export async function DELETE(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     // Validate CSRF
     const csrfResult = validateCSRF(request);

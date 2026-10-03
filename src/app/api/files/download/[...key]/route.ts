@@ -5,6 +5,12 @@ import { validateSignedToken, isTokenExpired } from '@/lib/signed-url';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { Readable } from 'stream';
+import {
+  applyDeliveryWatermarkStream,
+  needsWatermark,
+  WatermarkError,
+} from '@/lib/music/watermark-delivery';
+import { resolveMusicFileScope } from '@/lib/music/access';
 
 // =============================================================================
 // Route Handler
@@ -84,19 +90,64 @@ export async function GET(
     
     // LOCAL: stream the file
     const { stream, metadata } = result;
-    
+
+    // Watermark PDFs on the way out, exactly as /api/files/[...key] does.
+    // This route serves the same copyrighted scores through a signed-URL
+    // token, so skipping the stamp here let any member holding a
+    // music.download.assigned token retrieve a clean, untraceable copy.
+    // Runs only after the token has been validated and bound to this key, and
+    // a stamping failure must NOT fall back to the clean original.
+    let body: Uint8Array | null = null;
+    let deliverySize = metadata.size;
+    if (needsWatermark(metadata.contentType)) {
+      const pieceId = (await resolveMusicFileScope(storageKey))?.pieceId;
+      if (pieceId) {
+        try {
+          const stamped = await applyDeliveryWatermarkStream({
+            stream,
+            contentType: metadata.contentType,
+            pieceId,
+            userId: tokenPayload.userId,
+          });
+          body = stamped.bytes;
+          deliverySize = stamped.size;
+        } catch (error) {
+          if (error instanceof WatermarkError) {
+            logger.error('Refusing to deliver unstamped copyrighted PDF', {
+              error,
+              storageKey,
+              userId: tokenPayload.userId,
+            });
+            return NextResponse.json(
+              { error: 'File could not be watermarked for delivery' },
+              { status: 500 }
+            );
+          }
+          throw error;
+        }
+      }
+    }
+
     // Log the download
     if (file) {
-      await logDownload(file.id, tokenPayload.userId, request, metadata.size);
+      await logDownload(file.id, tokenPayload.userId, request, deliverySize);
     }
-    
-    // Convert Node.js stream to Web ReadableStream
-    const webStream = Readable.toWeb(stream as Readable) as ReadableStream;
-    
+
+    // Convert Node.js stream to Web ReadableStream, unless already buffered
+    // to stamp it.
+    const webStream = body
+      ? new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        })
+      : (Readable.toWeb(stream as Readable) as ReadableStream);
+
     // Build response headers
     const headers = new Headers();
     headers.set('Content-Type', metadata.contentType);
-    headers.set('Content-Length', String(metadata.size));
+    headers.set('Content-Length', String(deliverySize));
     headers.set('Content-Disposition', `attachment; filename="${file?.fileName || 'download'}"`);
     headers.set('Cache-Control', 'private, max-age=3600');
     

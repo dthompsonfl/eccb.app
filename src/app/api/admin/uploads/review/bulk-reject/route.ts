@@ -8,6 +8,7 @@ import { validateCSRF } from '@/lib/csrf';
 import { z } from 'zod';
 
 import { MUSIC_EDIT } from '@/lib/auth/permission-constants';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -25,6 +26,12 @@ const bulkRejectSchema = z.object({
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const csrfResult = validateCSRF(request);
     if (!csrfResult.valid) {

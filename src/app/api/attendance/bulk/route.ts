@@ -7,6 +7,7 @@ import { validateCSRF } from '@/lib/csrf';
 import { applyRateLimit } from '@/lib/rate-limit';
 import { checkUserPermission } from '@/lib/auth/permissions';
 import { auditLog } from '@/lib/services/audit';
+import { replaceEventAttendance } from '@/lib/attendance/bulk-write';
 
 import { ATTENDANCE_MARK_ALL } from '@/lib/auth/permission-constants';
 const bulkAttendanceSchema = z.object({
@@ -64,30 +65,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
-    // Delete existing attendance records for this event
-    await prisma.attendance.deleteMany({
-      where: { eventId },
-    });
-
-    // Create new attendance records
-    await prisma.attendance.createMany({
-      data: records.map((record) => ({
-        eventId,
-        memberId: record.memberId,
-        status: record.status,
-        notes: record.notes,
-        markedBy: session.user.id,
-      })),
-    });
+    // Atomic replace — same helper the server action uses, so the two entry
+    // points cannot drift. The previous deleteMany()+createMany() pair was not
+    // transactional and lost every row for the event if the create failed.
+    const { count } = await prisma.$transaction(async (tx) =>
+      replaceEventAttendance(tx, eventId, records, session.user.id),
+    );
 
     await auditLog({
       action: 'attendance.bulk_mark',
       entityType: 'Event',
       entityId: eventId,
-      newValues: { recordCount: records.length },
+      newValues: { recordCount: count },
     });
 
-    return NextResponse.json({ success: true, count: records.length });
+    return NextResponse.json({ success: true, count });
   } catch (error) {
     console.error('Error marking bulk attendance:', error);
     if (error instanceof z.ZodError) {

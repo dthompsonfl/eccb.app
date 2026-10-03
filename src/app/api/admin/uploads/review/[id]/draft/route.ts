@@ -9,6 +9,7 @@ import type { ExtractedMetadata } from '@/types/smart-upload';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
 import { parseSmartUploadJsonArray, parseSmartUploadJsonField, serializeSmartUploadJsonField } from '@/lib/smart-upload/persistence';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -51,6 +52,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const csrfResult = validateCSRF(request);
     if (!csrfResult.valid) {

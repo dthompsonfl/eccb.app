@@ -9,6 +9,7 @@ import { commitSmartUploadSessionToLibrary } from '@/lib/smart-upload/commit';
 import type { CommitOverrides } from '@/lib/smart-upload/commit';
 
 import { MUSIC_CREATE } from '@/lib/auth/permission-constants';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
 // Validation Schema
 // =============================================================================
@@ -35,6 +36,12 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   try {
     const csrfResult = validateCSRF(request);
     if (!csrfResult.valid) {
@@ -102,6 +109,16 @@ export async function POST(
       wasIdempotent: commitResult.wasIdempotent,
     });
 
+    // Parts that no active member could be routed to. Reported explicitly so a
+    // librarian sees "nobody plays the Oboe part" instead of discovering at the
+    // concert that a section has no music. Never a silent drop.
+    const unroutedNotice =
+      commitResult.unroutedParts.length > 0
+        ? ` ${commitResult.unroutedParts.length} part(s) could not be routed to any member and need manual assignment: ${commitResult.unroutedParts
+            .map((u) => `${u.partName} — ${u.detail}`)
+            .join(' ')}`
+        : '';
+
     return NextResponse.json({
       success: true,
       session: {
@@ -117,10 +134,15 @@ export async function POST(
         id: commitResult.musicFileId,
       },
       partsCommitted: commitResult.partsCommitted,
+      // 0 on an idempotent no-op: routing already happened on the first commit.
+      assignmentsCreated: commitResult.assignmentsCreated,
+      unroutedParts: commitResult.unroutedParts,
       wasIdempotent: commitResult.wasIdempotent,
-      message: commitResult.wasIdempotent
-        ? `Session was already committed. Existing piece: "${commitResult.musicPieceTitle}".`
-        : `Successfully approved and imported "${commitResult.musicPieceTitle}" to music library.`,
+      message:
+        (commitResult.wasIdempotent
+          ? `Session was already committed. Existing piece: "${commitResult.musicPieceTitle}".`
+          : `Successfully approved and imported "${commitResult.musicPieceTitle}" to music library, and routed ${commitResult.assignmentsCreated} part(s) to players.`) +
+        unroutedNotice,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

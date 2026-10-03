@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/guards';
 import { setPieceWatermark } from '@/lib/music/watermark-policy';
 import { logger } from '@/lib/logger';
+import { applyRateLimit } from '@/lib/rate-limit';
 
 /**
  * Turn watermarking on/off for one piece.
@@ -11,6 +12,12 @@ import { logger } from '@/lib/logger';
  * so this route cannot accidentally become the weaker path.
  */
 export async function PATCH(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

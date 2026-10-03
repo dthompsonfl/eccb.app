@@ -7,6 +7,7 @@ import { checkUserPermission } from '@/lib/auth/permissions';
 import { auditLog } from '@/lib/services/audit';
 import { z } from 'zod';
 import { AttendanceStatus } from '@prisma/client';
+import { replaceEventAttendance } from '@/lib/attendance/bulk-write';
 import {
   ATTENDANCE_MARK_ALL,
   ATTENDANCE_MARK_SECTION,
@@ -204,33 +205,29 @@ export async function markBulkAttendance(data: {
       return { success: false, error: 'Event not found' };
     }
 
-    // Delete existing attendance records for this event
-    await prisma.attendance.deleteMany({
-      where: { eventId: validated.eventId },
-    });
-
-    // Create new attendance records
-    await prisma.attendance.createMany({
-      data: validated.records.map((record) => ({
-        eventId: validated.eventId,
-        memberId: record.memberId,
-        status: record.status,
-        notes: record.notes,
-        markedBy: session.user.id,
-      })),
-    });
+    // Replace the whole event's attendance atomically. This used to be a bare
+    // deleteMany() followed by an un-transacted createMany(): a failure between
+    // the two left the event with no attendance at all. See lib/attendance/bulk-write.
+    const { count, removed } = await prisma.$transaction(async (tx) =>
+      replaceEventAttendance(
+        tx,
+        validated.eventId,
+        validated.records,
+        session.user.id,
+      ),
+    );
 
     await auditLog({
       action: 'attendance.bulk_mark',
       entityType: 'Event',
       entityId: validated.eventId,
-      newValues: { recordCount: validated.records.length },
+      newValues: { recordCount: count, removedCount: removed },
     });
 
     revalidatePath(`/admin/events/${validated.eventId}/attendance`);
     revalidatePath('/member/attendance');
 
-    return { success: true, count: validated.records.length };
+    return { success: true, count };
   } catch (error) {
     if (error instanceof z.ZodError) {
       return { success: false, error: error.issues[0].message };

@@ -22,8 +22,28 @@ const mockRequireAuth = vi.hoisted(() => vi.fn());
 const mockRequirePermission = vi.hoisted(() => vi.fn());
 const mockCheckUserPermission = vi.hoisted(() => vi.fn());
 
+// `$transaction` runs its callback immediately and hands it a client exposing
+// the same mocked delegates, so a transactional write is observable through the
+// same spies the assertions already use.
+const mockTransaction = vi.hoisted(() =>
+  vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+    fn({
+      attendance: {
+        findUnique: mockAttendanceFindUnique,
+        findMany: mockAttendanceFindMany,
+        create: mockAttendanceCreate,
+        update: mockAttendanceUpdate,
+        upsert: mockAttendanceUpsert,
+        deleteMany: mockAttendanceDeleteMany,
+        createMany: mockAttendanceCreateMany,
+      },
+    }),
+  ),
+);
+
 vi.mock('@/lib/db', () => ({
   prisma: {
+    $transaction: mockTransaction,
     attendance: {
       findUnique: mockAttendanceFindUnique,
       findMany: mockAttendanceFindMany,
@@ -179,10 +199,40 @@ describe('Attendance Actions', () => {
 
       expect(result.success).toBe(true);
       expect(result.count).toBe(3);
+      // The write is now an atomic upsert-per-member inside a transaction, not a
+      // blanket deleteMany followed by createMany. Deleting first meant a failure
+      // between the two left the event with no attendance at all.
+      expect(mockTransaction).toHaveBeenCalled();
+      expect(mockAttendanceUpsert).toHaveBeenCalledTimes(3);
+      expect(mockAttendanceCreateMany).not.toHaveBeenCalled();
+      // Only members ABSENT from the payload are removed, so a member's existing
+      // row is overwritten rather than destroyed and recreated.
       expect(mockAttendanceDeleteMany).toHaveBeenCalledWith({
-        where: { eventId: 'event-1' },
+        where: {
+          eventId: 'event-1',
+          memberId: { notIn: ['member-1', 'member-2', 'member-3'] },
+        },
       });
-      expect(mockAttendanceCreateMany).toHaveBeenCalled();
+    });
+
+    it('folds a duplicate memberId instead of failing on the unique constraint', async () => {
+      mockRequirePermission.mockResolvedValue({ user: { id: 'user-1' } } as any);
+      mockEventFindUnique.mockResolvedValue({ id: 'event-1' } as any);
+      mockAttendanceDeleteMany.mockResolvedValue({ count: 0 });
+
+      const result = await markBulkAttendance({
+        eventId: 'event-1',
+        records: [
+          { memberId: 'member-1', status: 'ABSENT' },
+          { memberId: 'member-1', status: 'PRESENT' },
+        ],
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.count).toBe(1);
+      // Last write wins.
+      expect(mockAttendanceUpsert).toHaveBeenCalledTimes(1);
+      expect(mockAttendanceUpsert.mock.calls[0][0].update.status).toBe('PRESENT');
     });
 
     it('should return error when event not found', async () => {

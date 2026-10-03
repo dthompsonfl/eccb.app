@@ -12,6 +12,7 @@ import { type LLMProviderValue } from '@/lib/llm/providers';
 import { validateOutboundEndpoint } from '@/lib/network/safe-endpoint';
 
 import { SYSTEM_CONFIG } from '@/lib/auth/permission-constants';
+import { applyRateLimit } from '@/lib/rate-limit';
 // =============================================================================
 // Schema
 // =============================================================================
@@ -28,6 +29,12 @@ const testSchema = z.object({
 // =============================================================================
 
 export async function POST(request: NextRequest) {
+    // Rate limit this admin mutation. Without it a hijacked or over-
+    // privileged session could hammer destructive or AI-spending
+    // endpoints without bound.
+    const rateLimited = await applyRateLimit(request, 'adminAction');
+    if (rateLimited) return rateLimited;
+
   // CSRF validation
   const csrfResult = validateCSRF(request);
   if (!csrfResult.valid) {
