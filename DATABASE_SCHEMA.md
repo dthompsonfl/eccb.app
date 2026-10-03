@@ -1092,32 +1092,23 @@ export const prismaWrite = new PrismaClient({
 - Email addresses (hashed for lookups)
 
 **Right to be Forgotten (GDPR):**
+
+> **NOT IMPLEMENTED.** No `anonymizeMember` function exists in `src/` today. The snippet below is a *design sketch only* and must not be cited as a delivered feature. Erasure is a much larger problem than nulling a handful of `Member` columns: the schema has 47 `onDelete: Cascade` relations, so deleting a `User` would silently destroy child rows, while `Annotation.userId` is a **required** FK with no `onDelete`, meaning a naive hard delete is rejected by the database. A real implementation must decide per-model whether to delete, anonymise, or retain, and must run transactionally and idempotently. See `src/lib/privacy/` and the privacy tests for the implemented behaviour, and TODO.md for what remains.
+
+Illustrative shape only — not shipped code:
 ```typescript
-async function anonymizeMember(memberId: string) {
-  await prisma.member.update({
-    where: { id: memberId },
-    data: {
-      firstName: 'DELETED',
-      lastName: 'USER',
-      email: null,
-      phone: null,
-      emergencyName: null,
-      emergencyPhone: null,
-      emergencyEmail: null,
-      notes: null,
-      deletedAt: new Date(),
-    },
-  });
-}
+async function anonymizeMember(memberId: string) { /* see src/lib/privacy/erasure.ts */ }
 ```
 
 ### 7.2 Data Retention
 
+> **POLICY ONLY — NOT ENFORCED IN CODE.** No background job prunes sessions, audit logs, or file-download records against these windows. The values below describe intent; nothing currently deletes data on this schedule. Treat them as a requirement to build, not a guarantee.
+
 - **Active Members**: Indefinite
-- **Alumni**: 10 years after departure
-- **Audit Logs**: 7 years
-- **File Downloads**: 1 year
-- **Sessions**: 30 days
+- **Alumni**: 10 years after departure (not enforced)
+- **Audit Logs**: 7 years (not enforced)
+- **File Downloads**: 1 year (not enforced)
+- **Sessions**: 30 days (not enforced)
 
 ---
 

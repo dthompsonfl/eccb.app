@@ -47,7 +47,7 @@ Comprehensive schema including:
 - Migration strategy & seed data
 - Backup & restore procedures
 - Query optimization patterns
-- GDPR compliance features
+- Privacy & data-subject-rights documentation (see `src/lib/privacy/`; GDPR coverage is PARTIAL — see AGENTS.md)
 - Testing examples
 
 ### 3. PERMISSIONS.md (22KB)
