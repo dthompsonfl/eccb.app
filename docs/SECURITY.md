@@ -88,17 +88,33 @@ The [`scripts/dependency-check.ts`](../scripts/dependency-check.ts) script provi
 
 ## Security Headers
 
-The application implements comprehensive security headers in [`next.config.ts`](../next.config.ts):
+Security headers are declared in **two** layers and both are live:
 
-| Header | Value | Purpose |
-|--------|-------|---------|
-| `X-Content-Type-Options` | `nosniff` | Prevents MIME type sniffing |
-| `X-Frame-Options` | `SAMEORIGIN` | Prevents clickjacking |
-| `X-XSS-Protection` | `1; mode=block` | XSS filter protection |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | Controls referrer information |
-| `Permissions-Policy` | Restrictive defaults | Limits browser features |
-| `Content-Security-Policy` | Restrictive defaults | Prevents XSS and injection |
-| `Strict-Transport-Security` | HSTS settings | Forces HTTPS (production only) |
+1. [`next.config.ts`](../next.config.ts) — `headers()` applies a header set to
+   every route (`source: '/:path*'`), plus a narrower `Permissions-Policy`
+   override for `/member/stand/:path*` and no-store cache headers on `/api/:path*`.
+2. [`src/proxy.ts`](../src/proxy.ts) — `applySecurityHeaders()` re-applies the
+   header set (including a full CSP) to every response the proxy handles.
+
+| Header | Value | Applied by | Purpose |
+|--------|-------|-----------|---------|
+| `X-Content-Type-Options` | `nosniff` | both | Prevents MIME type sniffing |
+| `X-Frame-Options` | `DENY` | both | Prevents clickjacking (stricter than `SAMEORIGIN`) |
+| `X-XSS-Protection` | `1; mode=block` | both | XSS filter protection |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | both | Controls referrer information |
+| `X-DNS-Prefetch-Control` | `off` | `src/proxy.ts` | Prevents DNS prefetch leaking navigated origins |
+| `Permissions-Policy` | `camera=()`, `microphone=()`, `geolocation=()`, `payment=()` denied everywhere; `microphone=(self)` only on `/member/stand/:path*` | both | Limits browser features to least privilege |
+| `Content-Security-Policy` | `default-src 'self'`; `object-src 'none'`; `frame-ancestors 'none'`; `base-uri 'self'`; `form-action 'self'`; `script-src 'self' 'unsafe-inline'`; `style-src 'self' 'unsafe-inline'` | both | Prevents XSS and injection |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | `next.config.ts` (production only) and `src/proxy.ts` (unconditional) | Forces HTTPS |
+
+Two honest caveats about the CSP, so it is not over-read:
+
+- `script-src` carries `'unsafe-inline'` because Next.js emits inline bootstrap
+  scripts. `'unsafe-eval'` is **not** enabled unless `NEXT_ENABLE_UNSAFE_EVAL=true`.
+- `Strict-Transport-Security` is set unconditionally by `src/proxy.ts`, so it is
+  also emitted on plain-HTTP (LAN / Tailscale) origins. Browsers ignore HSTS
+  received over HTTP, so this is inert there rather than a lockout — but it is an
+  inconsistency between the two layers, not an intentional design.
 
 ## CSRF Protection
 

@@ -242,10 +242,25 @@ Use the `sr-only` class for content that should be announced but not visible:
 
 | Color | Hex | Usage | Contrast (on white) |
 |-------|-----|-------|---------------------|
-| Primary | `#0f766e` | Buttons, links | 5.89:1 ✓ |
-| Primary Light | `#5eead4` | Accents | 2.12:1 ✗ (use on dark only) |
+| Primary | `#0f766e` | Buttons, links | 5.47:1 ✓ |
+| Primary Light | `#5eead4` | Accents, **dark-mode focus ring** | 2.12:1 ✗ on white / 9.89:1 on the dark card ✓ |
 | Neutral Dark | `#1f2937` | Text | 13.5:1 ✓ |
-| Accent | `#f59e0b` | Highlights | 2.63:1 ✗ (use on dark only) |
+| Accent | `#f59e0b` | Highlights | 2.15:1 ✗ (use on dark only) |
+| Muted foreground | `#616771` | Helper text | 5.6:1 on background, 5.18:1 on muted ✓ |
+
+`--muted-foreground` was `#6b7280` until it was measured at **4.39:1 on
+`--muted`**, an AA failure. Muted helper text is very often set *on* a muted
+surface (muted cards, muted table rows), so the token has to clear 4.5:1 against
+both `--background` and `--muted`. Do not lighten it again.
+
+### The focus ring is its own token
+
+`--focus-ring` is deliberately **not** `--primary`. `--primary` is a fill
+colour chosen to sit behind white text; as a 3px outline on a dark card it
+measured only **2.67:1**, i.e. dark mode had a focus ring nobody could see.
+`--focus-ring` is `#0f766e` in light and `#5eead4` in dark, and every primitive
+in `src/components/ui/` uses it at full opacity. The old `ring-ring/50` pattern
+must not come back: 50% opacity teal on white is 2.16:1.
 
 ### Contrast Rules
 
@@ -263,6 +278,49 @@ Use these tools to verify contrast:
 
 ---
 
+## Destructive Actions
+
+Anything that destroys a member's work — removing a bookmark, deleting a
+setlist, taking a carpool post off the board — must go through
+`ConfirmActionButton` (`src/components/member/shared/confirm-action-button.tsx`).
+
+The audience for this app skews elderly, uses a shaky hand, and is often
+frustrated when something goes wrong. A single tap of a small trash icon that
+silently destroys work is the worst possible outcome: it is unrecoverable, and
+it teaches the member that the app is not to be trusted.
+
+The component enforces three things:
+
+1. **Nothing is destroyed on the first tap.** The first tap arms a confirmation
+   dialog that names the item and states the consequence in plain words.
+2. **The trigger is at least 44×44 px**, regardless of the icon size inside it.
+3. **Where the work can be re-created, an undo toast is offered** rather than
+   only a permission slip. Undo is kinder than "are you sure?", because it does
+   not require the member to understand what went wrong before they recover.
+
+The dialog's escape hatch is worded **"Keep it"**, not "Cancel" — a member who
+mis-taps should never have to guess which button undoes the mistake.
+
+```tsx
+<ConfirmActionButton
+  itemName={`the setlist "${setlist.name}"`}
+  confirmTitle="Delete this setlist?"
+  confirmDescription={`"${setlist.name}" will be taken off this concert. This cannot be undone.`}
+  onConfirm={() => handleDelete(setlist.id)}
+  successMessage={`Setlist deleted — ${setlist.name}`}
+  aria-label={`Delete setlist ${setlist.name}`}
+>
+  <Trash2Icon className="h-3.5 w-3.5" />
+</ConfirmActionButton>
+```
+
+Every action must also give a **definite** result — a success toast, or an error
+toast that says in plain language that nothing changed. Errors from the server
+(`Prisma P2003`, `fetch failed`, HTTP status codes) are logged to the console
+and never shown to a member.
+
+---
+
 ## Focus Management
 
 ### Focus Visible Styles
@@ -270,9 +328,10 @@ Use these tools to verify contrast:
 All interactive elements must have visible focus indicators:
 
 ```css
-/* Global focus styles */
+/* Global focus styles — 3px, not 2px: a member with a tremor needs a target
+   they can see hold still. --focus-ring clears 3:1 in both themes. */
 *:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -281,6 +340,15 @@ All interactive elements must have visible focus indicators:
   outline: none;
 }
 ```
+
+Shadcn primitives (`Button`, `Input`, `Select`, `Checkbox`, `Switch`, …) carry
+`outline-none` plus their own `focus-visible:ring-focus-ring`. Because the
+primitive supplies the ring, `outline-none` there is acceptable — but the ring
+must be at **full opacity** and must use `--focus-ring`, never `--ring/50`.
+
+`src/lib/accessibility/__tests__/design-token-contrast.test.ts` enforces all of
+the ratios above as executable assertions, so a future palette tidy-up cannot
+silently reintroduce an unreadable helper colour or an invisible focus ring.
 
 ### Focus Restoration
 
