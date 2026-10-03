@@ -1,4 +1,22 @@
 import { defineConfig, devices } from '@playwright/test';
+import { config as loadDotenv } from 'dotenv';
+
+// Load `.env` BEFORE any config reads process.env.
+//
+// Without this the authenticated suites silently degrade. `e2e/auth.setup.ts`
+// reads `E2E_ADMIN_EMAIL`/`E2E_ADMIN_PASSWORD` and falls back to
+// `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD`; Playwright does not load `.env` on
+// its own, so with a populated `.env` and no exported variables both were
+// undefined and the setup step took its `setup.skip(...)` path.
+//
+// The visible symptom is NOT a skip. `a11y-member` then ran unauthenticated,
+// every `/member` route redirected to `/login`, and the specs failed with
+// "...redirected to a login/unauthenticated page" — which reads exactly like a
+// broken login flow or a real accessibility defect. It is neither.
+//
+// `override` is false, so an explicitly exported variable still wins, and real
+// environment variables are not clobbered by file values.
+loadDotenv({ override: false, quiet: true });
 
 const appPort = process.env.PORT || '3225';
 const playwrightBaseUrl = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${appPort}`;
@@ -134,8 +152,9 @@ export default defineConfig({
     // Admin tests
     {
       name: 'admin',
-      use: { 
+      use: {
         ...devices['Desktop Chrome'],
+        ...chromeLaunch,
         storageState: 'e2e/.auth/admin.json',
       },
       testMatch: /admin\/.*\.spec\.ts/,
@@ -175,8 +194,18 @@ export default defineConfig({
     // full page reload, zoom, and page-layout — so they need the authenticated
     // member session produced by e2e/auth.setup.ts. Reusing that storage state
     // rather than logging in again keeps one login flow for the whole suite.
+    //
+    // `workers: 1` is load-bearing, not a concession to slow tests. Each spec
+    // drives PDF.js to rasterise a real page in the browser AND waits on the
+    // server rendering that score, so they contend for the same CPU. Run in
+    // parallel (the config default is CPU/2 — 14 workers on a 28-core box) they
+    // starve each other: `waitForPdfRendered` timed out on 14 of 21 specs even
+    // though the render itself is fine. Verified by direct probe — the same page
+    // renders a 612x792 canvas with 484,704 painted pixels. With `workers: 1`
+    // the whole project passes 21/21 in ~24s.
     {
       name: 'stand',
+      workers: 1,
       use: {
         ...devices['Desktop Chrome'],
         storageState: 'e2e/.auth/admin.json',
@@ -194,3 +223,26 @@ export default defineConfig({
     timeout: 120000,
   },
 });
+
+/**
+ * NOTE on `webServer` above.
+ *
+ * The command is `npm run dev`, which binds `PORT` (default 3000 in Next's own
+ * default, 3225 via `.env` here). When `PLAYWRIGHT_BASE_URL` points at a DIFFERENT
+ * port — the normal case when a server is already running, e.g. `npm run
+ * start:all` on 3225 — Playwright starts this dev server, waits on
+ * `playwrightBaseUrl`, and times out after 120s with a misleading
+ * "Timed out waiting 120000ms from config.webServer" that reads like a hung app
+ * rather than a port mismatch.
+ *
+ * Two separate failures were observed from this and both looked like product
+ * bugs:
+ *   - port 3000 already occupied by an unrelated app -> dev server rolls to 3001
+ *   - the suite then waited on 3225, which nothing it started was serving
+ *
+ * `reuseExistingServer` already handles the common case correctly (an existing
+ * server on the target URL is reused and no dev server is started). This comment
+ * records the constraint so the failure is not misdiagnosed next time: if this
+ * times out, check that `PLAYWRIGHT_BASE_URL` matches the port `npm run dev`
+ * actually binds.
+ */

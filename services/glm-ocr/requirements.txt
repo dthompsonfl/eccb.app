@@ -1,6 +1,14 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
-pillow==11.3.0
+# Pillow 12.3.0 is the first release fixing the open libheif/tiff parsing
+# advisories that Dependabot flags against this manifest (all require >= 12.3.0;
+# 11.3.0 was vulnerable to every one of them). The jump is 11 -> 12, a major
+# bump, so it is called out here rather than made silently.
+#
+# main.py uses only Image.open / .load() / .convert() / .width / .height and
+# UnidentifiedImageError, all of which are unchanged in Pillow 12. Pillow 12
+# requires Python >= 3.10; the CUDA 12.4 base image ships 3.10+.
+pillow==12.3.0
 transformers>=4.53.0
 accelerate>=1.8.1
 torch>=2.4.0

@@ -30,6 +30,17 @@ import {
 const SCALES = ['small', 'medium', 'large', 'xlarge'] as const;
 
 test.describe('score large-print', () => {
+  // This spec is the slowest in the suite by construction: `a larger text-size
+  // preference renders a larger score` renders and measures the score FOUR times
+  // (once per preference), and every render is a full PDF.js rasterisation plus
+  // a server round-trip. At Playwright's default 30s that is not enough, so both
+  // tests here failed with "Test timeout of 30000ms exceeded" while waiting on
+  // `waitForPdfRendered` — a timeout, not a product defect.
+  //
+  // The other three stand specs already set 180s for the same reason; this file
+  // was simply missed. Kept identical to its siblings so the suite is uniform.
+  test.describe.configure({ timeout: 180_000 });
+
   test('a larger text-size preference renders a larger score', async ({ page }) => {
     /**
      * Render the score at one text-size preference and measure its canvas.

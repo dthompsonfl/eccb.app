@@ -72,3 +72,8 @@ e2e-results.json
 /logs/
 /outbox/
 /storage/
+
+# Python sidecar (services/glm-ocr) build/cache artifacts
+__pycache__/
+*.py[cod]
+.venv/
