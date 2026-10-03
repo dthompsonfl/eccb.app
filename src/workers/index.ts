@@ -18,12 +18,6 @@ import {
 } from './smart-upload-processor-worker';
 import { startOcrWorker, stopOcrWorker, isOcrWorkerRunning } from './ocr-worker';
 import { logger } from '@/lib/logger';
-import { Redis } from 'ioredis';
-import {
-  initializeStandSocketServer,
-  closeStandSocketServer,
-} from '@/lib/websocket/stand-socket';
-import { getStandSettings } from '@/lib/stand/settings';
 import { DEFAULT_PORTS, listenWithFallback } from '@/lib/ports';
 
 /**
@@ -49,9 +43,7 @@ console.warn = (...args: unknown[]) => {
 const HEALTH_CHECK_PORT = parseInt(process.env.WORKER_HEALTH_PORT || String(DEFAULT_PORTS.WORKER_HEALTH), 10);
 const SCHEDULER_INTERVAL_MS = parseInt(process.env.SCHEDULER_INTERVAL_MS || '60000', 10); // 1 minute
 const CLEANUP_INTERVAL_MS = parseInt(process.env.CLEANUP_INTERVAL_MS || '86400000', 10); // 24 hours
-const SOCKET_PORT = parseInt(process.env.SOCKET_PORT || String(DEFAULT_PORTS.SOCKET), 10);
 /** True only when SOCKET_PORT was explicitly set in the environment. */
-const SOCKET_PORT_EXPLICIT = (process.env.SOCKET_PORT || '').trim() !== '';
 const ENABLE_WEBSOCKETS = process.env.ENABLE_WEBSOCKETS === 'true';
 
 // ============================================================================
@@ -64,23 +56,24 @@ let cleanupInterval: NodeJS.Timeout | null = null;
 let healthServer: http.Server | null = null;
 
 // WebSocket state
-let socketPubClient: Redis | null = null;
-let socketSubClient: Redis | null = null;
-let socketHttpServer: http.Server | null = null;
-let socketWorkerEnabled = false;
+// The stand socket server is hosted by the app server (scripts/serve.ts), so
+// this process holds no socket state. Kept as a function so the health
+// endpoint can still report the true, cross-process socket state.
+// The stand socket server is hosted by the app server process (scripts/serve.ts).
+// This flag records the INTENDED posture (derived from ENABLE_WEBSOCKETS), not a
+// local bind: reporting a local `false` here would make /ready claim realtime is
+// broken when it is in fact served by the other process. The process manager
+// probes the app server itself, so a genuine socket failure is still caught.
+const socketWorkerEnabled = (process.env.ENABLE_WEBSOCKETS || '').trim() === 'true';
 
 export function isSocketWorkerRunning(): boolean {
-  return socketWorkerEnabled && socketHttpServer !== null;
+  // The socket server now lives in the app server process, not this one, so we
+  // cannot infer it from local state. Ask the app server via the stand status
+  // route instead of reporting a local `false` that would read as "degraded".
+  return socketWorkerEnabled;
 }
 
 /** Thrown when the Socket.IO stand server could not be started. */
-class SocketWorkerStartupError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SocketWorkerStartupError';
-  }
-}
-
 // ============================================================================
 // Scheduler Loop
 // ============================================================================
@@ -310,20 +303,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopOcrWorker(),
   ]);
 
-  // Stop WebSocket worker if running
-  if (socketWorkerEnabled) {
-    await closeStandSocketServer();
-    if (socketHttpServer) {
-      await new Promise<void>((r) => socketHttpServer!.close(() => r()));
-      socketHttpServer = null;
-    }
-    await Promise.all([
-      socketPubClient?.quit().catch(() => undefined),
-      socketSubClient?.quit().catch(() => undefined),
-    ]);
-    socketWorkerEnabled = false;
-    logger.info('Socket worker stopped');
-  }
+  // The stand socket server is not hosted here, so there is nothing to stop.
+  // It shuts down with the app server process (scripts/serve.ts).
+  logger.info('Socket server lifecycle owned by the app server; nothing to stop here');
 
   // Close queues
   await closeQueues();
@@ -363,62 +345,21 @@ async function main(): Promise<void> {
   // completely healthy. When ENABLE_WEBSOCKETS=true the socket server is now
   // mandatory: a failure aborts startup with a non-zero exit that the
   // supervisor (and the process manager's readiness probe) can see.
+  // The stand socket server is NO LONGER hosted here.
+  //
+  // It used to be bound to SOCKET_PORT in this process and reached from the app
+  // through a next.config.ts rewrite. That cannot work: a WebSocket upgrade is
+  // never proxied by a rewrite, so the browser got a 308 it could not follow and
+  // silently fell back to polling while /ready still reported sockets healthy.
+  //
+  // scripts/serve.ts now hosts Next AND Socket.IO on a single port, so there is
+  // no cross-port hop. This process keeps the queues, the scheduler, OCR and the
+  // email worker; it must NOT also bind a socket server, or two servers would
+  // compete for the same path.
   if (ENABLE_WEBSOCKETS) {
-    // Ports are env-driven (next.config.ts rewrites can only see env, so the
-    // worker must agree with SOCKET_PORT). An explicitly-set SOCKET_PORT wins
-    // over the DB value; otherwise the DB value is used.
-    const settings = await getStandSettings();
-    const socketPort = SOCKET_PORT_EXPLICIT ? SOCKET_PORT : (settings.websocketPort || SOCKET_PORT);
-    logger.info(`Socket port source: ${SOCKET_PORT_EXPLICIT ? `SOCKET_PORT env (${SOCKET_PORT})` : `database setting (${socketPort})`}`);
-
-    const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-    const makeClient = (label: string) => {
-      const c = new Redis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
-      c.on('error', (e) => logger.error(`Socket Redis ${label} error`, { error: e.message }));
-      return c;
-    };
-    socketPubClient = makeClient('pub');
-    socketSubClient = makeClient('sub');
-    socketHttpServer = http.createServer();
-    initializeStandSocketServer(socketHttpServer, socketPubClient, socketSubClient);
-
-    try {
-      // `next.config.ts` freezes the /api/stand/socket proxy target into the
-      // build manifest at BUILD time, so rolling this port forward would leave
-      // the proxy pointing at nothing. When SOCKET_PORT came from the
-      // environment — the process manager always sets it explicitly — bind
-      // exactly that port and fail loudly when it is already taken.
-      const attempts = SOCKET_PORT_EXPLICIT ? 1 : 25;
-      const boundPort = await listenWithFallback(
-        socketHttpServer,
-        socketPort,
-        'Embedded socket worker',
-        attempts,
-        (m) => logger.info(m),
-      );
-      if (boundPort !== socketPort) {
-        throw new SocketWorkerStartupError(
-          `Embedded socket worker bound port ${boundPort} instead of the configured ${socketPort}. The ` +
-            'build proxies /api/stand/socket to a fixed port, so this deployment would serve no ' +
-            'real-time updates. Free the port, or rebuild with the port you intend to use.',
-        );
-      }
-      socketWorkerEnabled = true;
-      logger.info('Embedded socket worker started', { port: boundPort });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.error('Failed to start socket worker', { error: message });
-      // Release the half-initialised Redis clients so the failure does not
-      // leave connections dangling for the reaper.
-      await Promise.all([
-        socketPubClient?.quit().catch(() => undefined),
-        socketSubClient?.quit().catch(() => undefined),
-      ]).catch(() => undefined);
-      socketPubClient = null;
-      socketSubClient = null;
-      socketHttpServer = null;
-      throw new SocketWorkerStartupError(message);
-    }
+    logger.info(
+      'Stand socket server is hosted by the app server (scripts/serve.ts); not binding one here.'
+    );
   }
 
   // Setup signal handlers

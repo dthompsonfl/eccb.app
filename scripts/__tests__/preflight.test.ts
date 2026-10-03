@@ -14,6 +14,8 @@ import {
   collectEnvProblems,
   extractBakedSocketPort,
   formatPreflightReport,
+  hasSlashlessSocketSource,
+  hasSlashedSocketDestination,
   resolveRealtimePosture,
   runPreflight,
 } from '../preflight';
@@ -33,8 +35,36 @@ const GOOD_ENV: NodeJS.ProcessEnv = {
   SOCKET_PORT: '3226',
 };
 
-/** A routes manifest whose baked stand rewrite targets `port`. */
+/**
+ * A routes manifest whose baked stand rewrite targets `port`.
+ *
+ * The trailing slash on the destination mirrors what `next.config.ts` emits and
+ * is load-bearing: engine.io only answers on `${path}/`.
+ */
+/**
+ * The CORRECT build shape.
+ *
+ * The stand socket server is hosted on the app's own port by scripts/serve.ts,
+ * so the production build must contain NO /api/stand/socket rewrite at all. A
+ * rewrite cannot carry a WebSocket upgrade — Next's production `upgradeHandler`
+ * only serves HMR in development — so any baked rewrite reintroduces the silent
+ * fallback to polling while /ready still reports sockets healthy.
+ */
+function emptyManifest(): unknown {
+  return { rewrites: { afterFiles: [] } };
+}
+
+/** A build that still carries a socket rewrite: now always an error. */
 function manifestFor(port: number): unknown {
+  return {
+    rewrites: {
+      afterFiles: [{ source: '/api/stand/socket', destination: `http://localhost:${port}/api/stand/socket/` }],
+    },
+  };
+}
+
+/** Also a rewrite — a slashless destination is just a second way to be wrong. */
+function slashlessManifestFor(port: number): unknown {
   return {
     rewrites: {
       afterFiles: [{ source: '/api/stand/socket', destination: `http://localhost:${port}/api/stand/socket` }],
@@ -42,8 +72,19 @@ function manifestFor(port: number): unknown {
   };
 }
 
+/** Also a rewrite — the slashed-source variant, likewise always an error. */
+function slashedSourceManifestFor(port: number): unknown {
+  return {
+    rewrites: {
+      afterFiles: [{ source: '/api/stand/socket/', destination: `http://localhost:${port}/api/stand/socket/` }],
+    },
+  };
+}
+
 /** Build a throwaway root containing a fake `.next` build. */
 async function makeRoot(options: { routesManifest?: unknown; withBuildId?: boolean } = {}): Promise<string> {
+  // Default to the CORRECT build shape: no socket rewrite. Tests that are about
+  // the old rewrite contract pass a rewrite manifest explicitly.
   const root = await mkdtemp(path.join(tmpdir(), 'eccb-preflight-'));
   if (options.withBuildId !== false) {
     await mkdir(path.join(root, '.next'), { recursive: true });
@@ -85,6 +126,7 @@ function pollingEnv(): NodeJS.ProcessEnv {
 }
 
 const POLLING_SETTINGS = { 'stand.realtimeMode': 'polling' };
+const WEBSOCKET_SETTINGS = { 'stand.realtimeMode': 'websocket' };
 
 describe('collectEnvProblems', () => {
   it('reports nothing for a complete environment', () => {
@@ -202,9 +244,108 @@ describe('extractBakedSocketPort', () => {
   });
 });
 
+describe('hasSlashedSocketDestination', () => {
+  it('accepts a destination with the trailing slash engine.io requires', () => {
+    expect(hasSlashedSocketDestination(manifestFor(3226))).toBe(true);
+  });
+
+  it('rejects the slashless destination that hangs every proxied handshake', () => {
+    expect(hasSlashedSocketDestination(slashlessManifestFor(3226))).toBe(false);
+  });
+
+  it('returns false for a manifest with no socket rewrite', () => {
+    expect(hasSlashedSocketDestination({ rewrites: { afterFiles: [] } })).toBe(false);
+    expect(hasSlashedSocketDestination(null)).toBe(false);
+  });
+});
+
+describe('hasSlashlessSocketSource', () => {
+  it('accepts the slashless source the browser client actually requests', () => {
+    expect(hasSlashlessSocketSource(manifestFor(3226))).toBe(true);
+  });
+
+  it('rejects a slashed source, which Next 308s and an upgrade cannot follow', () => {
+    expect(hasSlashlessSocketSource(slashedSourceManifestFor(3226))).toBe(false);
+  });
+
+  it('returns false for a manifest with no socket rewrite', () => {
+    expect(hasSlashlessSocketSource({ rewrites: { afterFiles: [] } })).toBe(false);
+    expect(hasSlashlessSocketSource(null)).toBe(false);
+  });
+
+  it('is independent of the destination check, so neither half can mask the other', () => {
+    // A slashed source passes the destination check and fails the source check.
+    // That independence is the point: the shipped defect was visible only here.
+    const manifest = slashedSourceManifestFor(3226);
+    expect(hasSlashedSocketDestination(manifest)).toBe(true);
+    expect(hasSlashlessSocketSource(manifest)).toBe(false);
+
+    // And a slashless destination is the mirror image.
+    const mirror = slashlessManifestFor(3226);
+    expect(hasSlashedSocketDestination(mirror)).toBe(false);
+    expect(hasSlashlessSocketSource(mirror)).toBe(true);
+  });
+});
+
 describe('runPreflight', () => {
-  it('passes with a valid environment and build', async () => {
+  it('BLOCKS a build that still contains a socket rewrite', async () => {
+    // The socket server is hosted on the app port by scripts/serve.ts. A rewrite
+    // cannot carry a WebSocket upgrade: Next's production upgradeHandler only
+    // serves HMR in development, so the browser gets a 308 it cannot follow and
+    // silently falls back to polling while /ready reports sockets healthy.
+    const root = await makeRoot({ routesManifest: slashedSourceManifestFor(3226) });
+    try {
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: GOOD_ENV,
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      const problem = result.problems.find((p) => p.code === 'rewrite.unexpected');
+      expect(problem).toBeDefined();
+      expect(problem?.severity).toBe('error');
+      expect(result.ok).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('BLOCKS a build whose socket rewrite points at a port', async () => {
+    // Same failure mode, reached from the other direction: any baked rewrite is
+    // wrong now, whether or not its path shape happens to be right.
     const root = await makeRoot({ routesManifest: manifestFor(3226) });
+    try {
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: GOOD_ENV,
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      expect(result.problems.some((p) => p.code === 'rewrite.unexpected')).toBe(true);
+      expect(result.ok).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('passes when the build has NO socket rewrite (socket served on the app port)', async () => {
+    const root = await makeRoot({ routesManifest: emptyManifest() });
+    try {
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: GOOD_ENV,
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      expect(result.problems.some((p) => p.code.startsWith('rewrite.'))).toBe(false);
+      expect(result.ok).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('passes with a valid environment and build', async () => {
+    const root = await makeRoot();
     try {
       const result = await runPreflight({ deps: fakeDeps(root, { env: GOOD_ENV }) });
       expect(result.problems).toEqual([]);
@@ -215,7 +356,7 @@ describe('runPreflight', () => {
   });
 
   it('surfaces an unreachable database and an unusable Redis in the same run', async () => {
-    const root = await makeRoot({ routesManifest: manifestFor(3226) });
+    const root = await makeRoot();
     try {
       const result = await runPreflight({
         deps: fakeDeps(root, {
@@ -270,7 +411,7 @@ describe('runPreflight', () => {
   });
 
   it('warns when the socket server would start with no client using it', async () => {
-    const root = await makeRoot({ routesManifest: manifestFor(3226) });
+    const root = await makeRoot();
     try {
       const result = await runPreflight({
         deps: fakeDeps(root, {
@@ -287,26 +428,83 @@ describe('runPreflight', () => {
     }
   });
 
-  it('BLOCKS when the build rewrite port disagrees with SOCKET_PORT', async () => {
-    const root = await makeRoot({ routesManifest: manifestFor(3226) });
+  it('raises NO realtime warning when env and the database agree on websocket', async () => {
+    // The reconciled posture. Neither the blocking check nor the orphan warning
+    // may fire, otherwise the guard is either dead or over-firing.
+    const root = await makeRoot();
     try {
-      const result = await runPreflight({ deps: fakeDeps(root, { env: { ...GOOD_ENV, SOCKET_PORT: '3229' } }) });
-      const problem = result.problems.find((p) => p.code === 'rewrite.port-mismatch');
-      expect(problem).toBeDefined();
-      expect(problem?.message).toContain('3226');
-      expect(problem?.message).toContain('3229');
-      expect(result.ok).toBe(false);
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: GOOD_ENV,
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      const realtimeCodes = result.problems.filter((p) => p.code.startsWith('realtime.'));
+      expect(realtimeCodes).toEqual([]);
+      expect(result.ok).toBe(true);
+      expect(result.notes.join(' ')).toContain('Stand realtime posture: websocket (source: database');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it('BLOCKS when websockets are enabled but the build has no rewrite at all', async () => {
+  it('raises NO realtime warning when env and the database agree on polling', async () => {
+    // The symmetric agreement case: ENABLE_WEBSOCKETS=false with the database
+    // on polling is a coherent polling-only deployment, not an orphan.
     const root = await makeRoot();
     try {
-      const result = await runPreflight({ deps: fakeDeps(root, { env: GOOD_ENV }) });
-      expect(result.problems.some((p) => p.code === 'rewrite.missing')).toBe(true);
-      expect(result.ok).toBe(false);
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: pollingEnv(),
+          readStandSettings: async () => POLLING_SETTINGS,
+        }),
+      });
+      expect(result.problems.filter((p) => p.code.startsWith('realtime.'))).toEqual([]);
+      expect(result.ok).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('still catches a hand-edited websocketEnabled=false alongside realtimeMode=websocket', async () => {
+    // The exact drift that shipped: the mode says websocket, the switch says off.
+    // `resolveRealtimePosture` reads the mode as the intent, so the mismatch must
+    // still be surfaced rather than passing because the mode happens to be right.
+    const root = await makeRoot();
+    const posture = resolveRealtimePosture(GOOD_ENV, {
+      'stand.realtimeMode': 'websocket',
+      'stand.websocketEnabled': 'false',
+    });
+    expect(posture.realtimeMode).toBe('websocket');
+    expect(posture.websocketsEnabled).toBe(true);
+    // With ENABLE_WEBSOCKETS also off, the blocking check fires on the mode.
+    const result = await runPreflight({
+      deps: fakeDeps(root, {
+        env: { ...GOOD_ENV, ENABLE_WEBSOCKETS: 'false' },
+        readStandSettings: async () => ({
+          'stand.realtimeMode': 'websocket',
+          'stand.websocketEnabled': 'false',
+        }),
+      }),
+    });
+    expect(result.problems.some((p) => p.code === 'realtime.disabled')).toBe(true);
+    await rm(root, { recursive: true, force: true });
+  });
+
+
+  it('PASSES when websockets are enabled and the build has no rewrite (socket on app port)', async () => {
+    // The correct production shape: scripts/serve.ts hosts the socket on the app
+    // port, so nothing is baked into the build and there is no rewrite to check.
+    const root = await makeRoot();
+    try {
+      const result = await runPreflight({
+        deps: fakeDeps(root, {
+          env: GOOD_ENV,
+          readStandSettings: async () => WEBSOCKET_SETTINGS,
+        }),
+      });
+      expect(result.problems.some((p) => p.code.startsWith('rewrite.'))).toBe(false);
+      expect(result.ok).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -393,7 +591,7 @@ describe('runPreflight', () => {
   });
 
   it('BLOCKS when SOCKET_PORT is occupied, because the rewrite cannot follow a roll-forward', async () => {
-    const root = await makeRoot({ routesManifest: manifestFor(3226) });
+    const root = await makeRoot();
     try {
       const result = await runPreflight({
         deps: fakeDeps(root, { env: GOOD_ENV }),
@@ -408,7 +606,7 @@ describe('runPreflight', () => {
   });
 
   it('only notes — never blocks — when a roll-forward-capable port is occupied', async () => {
-    const root = await makeRoot({ routesManifest: manifestFor(3226) });
+    const root = await makeRoot();
     try {
       const result = await runPreflight({
         deps: fakeDeps(root, { env: GOOD_ENV }),
@@ -423,7 +621,7 @@ describe('runPreflight', () => {
   });
 
   it('records the resolved realtime posture as a note', async () => {
-    const root = await makeRoot({ routesManifest: manifestFor(3226) });
+    const root = await makeRoot();
     try {
       const result = await runPreflight({ deps: fakeDeps(root, { env: GOOD_ENV }) });
       expect(result.notes.join(' ')).toContain('Stand realtime posture: websocket');

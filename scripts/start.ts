@@ -8,7 +8,11 @@
  *
  *   1. `next-server`  — the Next.js application. Serves the public site, the
  *      member portal, every /api route, and proxies /api/stand/socket through
- *      to the stand socket server.
+ *      to the stand socket server. That proxy hop is load-bearing for real-time
+ *      sync, so it is verified with a real WebSocket upgrade rather than an HTTP
+ *      probe: a polling handshake follows Next's 308 and would report success
+ *      against a completely broken upgrade path. See
+ *      `src/lib/websocket/__tests__/stand-socket-upgrade.test.ts`.
  *   2. `workers`      — `src/workers/index.ts`. Hosts ALL of the following in
  *      a single process, because they share one BullMQ connection and one
  *      Prisma pool:
@@ -145,6 +149,13 @@ async function resolveFreePort(preferred: number, label: string): Promise<number
  * will never call — a silent real-time-sync outage. So this port is claimed
  * exactly or not at all; a conflict is reported by the preflight check as a
  * blocking problem with an actionable rebuild instruction.
+ *
+ * Note this pin exists because the browser reaches the socket through the Next
+ * proxy. Both ends of that hop must agree on the path shape — the client asks
+ * for the slashless path (Next 308s the slashed one, and an upgrade cannot
+ * follow a redirect) and the rewrite destination re-adds the slash (engine.io
+ * upstream only matches `${path}/`). See
+ * `src/lib/websocket/stand-socket-path.ts`, which all three parties import.
  */
 async function claimFixedPort(preferred: number, label: string): Promise<number> {
   const owner = reservedPorts.get(preferred);
@@ -564,22 +575,25 @@ function startNextServer(prepared: PrepareStandaloneResult): void {
     throw new Error('No production build available — run `npm run build` before `npm run start:all`');
   }
 
-  const useStandalone = prepared.mode === 'standalone';
-  // `next start` fallback runs the Next CLI directly rather than through
-  // `npx next`, for the same reason the workers do: npx inserts a wrapper
-  // process, so the supervised PID would not be the server and a kill would
-  // orphan it with the app port still bound.
-  const nextBin = resolve(ROOT_DIR, 'node_modules/next/dist/bin/next');
+  // Run the server entry directly rather than through `npx`, for the same
+  // reason the workers do: npx inserts a wrapper process, so the supervised
+  // PID would not be the server and a kill would orphan it with the app port
+  // still bound.
+  // The app server is `scripts/serve.ts`, which hosts Next AND the stand
+  // Socket.IO server on this single port. It must NOT be the standalone
+  // bundle: that bundle calls Next's startServer, whose `upgradeHandler`
+  // only serves HMR in development and never forwards an upgrade to a
+  // rewrite, so a socket reached through it can never complete a handshake.
+  // Running serve.ts under tsx keeps a single supervised PID (no npx wrapper
+  // to orphan) while giving the socket a real upgrade path.
   const managed: ManagedProcess = {
     name: 'next-server',
     process: null,
-    command: useStandalone ? 'node' : process.execPath,
-    args: useStandalone
-      ? [prepared.standaloneServerPath as string]
-      : [nextBin, 'start', '-p', String(PORT)],
+    command: process.execPath,
+    args: ['--import', 'tsx', resolve(ROOT_DIR, 'scripts/serve.ts')],
     env: {
       PORT: String(PORT),
-      ...(useStandalone ? { HOSTNAME: BIND_HOST } : {}),
+      HOSTNAME: BIND_HOST,
       BIND_HOST,
       NODE_ENV: 'production',
     },
@@ -589,14 +603,14 @@ function startNextServer(prepared: PrepareStandaloneResult): void {
     ports: { app: PORT },
   };
 
-  if (useStandalone) {
-    log('info', 'Using standalone server build (.next/standalone/server.js)', {
-      assetsSynchronised: prepared.copied,
-      bindHost: BIND_HOST,
-    });
-  } else {
-    log('warn', 'Standalone output unusable — serving via `next start` from the full .next directory');
-  }
+  log('info', 'Unified app server (scripts/serve.ts): Next + stand socket on one port', {
+    bindHost: BIND_HOST,
+    socketsAttachedToAppPort: process.env.ENABLE_WEBSOCKETS === 'true',
+    // Retained for diagnostics: assets are still synced into .next/standalone
+    // by prepareStandalone(), and serve.ts serves from the same .next output.
+    preparedMode: prepared.mode,
+    copied: prepared.copied,
+  });
 
   managed.process = spawnProcess(managed.name, managed.command, managed.args, managed.env);
   managed.lastRestart = Date.now();

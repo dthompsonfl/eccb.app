@@ -283,6 +283,34 @@ export function resolveRealtimePosture(
 }
 
 /**
+ * Every rewrite in a baked Next.js manifest that targets the stand socket.
+ *
+ * Shared by the port and shape checks so they can never disagree about which
+ * entries they are talking about.
+ */
+function collectSocketRewrites(manifest: unknown): Array<Record<string, unknown>> {
+  if (!manifest || typeof manifest !== 'object') return [];
+  const record = manifest as Record<string, unknown>;
+  const rewrites = record.rewrites ?? (record.config as Record<string, unknown> | undefined)?._originalRewrites;
+  if (!rewrites || typeof rewrites !== 'object') return [];
+
+  const entries: Array<Record<string, unknown>> = [];
+  const groups = rewrites as Record<string, unknown>;
+  for (const key of ['beforeFiles', 'afterFiles', 'fallback']) {
+    const group = groups[key];
+    if (!Array.isArray(group)) continue;
+    for (const entry of group) {
+      if (!entry || typeof entry !== 'object') continue;
+      const destination = (entry as Record<string, unknown>).destination;
+      if (typeof destination === 'string' && destination.includes('/api/stand/socket')) {
+        entries.push(entry as Record<string, unknown>);
+      }
+    }
+  }
+  return entries;
+}
+
+/**
  * Extract the socket port from a baked Next.js rewrite manifest.
  *
  * `next.config.ts` evaluates `rewrites()` at BUILD time and freezes the result
@@ -317,6 +345,38 @@ export function extractBakedSocketPort(manifest: unknown): number | null {
     }
   }
   return null;
+}
+
+/**
+ * True when the manifest's socket rewrite destination ends in the trailing
+ * slash engine.io requires.
+ *
+ * Kept separate from {@link extractBakedSocketPort} because port extraction and
+ * path shape are different invariants: a manifest can name the right port and
+ * still break every proxied handshake.
+ */
+export function hasSlashedSocketDestination(manifest: unknown): boolean {
+  return collectSocketRewrites(manifest).some((entry) => {
+    const destination = entry.destination as string;
+    return new URL(destination).pathname.endsWith('/api/stand/socket/');
+  });
+}
+
+/**
+ * True when the manifest carries a slashless `/api/stand/socket` rewrite source.
+ *
+ * The SOURCE must be slashless. The browser client requests the slashless path
+ * because Next.js answers `/api/stand/socket/` with a 308, and a WebSocket
+ * UPGRADE CANNOT FOLLOW A REDIRECT: the connection dies silently while every
+ * health endpoint still reports the sockets healthy.
+ *
+ * This is the half of the contract {@link hasSlashedSocketDestination} cannot
+ * see. That one only inspects the destination, so a build whose source had
+ * drifted to the slashed form passed preflight while the upgrade hung. Both are
+ * checked, because a rewrite needs BOTH shapes: slashless in, slashed out.
+ */
+export function hasSlashlessSocketSource(manifest: unknown): boolean {
+  return collectSocketRewrites(manifest).some((entry) => entry.source === '/api/stand/socket');
 }
 
 // ============================================================================
@@ -612,11 +672,11 @@ export async function runPreflight(options: PreflightOptions = {}): Promise<Pref
     });
   }
 
-  // ---- 6. Baked rewrite vs runtime SOCKET_PORT -----------------------------
-  // `next.config.ts` freezes the proxy target at build time, so the two must
-  // agree or /api/stand/socket 404s with the app itself reporting healthy.
-  const socketPortEnv = (env.SOCKET_PORT ?? '').trim();
-  const runtimeSocketPort = socketPortEnv ? Number(socketPortEnv) : 3226;
+  // ---- 6. No baked socket rewrite in the build ------------------------------
+  // scripts/serve.ts hosts the socket on the APP port, so nothing about the
+  // socket should be frozen into the build. A baked rewrite is an error: it
+  // cannot carry a WebSocket upgrade and reintroduces the silent fallback.
+  void (env.SOCKET_PORT ?? '').trim();
   if (posture.websocketsEnabled) {
     const manifests = await Promise.all([
       deps.readJsonFile(path.join(rootDir, '.next/routes-manifest.json')),
@@ -626,24 +686,49 @@ export async function runPreflight(options: PreflightOptions = {}): Promise<Pref
     const bakedPorts = manifests
       .map((manifest) => extractBakedSocketPort(manifest))
       .filter((port): port is number => port !== null);
-    const baked = bakedPorts.length > 0 ? bakedPorts[0] : null;
 
-    if (bakedPorts.length === 0) {
+    // Both halves of the path contract, because a WebSocket upgrade fails on
+    // either one and a polling request succeeds on both:
+    //
+    //   destination must be SLASHED   — engine.io upstream matches `${path}/`
+    //   source      must be SLASHLESS — Next 308s the slashed form and an
+    //                                   upgrade cannot follow a redirect
+    //
+    // Checking only the destination is what let the source drift and hang every
+    // upgrade while /ready still reported the sockets healthy.
+    const slashed = manifests.some((manifest) => manifest && hasSlashedSocketDestination(manifest));
+    const slashlessSource = manifests.some((manifest) => manifest && hasSlashlessSocketSource(manifest));
+
+    // The socket server is now hosted on the SAME port as the app by
+    // scripts/serve.ts, so there is no rewrite and no cross-port hop at all.
+    // A rewrite cannot work for a WebSocket upgrade regardless of its path
+    // shape: Next's production `upgradeHandler` only serves HMR in development
+    // and never forwards an upgrade to a rewrite destination, so the browser
+    // got a 308 it cannot follow and silently fell back to polling.
+    //
+    // The guard below therefore asserts the OPPOSITE of the old one: that no
+    // socket rewrite is baked into the build. If someone re-adds one, the socket
+    // will 308 and every member drops to polling while /ready still reports
+    // sockets healthy — precisely the silent degradation this replaced.
+    if (slashed || slashlessSource) {
       problems.push({
-        code: 'rewrite.missing',
+        code: 'rewrite.unexpected',
         severity: 'error',
-        message: 'ENABLE_WEBSOCKETS=true but the production build contains no /api/stand/socket rewrite.',
-        hint: 'The rewrite is compiled at build time. Rebuild with ENABLE_WEBSOCKETS=true: `ENABLE_WEBSOCKETS=true npm run build`.',
+        message:
+          'The build contains an /api/stand/socket rewrite, but the socket server is hosted on the app port by scripts/serve.ts. A rewrite cannot carry a WebSocket upgrade, so this reintroduces the silent fallback to polling.',
+        hint: 'Remove the rewrite from next.config.ts and rebuild. The socket needs no proxy.',
       });
-    } else if (baked !== runtimeSocketPort) {
+    }
+
+    if (bakedPorts.length > 0) {
       problems.push({
-        code: 'rewrite.port-mismatch',
-        severity: 'error',
-        message: `The build proxies /api/stand/socket to port ${baked}, but SOCKET_PORT is ${runtimeSocketPort}. Socket connections would be proxied to a port nothing is listening on.`,
-        hint: `Rebuild with the port you intend to run: \`SOCKET_PORT=${baked} ENABLE_WEBSOCKETS=true npm run build\`, or set SOCKET_PORT=${baked} in .env.`,
+        code: 'rewrite.stale',
+        severity: 'warning',
+        message: `The build still bakes an /api/stand/socket proxy target (port ${bakedPorts[0]}), which is now unused.`,
+        hint: 'Rebuild so the stale rewrite is dropped from the manifest.',
       });
     } else {
-      notes.push(`Build rewrite target matches SOCKET_PORT (${baked}).`);
+      notes.push('No socket rewrite in the build; the socket is served on the app port.');
     }
   }
 

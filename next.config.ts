@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next';
 import { dirname } from 'path';
 import { fileURLToPath } from 'url';
+import {
+} from './src/lib/websocket/stand-socket-path';
 
 // Project root (this file lives at the repo root). Pinning it silences the
 // "inferred workspace root" warning caused by a stray lockfile elsewhere
@@ -11,23 +13,22 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   outputFileTracingRoot: projectRoot,
 
-  // Proxy WebSocket connections to the standalone socket worker when running.
-  // The SOCKET_PORT env var controls which port it binds to (default 3226).
-  // Only active when ENABLE_WEBSOCKETS=true; harmless otherwise.
-  async rewrites() {
-    if (process.env.ENABLE_WEBSOCKETS !== 'true') return [];
-    const socketPort = process.env.SOCKET_PORT || '3226';
-    return [
-      {
-        source: '/api/stand/socket',
-        destination: `http://localhost:${socketPort}/api/stand/socket`,
-      },
-      {
-        source: '/api/stand/socket/:path*',
-        destination: `http://localhost:${socketPort}/api/stand/socket/:path*`,
-      },
-    ];
-  },
+  // NOTE: there is deliberately NO rewrite for the stand socket path.
+  //
+  // A WebSocket upgrade can NEVER be proxied by a next.config.ts rewrite. In
+  // production Next's `upgradeHandler` (node_modules/next/dist/server/lib/
+  // router-server.js) only serves HMR in development; it otherwise falls through
+  // to `resolveRoutes`, and an upgrade is forwarded via `proxyRequest` only when
+  // the rewrite destination is an absolute URL carrying a protocol. So a socket
+  // rewrite produces a 308 — and a WebSocket UPGRADE CANNOT FOLLOW A REDIRECT.
+  // Every browser therefore falls back to polling while /ready still reports
+  // sockets healthy. Polling handshakes keep working because fetch/curl DO follow
+  // the 308, which is exactly why this presented as intermittent.
+  //
+  // The socket server is hosted on the SAME port as the app by scripts/serve.ts,
+  // which owns the HTTP server, attaches Socket.IO to it, and delegates all other
+  // requests to Next. One origin, one port, no redirect, nothing to proxy.
+  // See src/lib/websocket/stand-socket-path.ts for the path contract.
 
   images: {
     remotePatterns: [
