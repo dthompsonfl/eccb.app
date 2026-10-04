@@ -605,7 +605,7 @@ export async function exportAttendanceToCSV(
     if (scopeFilter.kind === 'scoped') {
       where.member = {
         ...((where.member as object) || {}),
-        ...scopeFilter.filter,
+        ...scopeFilter.member,
       };
     }
 
@@ -750,12 +750,9 @@ export async function exportMemberAttendanceSummary(
       return { success: false, error: 'Permission denied' };
     }
     if (memberScope.kind === 'scoped') {
-      if ('member' in memberScope.filter) {
-        const sections = (memberScope.filter.member as { sections?: unknown }).sections;
-        if (sections) memberWhere.sections = sections;
-      } else if ('memberId' in memberScope.filter) {
-        memberWhere.id = memberScope.filter.memberId;
-      }
+      // Same contract: `member` is the inner relation shape, merged into the
+      // member where-clause.
+      Object.assign(memberWhere, memberScope.member);
     }
 
     // Section filter (for admins)
@@ -1036,7 +1033,7 @@ export async function getAttendanceReportData(filters: AttendanceExportFilters =
     if (scopeFilter.kind === 'scoped') {
       where.member = {
         ...((where.member as object) || {}),
-        ...scopeFilter.filter,
+        ...scopeFilter.member,
       };
     }
 

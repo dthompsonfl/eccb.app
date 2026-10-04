@@ -191,16 +191,19 @@ describe('resolveAttendanceFilter', () => {
     await expect(resolveAttendanceFilter(USER)).resolves.toEqual({ kind: 'unrestricted' });
   });
 
-  it('returns a member-section filter for section scope', async () => {
+  it('returns the INNER relation filter for section scope', async () => {
+    // Callers assign this to `where.member`, so it must NOT be wrapped in
+    // another `member` key — that produced `where.member.member.sections`.
     grant('attendance.view.section');
     callerProfile(['sec-a', 'sec-b']);
 
     const result = await resolveAttendanceFilter(USER);
     expect(result.kind).toBe('scoped');
     if (result.kind === 'scoped') {
-      expect(result.filter).toMatchObject({
-        member: { sections: { some: { sectionId: { in: ['sec-a', 'sec-b'] } } } },
+      expect(result.member).toEqual({
+        sections: { some: { sectionId: { in: ['sec-a', 'sec-b'] } } },
       });
+      expect(result.member).not.toHaveProperty('member');
     }
   });
 
@@ -219,9 +222,11 @@ describe('resolveAttendanceFilter', () => {
     grant('attendance.view.own');
     callerProfile(['sec-a'], 'member-self');
 
+    // Own-scope is expressed as a member relation so callers can keep using the
+    // same `where.member` assignment shape.
     await expect(resolveAttendanceFilter(USER)).resolves.toEqual({
       kind: 'scoped',
-      filter: { memberId: 'member-self' },
+      member: { id: 'member-self' },
     });
   });
 });

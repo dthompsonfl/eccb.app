@@ -1,5 +1,25 @@
 # GLM-OCR Local Service
 
+> **STATUS: DELAYED — do not enable in production yet.**
+>
+> This service has never been executed end-to-end. Building the image requires
+> an NVIDIA CUDA runtime, which the development host does not have, so the
+> container has never been started and no OCR request has ever been served.
+>
+> Library-level work is complete and verified: `pillow` was bumped 11.3.0 ->
+> 12.3.0 to clear the open libheif/tiff advisories Dependabot flags against this
+> manifest, and every PIL call `app/main.py` makes (`Image.open`, `.load()`,
+> `.convert()`, `.width`/`.height`, `UnidentifiedImageError`) was executed
+> against real Pillow 12 and behaves identically.
+>
+> **Before enabling in production:**
+> 1. `docker compose up -d glm-ocr`
+> 2. Confirm `/readyz` reports CUDA available
+> 3. Run one real Smart Upload end-to-end and verify the OCR output
+>
+> Until then use a hosted provider or plain `ollama`. Smart Upload's inline OCR
+> path does not depend on this service — only the LLM provider does.
+
 This service hosts `zai-org/GLM-OCR` behind an internal OpenAI-compatible endpoint for ECCB Smart Upload.
 
 ## Purpose

@@ -14,6 +14,13 @@ vi.mock('ioredis', () => {
   };
 });
 
+// Counts which read methods the dead-letter code actually calls. Declared with
+// vi.hoisted so the `bullmq` mock factory (hoisted above imports) can close over
+// it, and so the test can read it afterwards.
+const { dlqReadCounts } = vi.hoisted(() => ({
+  dlqReadCounts: { getWaiting: 0, getFailed: 0 },
+}));
+
 vi.mock('bullmq', () => {
   // Create mock classes
   class MockQueue {
@@ -24,7 +31,16 @@ vi.mock('bullmq', () => {
     getCompletedCount = vi.fn().mockResolvedValue(100);
     getFailedCount = vi.fn().mockResolvedValue(3);
     getDelayedCount = vi.fn().mockResolvedValue(1);
-    getFailed = vi.fn().mockResolvedValue([]);
+    getFailed = vi.fn(async () => {
+      dlqReadCounts.getFailed++;
+      return [];
+    });
+    // `getDeadLetterJobs` reads `getWaiting`, not `getFailed`: nothing consumes
+    // the dead-letter queue, so its jobs never transition to `failed`.
+    getWaiting = vi.fn(async () => {
+      dlqReadCounts.getWaiting++;
+      return [];
+    });
     close = vi.fn().mockResolvedValue(undefined);
     drain = vi.fn().mockResolvedValue(undefined);
     clean = vi.fn().mockResolvedValue(undefined);
@@ -224,12 +240,32 @@ describe('Job Queue System', () => {
   // ===========================================================================
 
   describe('Dead Letter Queue', () => {
-    it('should retrieve failed jobs from dead letter queue', async () => {
+    it('should retrieve dead-lettered jobs from dead letter queue', async () => {
       initializeQueues();
 
       const jobs = await getDeadLetterJobs(10);
 
       expect(Array.isArray(jobs)).toBe(true);
+    });
+
+    it('does NOT read getFailed as its primary source', async () => {
+      // This is the regression that made the admin DLQ view permanently empty.
+      //
+      // `getFailed()` returned [] forever because nothing consumes the
+      // dead-letter queue, so a job there stays `waiting` and never becomes
+      // `failed`. The MockQueue returns [] from both methods, so the returned
+      // array cannot distinguish them — assert on the source method instead.
+      //
+      // Module-level flag set inside the mock's getWaiting, so the assertion
+      // observes which method production actually called.
+      dlqReadCounts.getWaiting = 0;
+      dlqReadCounts.getFailed = 0;
+
+      initializeQueues();
+      await getDeadLetterJobs(10);
+
+      // getWaiting is the source that can actually return dead-lettered jobs.
+      expect(dlqReadCounts.getWaiting).toBeGreaterThan(0);
     });
   });
 

@@ -134,9 +134,13 @@ describe('Attendance Export Functions', () => {
     });
 
     it('should filter by section for section-scoped users', async () => {
-      (checkUserPermission as any)
-        .mockResolvedValueOnce(false) // ATTENDANCE_VIEW_ALL
-        .mockResolvedValueOnce(true); // ATTENDANCE_VIEW_SECTION
+      // Keyed on the permission string, not call order: `resolveAttendanceScope`
+      // checks VIEW_ALL, VIEW_SECTION and VIEW_OWN, so an ordered
+      // `mockResolvedValueOnce` chain silently grants the wrong permission and
+      // then returns undefined for the third.
+      (checkUserPermission as any).mockImplementation((_userId: string, permission: string) => {
+        return Promise.resolve(permission === 'attendance.view.section');
+      });
 
       const mockMember = {
         id: 'member-1',

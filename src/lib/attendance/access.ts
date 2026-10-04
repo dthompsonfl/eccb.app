@@ -156,7 +156,7 @@ export async function canReadMemberAttendance(
 export type AttendanceScopeFilter =
   | { kind: 'denied'; reason: AttendanceDenialReason }
   | { kind: 'unrestricted' }
-  | { kind: 'scoped'; filter: Record<string, unknown> };
+  | { kind: 'scoped'; member: Record<string, unknown> };
 
 export async function resolveAttendanceFilter(
   userId: string,
@@ -165,12 +165,18 @@ export async function resolveAttendanceFilter(
   if (!decision.allowed) return { kind: 'denied', reason: decision.reason };
   if (decision.scope === 'all') return { kind: 'unrestricted' };
 
+  // Callers assign this to `where.member`, so it must be the INNER relation
+  // shape. Returning a wrapper here produced `where.member.member.sections`,
+  // which Prisma rejects at runtime — an export filter that silently matches
+  // nothing rather than scoping correctly.
   if (decision.scope === 'own') {
-    return { kind: 'scoped', filter: { memberId: decision.memberId } };
+    // Own-scope is not a relation filter; it is the memberId column. Expose it
+    // as a member relation so the same `where.member` assignment shape works.
+    return { kind: 'scoped', member: { id: decision.memberId } };
   }
 
   return {
     kind: 'scoped',
-    filter: { member: { sections: { some: { sectionId: { in: decision.sectionIds } } } } },
+    member: { sections: { some: { sectionId: { in: decision.sectionIds } } } },
   };
 }

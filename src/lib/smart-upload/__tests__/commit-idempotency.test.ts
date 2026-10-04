@@ -229,16 +229,36 @@ describe('CAS Locking — Concurrent Commit Prevention', () => {
     expect(result.musicPieceTitle).toBe('Race-Resolved Piece');
   });
 
-  it('throws error when session remains IN_PROGRESS after retry wait', async () => {
+  it('reports a stranded IN_PROGRESS lock as wedged, not as a concurrent commit', async () => {
     // CAS fails
     vi.mocked(prisma.smartUploadSession.updateMany).mockResolvedValueOnce({ count: 0 } as any);
-    
+
     // Both checks show IN_PROGRESS
     vi.mocked(prisma.smartUploadSession.findUnique)
       .mockResolvedValue(createSession({ commitStatus: 'IN_PROGRESS' }) as any);
 
+    // The message distinguishes a lock stranded by a dead worker from a genuine
+    // concurrent commit. The old wording said only "already being committed by
+    // another process", which sent operators hunting for a concurrency bug that
+    // did not exist — the real cause is a SIGKILL mid-commit, now released
+    // automatically by reapWedgedSmartUploadCommits.
     await expect(commitSmartUploadSessionToLibrary(SESSION_ID)).rejects.toThrow(
-      `Session ${SESSION_ID} is already being committed by another process`
+      /stranded in IN_PROGRESS/,
+    );
+    await expect(commitSmartUploadSessionToLibrary(SESSION_ID)).rejects.not.toThrow(
+      /already being committed by another process/,
+    );
+  });
+
+  it('reports a genuine concurrent commit with the concurrent wording', async () => {
+    // A CAS miss where the row is NOT IN_PROGRESS is a real race, and must keep
+    // the original message so the two cases stay distinguishable in logs.
+    vi.mocked(prisma.smartUploadSession.updateMany).mockResolvedValueOnce({ count: 0 } as any);
+    vi.mocked(prisma.smartUploadSession.findUnique)
+      .mockResolvedValue(createSession({ commitStatus: 'NOT_STARTED' }) as any);
+
+    await expect(commitSmartUploadSessionToLibrary(SESSION_ID)).rejects.toThrow(
+      /already being committed by another process/,
     );
   });
 
