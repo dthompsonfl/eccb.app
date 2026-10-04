@@ -192,6 +192,71 @@ function stopSchedulerIntervals(): void {
 // ============================================================================
 
 /**
+ * Timeout for the readiness PING.
+ *
+ * Short on purpose: this runs on the probe path that the process manager polls
+ * every 5s. A slow Redis must produce a `false` quickly rather than hold the
+ * request open — an unanswered probe is classified as `degraded` (up but wrong),
+ * which is the wrong signal for "the queue backend is gone".
+ */
+const READINESS_PING_TIMEOUT_MS = 2_000;
+
+/**
+ * Observe Redis rather than assume it.
+ *
+ * Every queue this process serves is a BullMQ queue backed by Redis. If Redis is
+ * unreachable then no email is sent, no scheduled content publishes, no reminder
+ * fires and no Smart Upload or OCR job is processed — while every in-process
+ * worker flag still reads `true`, because those flags record that a worker was
+ * *started*, not that it can still do work.
+ *
+ * This uses a dedicated short-lived connection rather than the shared singleton:
+ * the shared client's command queue can be backed up behind retries, so pinging
+ * it would inherit the outage it is meant to detect.
+ */
+async function pingRedis(): Promise<boolean> {
+  const RedisCtor = (await import('ioredis')).default;
+  const probe = new RedisCtor(process.env.REDIS_URL || 'redis://localhost:6379', {
+    connectTimeout: READINESS_PING_TIMEOUT_MS,
+    // `enableOfflineQueue: false` was WRONG here: with it, ioredis rejects the
+    // queued PING with "Stream isn't writeable and enableOfflineQueue options
+    // is false" BEFORE the socket is even connected. That made the probe
+    // return false against a perfectly healthy Redis — a false negative that
+    // would have taken a working stack out of rotation. Verified directly:
+    //   PING ERR: Stream isn't writeable and enableOfflineQueue options is false
+    //
+    // So: connect eagerly, allow the offline queue for THIS command only, and
+    // still bound the whole thing with an explicit race timeout.
+    maxRetriesPerRequest: 0,
+    retryStrategy: () => null,
+  });
+
+  // Without a listener ioredis emits an unhandled 'error' event on a failed
+  // connect, which would crash the worker while it is merely reporting itself
+  // unhealthy.
+  probe.on('error', () => undefined);
+
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const reply = await Promise.race([
+      probe.ping(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Redis ping timed out')),
+          READINESS_PING_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return reply === 'PONG';
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+    probe.disconnect();
+  }
+}
+
+/**
  * Start the health check HTTP server
  */
 function startHealthServer(): void {
@@ -207,7 +272,12 @@ function startHealthServer(): void {
         // (`components.sockets`), and the process manager gates readiness on it.
         const socketsIntentional = isSocketWorkerRunning();
 
+        // /health must not claim "healthy" with the queue backend down either:
+        // it is what an operator or a load-balancer probe reads first.
+        const redisOk = await pingRedis();
+
         const workersHealthy =
+          redisOk &&
           areQueuesInitialized() &&
           isEmailWorkerRunning() &&
           isSchedulerWorkerRunning() &&
@@ -219,6 +289,7 @@ function startHealthServer(): void {
           timestamp: new Date().toISOString(),
           uptime: process.uptime(),
           websocketsExpected: ENABLE_WEBSOCKETS,
+          redis: redisOk,
           workers: {
             email: isEmailWorkerRunning(),
             scheduler: isSchedulerWorkerRunning(),
@@ -256,7 +327,25 @@ function startHealthServer(): void {
       // `ready` computation for that reason — an intent flag cannot prove a
       // bind succeeded. The authoritative attach state is on the app server's
       // /api/health (`components.sockets`), which the process manager gates on.
+      // Readiness now OBSERVES Redis instead of inferring it from in-process
+      // flags. Every previous term here (`areQueuesInitialized()`,
+      // `isEmailWorkerRunning()`, …) is a boolean set at startup and never
+      // cleared, so a total Redis outage — every queue dead, no email, no
+      // scheduler, no Smart Upload — still answered 200 with `ready: true`, and
+      // the process manager reported the whole stack ready.
+      //
+      // `PING` with a short timeout: a slow or dead Redis must fail readiness
+      // rather than hang the probe (which would look identical to a dead
+      // process, and `scripts/process-state.ts` would call it `degraded`).
+      const redisOk = await pingRedis();
+      if (!redisOk) {
+        logger.error('Worker readiness: Redis is unreachable', {
+          hint: 'Every BullMQ queue is unavailable. No email, scheduler, Smart Upload or OCR work will run.',
+        });
+      }
+
       const ready =
+        redisOk &&
         areQueuesInitialized() &&
         isEmailWorkerRunning() &&
         isSchedulerWorkerRunning() &&
@@ -265,6 +354,8 @@ function startHealthServer(): void {
       res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         ready,
+        redis: redisOk,
+        queuesInitialized: areQueuesInitialized(),
         ocr: isOcrWorkerRunning(),
         // Distinguishes "deliberately off" from "should be up but isn't".
         ocrEnabled: isOcrWorkerEnabled(),
