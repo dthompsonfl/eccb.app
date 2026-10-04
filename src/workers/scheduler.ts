@@ -486,14 +486,22 @@ export async function checkScheduledContent(): Promise<void> {
   });
 
   await Promise.all(scheduledAnnouncements.map(async (announcement) => {
-    await addJob('publish.scheduled', {
-      contentType: 'announcement',
-      contentId: announcement.id,
-      scheduledFor: announcement.publishAt!.toISOString(),
-    });
-    logger.info('Queued scheduled announcement for publishing', { 
-      announcementId: announcement.id, 
-      title: announcement.title 
+    // Same dedup scheme as pages and event reminders: the row stays due until
+    // the job runs, so without a stable id this enqueued once per minute.
+    const dueAt = announcement.publishAt!;
+    const jobId = `publish-announcement-${announcement.id}-${dueAt.getTime()}`;
+    await addJob(
+      'publish.scheduled',
+      {
+        contentType: 'announcement',
+        contentId: announcement.id,
+        scheduledFor: dueAt.toISOString(),
+      },
+      { jobId },
+    );
+    logger.info('Queued scheduled announcement for publishing', {
+      announcementId: announcement.id,
+      title: announcement.title
     });
   }));
 }
@@ -517,14 +525,25 @@ export async function checkEventReminders(): Promise<void> {
     },
   });
 
-  // Check if we already sent a 24h reminder (could use a tracking table)
-  // For now, we'll queue the reminder
+  // Deterministic jobId per event per reminder window.
+  //
+  // This function runs on EVERY scheduler tick (SCHEDULER_INTERVAL_MS, default
+  // 60s — the docstring's "every 15 minutes" is not what runs). The event stays
+  // inside the 24h window for a full day, so without a stable jobId the same
+  // event was enqueued once per minute: up to 1,440 duplicate reminders per
+  // event per day, each emailing every RSVP'd active member. Page publishing
+  // already solved this with an identical scheme (see publishScheduledPages).
+  //
+  // BullMQ ignores an add whose jobId is already present, so the id is the
+  // dedup. It includes the event id and the reminder type; the window start is
+  // deliberately NOT included, so re-running the tick within the same window is
+  // a no-op while a genuinely new window still produces a fresh job.
   await Promise.all(events24h.map(event => addJob('reminder.event', {
     eventId: event.id,
     eventTitle: event.title,
     eventDate: event.startTime.toISOString(),
     reminderType: '24h',
-  })));
+  }, { jobId: `reminder-event-24h-${event.id}` })));
 
   // 1-hour reminders
   const oneHourFromNow = addHours(now, 1);
@@ -543,7 +562,7 @@ export async function checkEventReminders(): Promise<void> {
     eventTitle: event.title,
     eventDate: event.startTime.toISOString(),
     reminderType: '1h',
-  })));
+  }, { jobId: `reminder-event-1h-${event.id}` })));
 }
 
 /**

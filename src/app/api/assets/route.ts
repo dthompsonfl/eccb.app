@@ -91,7 +91,14 @@ export async function GET(request: NextRequest) {
       uploadedAt: asset.uploadedAt,
       uploadedBy: asset.uploadedBy,
       url: `/api/assets/${asset.id}`,
-      thumbnailUrl: asset.mimeType.startsWith('image/') ? `/api/assets/${asset.id}` : null,
+      // Only raster formats render as a thumbnail. `startsWith('image/')` would
+      // include SVG, which the serve route now forces to `attachment` — the
+      // <img> would simply fail to load.
+      thumbnailUrl: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'].includes(
+        asset.mimeType,
+      )
+        ? `/api/assets/${asset.id}`
+        : null,
     }));
 
     return NextResponse.json({

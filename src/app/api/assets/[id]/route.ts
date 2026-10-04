@@ -67,16 +67,40 @@ export async function GET(
     headers.set('Content-Type', metadata.contentType);
     headers.set('Content-Length', String(metadata.size));
 
-    // For images, allow inline display; for others, force download
-    const isImage = asset.mimeType.startsWith('image/');
-    if (isImage) {
+    // `inline` is only safe for raster image formats the browser cannot treat
+    // as active content. SVG is excluded even though it starts with "image/",
+    // because a browser will execute <script> and event handlers inside an
+    // inline SVG on this origin. Anything not in this list — including Office
+    // documents — is forced to download.
+    //
+    // This matters for assets uploaded BEFORE svg was removed from the upload
+    // allowlist: they are still on disk and would otherwise keep executing.
+    const INLINE_SAFE_MIME_TYPES = new Set([
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/avif',
+    ]);
+    const isInlineSafe = INLINE_SAFE_MIME_TYPES.has(asset.mimeType);
+    if (isInlineSafe) {
       headers.set('Content-Disposition', `inline; filename="${asset.fileName}"`);
     } else {
       headers.set('Content-Disposition', `attachment; filename="${asset.fileName}"`);
     }
 
-    headers.set('Cache-Control', 'public, max-age=31536000, immutable');
-    headers.set('Access-Control-Allow-Origin', '*');
+    // A sandbox CSP + `nosniff` is the second layer: even if a dangerous type
+    // is ever re-allowed, this header stops it executing script in our origin.
+    headers.set('X-Content-Type-Options', 'nosniff');
+    if (!isInlineSafe) {
+      headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
+    }
+
+    // These assets are currently treated as public, but they are uploaded
+    // board/contractor documents. Wildcard CORS makes every uploaded asset
+    // readable by any site the browser visits; same-origin is sufficient for
+    // the CMS to display them.
+    headers.set('Cache-Control', 'private, max-age=3600');
 
     logger.info('Streaming asset', {
       assetId: asset.id,

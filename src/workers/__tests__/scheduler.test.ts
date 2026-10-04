@@ -85,6 +85,11 @@ describe('Scheduler Workers', () => {
       expect(addJob).toHaveBeenCalledWith('publish.scheduled', expect.objectContaining({
         contentType: 'announcement',
         contentId: 'anno-1',
+      // A deterministic jobId is required: this function runs every 60s and
+      // the row stays due until the job runs, so without it the same
+      // announcement is enqueued once per minute.
+      }), expect.objectContaining({
+        jobId: expect.stringContaining('anno-1'),
       }));
     });
   });
@@ -107,14 +112,18 @@ describe('Scheduler Workers', () => {
 
       expect(mockEventFindMany).toHaveBeenCalledTimes(2);
       expect(addJob).toHaveBeenCalledTimes(2);
+      // The third argument is the de-duplication key. checkEventReminders runs
+      // on every 60s tick and an event stays inside its window for up to a day,
+      // so without a stable jobId this enqueues up to 1,440 duplicate reminder
+      // emails per event per day.
       expect(addJob).toHaveBeenCalledWith('reminder.event', expect.objectContaining({
         eventId: 'event-1',
         reminderType: '24h',
-      }));
+      }), expect.objectContaining({ jobId: 'reminder-event-24h-event-1' }));
       expect(addJob).toHaveBeenCalledWith('reminder.event', expect.objectContaining({
         eventId: 'event-2',
         reminderType: '1h',
-      }));
+      }), expect.objectContaining({ jobId: 'reminder-event-1h-event-2' }));
     });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Job } from 'bullmq';
-import { processScheduledPublish, checkScheduledContent } from '../scheduler';
+import { processScheduledPublish, checkScheduledContent, checkEventReminders } from '../scheduler';
 import { addJob } from '@/lib/jobs/queue';
 import { invalidatePageCache } from '@/lib/cache';
 import type { PublishScheduledJobData } from '@/lib/jobs/definitions';
@@ -276,6 +276,72 @@ describe('scheduled publish worker', () => {
         expect.objectContaining({ contentId: 'overdue' }),
         expect.objectContaining({ jobId: expect.stringContaining('overdue') }),
       );
+    });
+  });
+
+  /**
+   * Reminder de-duplication.
+   *
+   * `checkEventReminders()` runs on EVERY scheduler tick (default 60s). An event
+   * sits inside the 24h window for a full day, so without a stable `jobId` the
+   * same event was enqueued once per minute — up to 1,440 duplicate reminders
+   * per event per day, each emailing every RSVP'd active member.
+   *
+   * BullMQ ignores an `add` whose `jobId` already exists, so the id IS the
+   * dedup. These tests pin that the id is deterministic across ticks and
+   * distinct per (event, reminderType).
+   */
+  describe('checkEventReminders de-duplication', () => {
+    const EVENT = {
+      id: 'event-abc',
+      title: 'Spring Concert',
+      startTime: new Date(Date.now() + 12 * 60 * 60_000), // 12h out: in BOTH windows
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockEventFindMany.mockResolvedValue([EVENT]);
+    });
+
+    it('passes a deterministic jobId so repeat ticks collapse to one job', async () => {
+      await checkEventReminders();
+
+      const calls = vi.mocked(addJob).mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        const options = call[2] as { jobId?: string } | undefined;
+        // No jobId means the storm returns.
+        expect(options?.jobId, 'every reminder enqueue must carry a jobId').toBeTruthy();
+      }
+
+      // Second tick in the same window must produce identical ids.
+      const firstIds = calls.map((c) => (c[2] as { jobId?: string }).jobId);
+      vi.mocked(addJob).mockClear();
+      await checkEventReminders();
+      const secondIds = vi.mocked(addJob).mock.calls.map((c) => (c[2] as { jobId?: string }).jobId);
+      expect(secondIds).toEqual(firstIds);
+    });
+
+    it('uses a distinct id per reminder type for the same event', async () => {
+      await checkEventReminders();
+
+      const ids = vi.mocked(addJob).mock.calls.map((c) => (c[2] as { jobId?: string }).jobId);
+      expect(ids).toContain('reminder-event-24h-event-abc');
+      expect(ids).toContain('reminder-event-1h-event-abc');
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it('namespaces the id by event so two events do not collide', async () => {
+      mockEventFindMany.mockResolvedValue([
+        EVENT,
+        { id: 'event-xyz', title: 'Another', startTime: EVENT.startTime },
+      ]);
+
+      await checkEventReminders();
+
+      const ids = vi.mocked(addJob).mock.calls.map((c) => (c[2] as { jobId?: string }).jobId);
+      expect(ids.some((id) => id?.includes('event-abc'))).toBe(true);
+      expect(ids.some((id) => id?.includes('event-xyz'))).toBe(true);
     });
   });
 });

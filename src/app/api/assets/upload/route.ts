@@ -18,12 +18,28 @@ import { CMS_EDIT } from '@/lib/auth/permission-constants';
 // Allowed MIME types for CMS assets (images and documents)
 const ALLOWED_MIME_TYPES = [
   // Images
+  //
+  // `image/svg+xml` is deliberately ABSENT. SVG is an XML document that can
+  // carry <script>, event handlers and external references, and this asset is
+  // served back from an unauthenticated route with `Content-Disposition: inline`
+  // — so an uploaded SVG executes attacker JS on this app's own origin, in this
+  // app's cookie scope. A substring check for "<svg" does not prevent that; it
+  // only confirms the file claims to be an SVG.
+  //
+  // Removing it here is the durable fix. Sanitising instead would need a
+  // server-side DOM (jsdom is dev-only today), and sanitiser bypasses in SVG
+  // are a recurring class of CVE. Re-adding SVG requires sanitising at upload
+  // AND forcing `Content-Disposition: attachment` on serve.
   'image/jpeg',
   'image/png',
   'image/gif',
   'image/webp',
-  'image/svg+xml',
   // Documents
+  //
+  // Same reasoning as SVG: these are active document formats, not passive
+  // images. `inline` disposition would let a browser render macros/active
+  // content. They are served `attachment` (see the serve route), which is
+  // safe, but they are also not rendered anywhere in the CMS today.
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -111,16 +127,6 @@ function validateFileContent(buffer: Buffer, declaredMimeType: string): { valid:
       return { valid: false };
     }
     return { valid: true, detectedType: 'application/pdf' };
-  }
-
-  // SVG validation (text-based, check for SVG tag)
-  if (declaredMimeType === 'image/svg+xml') {
-    const content = buffer.toString('utf-8', 0, Math.min(1000, buffer.length));
-    const isSvg = content.includes('<svg') || content.includes('<?xml');
-    if (!isSvg) {
-      return { valid: false };
-    }
-    return { valid: true, detectedType: 'image/svg+xml' };
   }
 
   // MS Office (DOC/XLS) validation
