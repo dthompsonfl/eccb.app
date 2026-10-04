@@ -352,7 +352,9 @@ export async function moveToDeadLetterQueue(job: Job, reason: string): Promise<v
     failedAt: new Date().toISOString(),
     attemptsMade: job.attemptsMade,
   }, {
-    removeOnComplete: 1000,
+    // No `jobId` of its own beyond BullMQ's auto id, and NO removeOnFail:
+    // a dead-letter entry that can be evicted silently is worse than useless,
+    // because an operator reviewing failures would never see it.
     removeOnFail: false,
   });
 
@@ -364,13 +366,45 @@ export async function moveToDeadLetterQueue(job: Job, reason: string): Promise<v
 }
 
 /**
- * Get failed jobs from dead letter queue
+ * Get dead-lettered jobs for the admin view.
+ *
+ * WHY THIS READS `waiting` AND NOT `failed`
+ * ------------------------------------------
+ * Nothing consumes the `eccb-dead-letter` queue — deliberately: it is a holding
+ * pen for an operator to act on, not a queue that runs jobs. A BullMQ job in a
+ * queue with no worker stays `waiting` forever and never becomes `failed`.
+ *
+ * This function called `dlq.getFailed()`, which therefore returned an EMPTY
+ * array permanently. The one screen an operator looks at to find exhausted jobs
+ * always showed nothing, while jobs accumulated in Redis unbounded. The queue
+ * was write-only in every sense that mattered.
+ *
+ * `getWaiting` is the correct read for a holding pen. `getFailed` is still
+ * included so an entry that somehow did fail is not hidden.
  */
 export async function getDeadLetterJobs(count: number = 50): Promise<Job[]> {
   const dlq = queues.deadLetter;
   if (!dlq) return [];
 
-  return dlq.getFailed(0, count - 1);
+  const [waiting, failed] = await Promise.all([
+    dlq.getWaiting(0, count - 1),
+    dlq.getFailed(0, count - 1),
+  ]);
+
+  // Newest first: `failedAt` is carried in the payload we wrote.
+  return [...waiting, ...failed].sort((a, b) => {
+    const aAt = (a.data as { failedAt?: string })?.failedAt ?? '';
+    const bAt = (b.data as { failedAt?: string })?.failedAt ?? '';
+    return bAt.localeCompare(aAt);
+  });
+}
+
+/** How many jobs are sitting in the dead-letter holding pen. */
+export async function getDeadLetterCount(): Promise<number> {
+  const dlq = queues.deadLetter;
+  if (!dlq) return 0;
+  const counts = await dlq.getWaitingCount();
+  return counts + (await dlq.getFailedCount());
 }
 
 /**

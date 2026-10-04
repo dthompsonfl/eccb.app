@@ -13,6 +13,7 @@ import {
   getQueueStats, 
   getJobStatus, 
   getDeadLetterJobs,
+  getDeadLetterCount,
   retryDeadLetterJob,
   QUEUE_NAMES,
 } from '@/lib/jobs/queue';
@@ -30,12 +31,28 @@ import { applyRateLimit } from '@/lib/rate-limit';
 const retryJobSchema = z.object({
   action: z.literal('retry'),
   jobId: z.string(),
-  queueName: z.enum(['EMAIL', 'NOTIFICATION', 'SCHEDULED', 'CLEANUP', 'DEAD_LETTER']),
+  queueName: z.enum([
+    'EMAIL',
+    'NOTIFICATION',
+    'SCHEDULED',
+    'CLEANUP',
+    'SMART_UPLOAD',
+    'OCR',
+    'DEAD_LETTER',
+  ]),
 });
 
 const clearQueueSchema = z.object({
   action: z.literal('clear'),
-  queueName: z.enum(['EMAIL', 'NOTIFICATION', 'SCHEDULED', 'CLEANUP', 'DEAD_LETTER']),
+  queueName: z.enum([
+    'EMAIL',
+    'NOTIFICATION',
+    'SCHEDULED',
+    'CLEANUP',
+    'SMART_UPLOAD',
+    'OCR',
+    'DEAD_LETTER',
+  ]),
 });
 
 const actionSchema = z.discriminatedUnion('action', [
@@ -87,19 +104,43 @@ export async function GET(request: NextRequest) {
 
     // Optionally include dead letter queue jobs
     let deadLetterJobs = undefined;
+    let deadLetterCount = 0;
     if (includeDeadLetter) {
       deadLetterJobs = await getDeadLetterJobs(20);
+      deadLetterCount = await getDeadLetterCount();
     }
 
     return NextResponse.json({
       queues: stats,
-      deadLetterJobs: deadLetterJobs?.map(job => ({
-        id: job.id,
-        name: job.name,
-        data: job.data,
-        timestamp: job.timestamp,
-        failedReason: job.failedReason,
-      })),
+      deadLetterCount,
+      deadLetterJobs: deadLetterJobs?.map(job => {
+        // The failure reason lives in the payload WE wrote when the job was
+        // dead-lettered. `job.failedReason` is BullMQ's own field and is always
+        // undefined here, because the job was never actually run — it was moved
+        // to the holding pen by `moveToDeadLetterQueue`. Reading it showed an
+        // empty reason for every entry.
+        const payload = job.data as {
+          originalJobId?: string;
+          originalQueue?: string;
+          originalName?: string;
+          failedReason?: string;
+          failedAt?: string;
+          attemptsMade?: number;
+        };
+        return {
+          id: job.id,
+          name: job.name,
+          timestamp: job.timestamp,
+          // Expose both the envelope and the fields the UI displays.
+          data: job.data,
+          failedReason: payload.failedReason ?? null,
+          failedAt: payload.failedAt ?? null,
+          attemptsMade: payload.attemptsMade ?? null,
+          originalJobId: payload.originalJobId ?? null,
+          originalQueue: payload.originalQueue ?? null,
+          originalName: payload.originalName ?? null,
+        };
+      }),
     });
   } catch (error) {
     logger.error('Failed to get job queue status', error instanceof Error ? error : new Error(String(error)));
