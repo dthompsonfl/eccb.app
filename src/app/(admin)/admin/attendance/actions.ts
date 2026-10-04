@@ -9,6 +9,12 @@ import { z } from 'zod';
 import { AttendanceStatus } from '@prisma/client';
 import { replaceEventAttendance } from '@/lib/attendance/bulk-write';
 import {
+  canReadMemberAttendance,
+  resolveAttendanceFilter,
+  resolveAttendanceScope,
+} from '@/lib/attendance/access';
+import { logger } from '@/lib/logger';
+import {
   ATTENDANCE_MARK_ALL,
   ATTENDANCE_MARK_SECTION,
   ATTENDANCE_MARK_OWN,
@@ -272,29 +278,29 @@ export async function getEventAttendance(eventId: string) {
       return { success: false, error: 'Event not found', attendance: [] };
     }
 
-    // Filter attendance based on permissions
+    // Filter attendance based on permissions.
+    //
+    // Same fail-open as the API routes: both branches were wrapped in
+    // `if (member)`, so a caller with section/own scope and no Member row fell
+    // through with the FULL event roster.
+    const decision = await resolveAttendanceScope(session.user.id);
+    if (!decision.allowed) {
+      logger.warn('Event attendance read denied', {
+        userId: session.user.id,
+        reason: decision.reason,
+      });
+      return { success: false, error: 'Permission denied', attendance: [] };
+    }
+
     let attendance = event.attendance;
 
-    if (!hasAllPermission && hasSectionPermission) {
-      const member = await prisma.member.findFirst({
-        where: { userId: session.user.id },
-        include: { sections: true },
-      });
-
-      if (member) {
-        const memberSectionIds = member.sections.map((s) => s.sectionId);
-        attendance = attendance.filter((a) =>
-          a.member.sections.some((s) => memberSectionIds.includes(s.sectionId))
-        );
-      }
-    } else if (!hasAllPermission && !hasSectionPermission && hasOwnPermission) {
-      const member = await prisma.member.findFirst({
-        where: { userId: session.user.id },
-      });
-
-      if (member) {
-        attendance = attendance.filter((a) => a.memberId === member.id);
-      }
+    if (decision.scope === 'section') {
+      const allowed = new Set(decision.sectionIds);
+      attendance = attendance.filter((a) =>
+        a.member.sections.some((s) => allowed.has(s.sectionId)),
+      );
+    } else if (decision.scope === 'own') {
+      attendance = attendance.filter((a) => a.memberId === decision.memberId);
     }
 
     return { success: true, attendance };
@@ -320,35 +326,19 @@ export async function getMemberAttendance(memberId: string) {
       return { success: false, error: 'Permission denied', attendance: [] };
     }
 
-    // Check access based on permissions
-    if (!hasAllPermission) {
-      if (hasOwnPermission) {
-        const member = await prisma.member.findFirst({
-          where: { userId: session.user.id },
-        });
-        if (!member || member.id !== memberId) {
-          return { success: false, error: 'Permission denied', attendance: [] };
-        }
-      } else if (hasSectionPermission) {
-        const member = await prisma.member.findFirst({
-          where: { userId: session.user.id },
-          include: { sections: true },
-        });
-        const targetMember = await prisma.member.findUnique({
-          where: { id: memberId },
-          include: { sections: true },
-        });
-
-        if (member && targetMember) {
-          const memberSectionIds = member.sections.map((s) => s.sectionId);
-          const hasCommonSection = targetMember.sections.some((s) =>
-            memberSectionIds.includes(s.sectionId)
-          );
-          if (!hasCommonSection) {
-            return { success: false, error: 'Permission denied', attendance: [] };
-          }
-        }
-      }
+    // Check access based on permissions.
+    //
+    // Replaces `if (member && targetMember)`, which skipped the section check
+    // entirely when either lookup was null and fell through to an unscoped read
+    // of the requested member's attendance.
+    const access = await canReadMemberAttendance(session.user.id, memberId);
+    if (!access.allowed) {
+      logger.warn('Member attendance read denied', {
+        userId: session.user.id,
+        memberId,
+        reason: access.reason,
+      });
+      return { success: false, error: 'Permission denied', attendance: [] };
     }
 
     const attendance = await prisma.attendance.findMany({
@@ -595,18 +585,28 @@ export async function exportAttendanceToCSV(
     }
 
     // Section scoping
-    if (!hasAllPermission && hasSectionPermission) {
-      const member = await prisma.member.findFirst({
-        where: { userId: session.user.id },
-        include: { sections: true },
+    //
+    // Previously `if (member) { where.member = … }`. With no Member row the
+    // filter was never applied and `where` stayed unscoped, so a caller holding
+    // only ATTENDANCE_VIEW_SECTION exported the ENTIRE band — and these queries
+    // select `member.email`, so one request leaked every member's name, section
+    // and email address.
+    //
+    // `resolveAttendanceFilter` returns an always-present filter rather than no
+    // filter, and denies outright when the caller has no profile at all.
+    const scopeFilter = await resolveAttendanceFilter(session.user.id);
+    if (scopeFilter.kind === 'denied') {
+      logger.warn('Attendance bulk read denied', {
+        userId: session.user.id,
+        reason: scopeFilter.reason,
       });
-
-      if (member) {
-        const memberSectionIds = member.sections.map((s) => s.sectionId);
-        where.member = {
-          sections: { some: { sectionId: { in: memberSectionIds } } },
-        };
-      }
+      return { success: false, error: 'Permission denied' };
+    }
+    if (scopeFilter.kind === 'scoped') {
+      where.member = {
+        ...((where.member as object) || {}),
+        ...scopeFilter.filter,
+      };
     }
 
     // Section filter (for admins)
@@ -737,15 +737,24 @@ export async function exportMemberAttendanceSummary(
     const memberWhere: Record<string, unknown> = {};
 
     // Section scoping
-    if (!hasAllPermission && hasSectionPermission) {
-      const member = await prisma.member.findFirst({
-        where: { userId: session.user.id },
-        include: { sections: true },
+    //
+    // Previously `if (member) { memberWhere.sections = … }` — with no Member row
+    // the clause was never set and the member list came back UNSCOPED, exposing
+    // every member in the band.
+    const memberScope = await resolveAttendanceFilter(session.user.id);
+    if (memberScope.kind === 'denied') {
+      logger.warn('Attendance member summary denied', {
+        userId: session.user.id,
+        reason: memberScope.reason,
       });
-
-      if (member) {
-        const memberSectionIds = member.sections.map((s) => s.sectionId);
-        memberWhere.sections = { some: { sectionId: { in: memberSectionIds } } };
+      return { success: false, error: 'Permission denied' };
+    }
+    if (memberScope.kind === 'scoped') {
+      if ('member' in memberScope.filter) {
+        const sections = (memberScope.filter.member as { sections?: unknown }).sections;
+        if (sections) memberWhere.sections = sections;
+      } else if ('memberId' in memberScope.filter) {
+        memberWhere.id = memberScope.filter.memberId;
       }
     }
 
@@ -1007,18 +1016,28 @@ export async function getAttendanceReportData(filters: AttendanceExportFilters =
     }
 
     // Section scoping
-    if (!hasAllPermission && hasSectionPermission) {
-      const member = await prisma.member.findFirst({
-        where: { userId: session.user.id },
-        include: { sections: true },
+    //
+    // Previously `if (member) { where.member = … }`. With no Member row the
+    // filter was never applied and `where` stayed unscoped, so a caller holding
+    // only ATTENDANCE_VIEW_SECTION exported the ENTIRE band — and these queries
+    // select `member.email`, so one request leaked every member's name, section
+    // and email address.
+    //
+    // `resolveAttendanceFilter` returns an always-present filter rather than no
+    // filter, and denies outright when the caller has no profile at all.
+    const scopeFilter = await resolveAttendanceFilter(session.user.id);
+    if (scopeFilter.kind === 'denied') {
+      logger.warn('Attendance bulk read denied', {
+        userId: session.user.id,
+        reason: scopeFilter.reason,
       });
-
-      if (member) {
-        const memberSectionIds = member.sections.map((s) => s.sectionId);
-        where.member = {
-          sections: { some: { sectionId: { in: memberSectionIds } } },
-        };
-      }
+      return { success: false, error: 'Permission denied' };
+    }
+    if (scopeFilter.kind === 'scoped') {
+      where.member = {
+        ...((where.member as object) || {}),
+        ...scopeFilter.filter,
+      };
     }
 
     // Section filter (for admins)
