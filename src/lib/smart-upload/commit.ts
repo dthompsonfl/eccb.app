@@ -416,8 +416,22 @@ export async function commitSmartUploadSessionToLibrary(
       };
     }
 
+    // The CAS matched nothing. Either a live commit holds the lock, or the
+    // holder was SIGKILLed and stranded it — `scripts/start.ts` escalates to
+    // SIGKILL after 30s while Smart Upload jobs legitimately run far longer.
+    // The scheduler's `reapWedgedSmartUploadCommits` releases the stranded case
+    // after SMART_UPLOAD_WEDGED_COMMIT_AFTER_MS, so say which one this is: the
+    // old message said only "another process", which reads as a live race and
+    // sent operators hunting for a concurrency bug that did not exist.
+    const isWedged = retrySession?.commitStatus === "IN_PROGRESS";
+
     throw new Error(
-      `Session ${sessionId} is already being committed by another process`,
+      isWedged
+        ? `Session ${sessionId} has a commit lock stranded in IN_PROGRESS by a worker that ` +
+          `died mid-commit. It will be released automatically once it is older than ` +
+          `SMART_UPLOAD_WEDGED_COMMIT_AFTER_MS (6h); retry the commit after that, or ` +
+          `requeue the session. This is not a concurrent commit.`
+        : `Session ${sessionId} is already being committed by another process`,
     );
   }
 

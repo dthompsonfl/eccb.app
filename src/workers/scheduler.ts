@@ -656,6 +656,62 @@ export async function reapStaleSmartUploadSessions(): Promise<number> {
     });
   }
 
+  const wedged = await reapWedgedSmartUploadCommits();
+
+  return count + wedged;
+}
+
+/**
+ * Release `commitStatus` locks left behind by a worker that died mid-commit.
+ *
+ * WHY THIS IS NEEDED
+ * ------------------
+ * `commitSmartUploadSession` takes a CAS lock: it only transitions
+ * `commitStatus` from NOT_STARTED/FAILED/null to IN_PROGRESS. That lock is
+ * released on the normal paths, but a `SIGKILL` in between strands it at
+ * IN_PROGRESS permanently — `scripts/start.ts` escalates to SIGKILL after
+ * SHUTDOWN_GRACE_MS (30s) while Smart Upload jobs are documented as legitimately
+ * running for 30+ minutes.
+ *
+ * Every subsequent commit then matches zero rows on the CAS and reports
+ * "already being committed by another process", forever. The only recovery was
+ * a manual database edit, and the session looked live rather than abandoned.
+ *
+ * There is no dedicated `commitStartedAt` column, so `updatedAt` is the age
+ * signal — a commit in flight touches the row, so a genuinely-running commit
+ * has a recent timestamp and is left alone. The threshold is deliberately much
+ * longer than {@link SMART_UPLOAD_STALE_AFTER_MS} so this cannot race a healthy
+ * long-running commit.
+ *
+ * Rows are returned to FAILED (not NOT_STARTED) so `commitAttempts` is
+ * preserved for diagnostics and the operator sees the last error, and because
+ * FAILED is already an accepted CAS origin — the next attempt proceeds.
+ */
+export const SMART_UPLOAD_WEDGED_COMMIT_AFTER_MS = 6 * 60 * 60 * 1000;
+
+export async function reapWedgedSmartUploadCommits(): Promise<number> {
+  const cutoff = new Date(Date.now() - SMART_UPLOAD_WEDGED_COMMIT_AFTER_MS);
+
+  const { count } = await prisma.smartUploadSession.updateMany({
+    // Re-assert the predicate so a commit that resumed between the read and the
+    // write is not clobbered out from under itself.
+    where: {
+      commitStatus: 'IN_PROGRESS',
+      updatedAt: { lt: cutoff },
+    },
+    data: {
+      commitStatus: 'FAILED',
+      requiresHumanReview: true,
+    },
+  });
+
+  if (count > 0) {
+    logger.warn('Released Smart Upload commit locks stranded by a dead worker', {
+      count,
+      wedgedAfterMs: SMART_UPLOAD_WEDGED_COMMIT_AFTER_MS,
+    });
+  }
+
   return count;
 }
 

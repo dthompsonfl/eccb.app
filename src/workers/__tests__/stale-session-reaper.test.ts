@@ -35,7 +35,11 @@ describe('reapStaleSmartUploadSessions', () => {
     mockSession.findMany.mockResolvedValue([
       { uploadSessionId: 'orphan-1', status: 'PROCESSING', updatedAt: new Date(0) },
     ]);
-    mockSession.updateMany.mockResolvedValue({ count: 1 });
+    // First updateMany reaps the stuck session; the second releases any
+    // stranded commit locks. Only the first matches here.
+    mockSession.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
 
     const count = await reapStaleSmartUploadSessions();
 
