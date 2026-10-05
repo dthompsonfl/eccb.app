@@ -324,6 +324,10 @@ function StandViewerContent({ data }: StandViewerProps) {
     useStandStore((s) => s.pieces[s.currentPieceIndex]?.id ?? null);
   const offlineAnnotations = useOfflineAnnotations({
     musicId: offlineMusicId,
+    // Scope the IndexedDB queue to this user. Without it the queue was one
+    // shared store, so on a rehearsal tablet one musician's offline strokes
+    // were loaded — and POSTed under the wrong session — by the next musician.
+    userId,
     enabled: offlineQueueEnabled,
     send: useCallback(async (items: QueuedAnnotation[]): Promise<string[]> => {
       const accepted: string[] = [];

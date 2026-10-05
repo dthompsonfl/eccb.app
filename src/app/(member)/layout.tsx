@@ -28,7 +28,7 @@ export default async function MemberLayout({
       <MemberSidebar user={user} enabledFeatures={enabledFeatures} />
       <div className="flex flex-1 flex-col lg:pl-64">
         {impersonatedBy && user ? <ImpersonationBanner targetEmail={user.email} /> : null}
-        <MemberHeader user={user} />
+        <MemberHeader user={user} userId={session?.user?.id ?? null} />
         {/* Shows itself once to a new member; the header's "Show me how"
             button re-opens it forever after. */}
         <OnboardingWalkthrough />

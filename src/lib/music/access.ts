@@ -112,6 +112,22 @@ export async function getPieceAssignmentGrant(
  */
 export async function canAccessMusicPiece(userId: string, pieceId: string): Promise<boolean> {
   if (await hasGlobalMusicAccess(userId)) return true;
+
+  // Archived / soft-deleted music is for library administrators only. This
+  // check is enforced by the sibling file-level helpers (canReadPieceFile,
+  // authorizeMusicFileAccess) but was MISSING here, so the Stand metadata,
+  // annotation, audio and practice-log endpoints — which all resolve piece
+  // access through this function — could read or write an archived or
+  // soft-deleted piece. Keep the two paths consistent.
+  // Use findFirst, matching the sibling archived/deleted lookups in this module
+  // (see canReadPieceFile / authorizeMusicFileAccess) rather than findUnique.
+  const piece = await prisma.musicPiece.findFirst({
+    where: { id: pieceId },
+    select: { isArchived: true, deletedAt: true },
+  });
+  if (!piece) return false;
+  if (piece.isArchived || piece.deletedAt !== null) return false;
+
   const grant = await getPieceAssignmentGrant(userId, pieceId);
   return grant.assigned;
 }
@@ -273,7 +289,16 @@ export async function canReadPieceFile(
 
   if (!grant.assigned) {
     // Unassigned member: only the published-event program is reachable.
-    return withinEvent;
+    //
+    // Critically, this must NOT expose an individual player's part. A member
+    // assigned to Trumpet 2 has no business reading Flute 1's part, but the
+    // piece-level relaxation below previously returned `withinEvent` for EVERY
+    // file on the piece — conductor score AND every sibling part. The event
+    // programme is the piece as published; it is not a licence to read other
+    // musicians' individual parts.
+    if (!withinEvent) return false;
+    if (partId) return false; // a specific part always requires an assignment
+    return true;
   }
 
   if (partId) {

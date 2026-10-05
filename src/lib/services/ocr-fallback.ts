@@ -1083,23 +1083,20 @@ export async function tryOcrEngine(
       };
     }
 
+    case 'vision_api':
     case 'ocrmypdf': {
-      logger.warn('OCR engine ocrmypdf requires PDF buffer, not image');
+      // Neither engine can OCR a bare rasterized image. 'vision_api' is retired
+      // and is no longer selectable (see normalizeOcrEngineValue); it is still
+      // handled here so a stale persisted value degrades to a clear, logged no-op
+      // rather than pretending to succeed.
+      logger.warn(
+        `OCR engine ${engine} cannot process a rasterized image; ` +
+          'use pdf_buffer or select tesseract/native',
+      );
       return {
         text: '',
         confidence: 0,
-        engine: 'ocrmypdf',
-        pagesScanned: 0,
-        charsExtracted: 0,
-      };
-    }
-
-    case 'vision_api': {
-      logger.warn('OCR engine vision_api not yet implemented');
-      return {
-        text: '',
-        confidence: 0,
-        engine: 'vision_api',
+        engine,
         pagesScanned: 0,
         charsExtracted: 0,
       };

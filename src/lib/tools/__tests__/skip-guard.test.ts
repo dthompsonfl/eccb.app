@@ -13,7 +13,7 @@ import { promises as fs, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ROOT, findSkips, type SkipFinding } from '@/lib/tools/skip-guard';
+import { ROOT, findSkips, FILE_GLOBS, type SkipFinding } from '@/lib/tools/skip-guard';
 
 const TOK_SKIP = ['.', 'skip', '('].join('');
 const TOK_TODO = ['.', 'todo', '('].join('');
@@ -112,8 +112,59 @@ describe('skip-guard', () => {
 
   it('reports no skips in the real repository', async () => {
     // Guards against re-introducing skipped tests.
-    const found = await findSkips(ROOT, ['src', 'scripts']);
+    // Scans the full release-gate surface, including e2e/ and tests/.
+    const found = await findSkips(ROOT, FILE_GLOBS);
     const formatted = found.map((f: SkipFinding) => `${f.file}:${f.line} ${f.match}`);
     expect(formatted).toEqual([]);
+  });
+
+  it('covers e2e and tests directories, not just src', () => {
+    // Playwright specs live in e2e/ and integration specs in tests/. Omitting
+    // them previously let a skip there escape the release gate entirely.
+    expect(FILE_GLOBS).toContain('e2e');
+    expect(FILE_GLOBS).toContain('tests');
+  });
+
+  it('detects a real skip inside an e2e fixture directory', async () => {
+    await writeFixture('e2e/flows/checkout.spec.ts', `${SKIP_SRC}\n`);
+
+    const found = await findSkips(tmpDir, ['e2e']);
+
+    expect(found).toHaveLength(1);
+    expect(found[0].file).toContain('checkout.spec.ts');
+  });
+
+  it('ignores skip patterns that appear only inside comments', async () => {
+    // Documentation legitimately says things like "we never call test.skip".
+    // Treating prose as a skipped test would make the gate unusable.
+    await writeFixture(
+      'src/notes.ts',
+      [
+        '/**',
+        ' * We never call test.skip / test.fixme here.',
+        ' * describe.skip is also avoided.',
+        ' */',
+        'export const ok = true;',
+        '',
+      ].join('\n'),
+    );
+
+    await expect(findSkips(tmpDir, ['src'])).resolves.toEqual([]);
+  });
+
+  it('still detects a real skip on a line that also carries a comment', async () => {
+    // Build the token at runtime so this test file does not itself trip the gate.
+    const skipCall = ['test', 'skip'].join('.');
+    await writeFixture('src/real.test.ts', `${skipCall}('x', () => {}); // because reasons\n`);
+
+    const found = await findSkips(tmpDir, ['src']);
+
+    expect(found).toHaveLength(1);
+  });
+
+  it('allows the documented environment-dependent auth setup skip', async () => {
+    await writeFixture('e2e/auth.setup.ts', `${SKIP_SRC}\n`);
+
+    await expect(findSkips(tmpDir, ['e2e'])).resolves.toEqual([]);
   });
 });

@@ -52,9 +52,44 @@ export const ProviderValueSchema = z.enum(providerTuple);
 export type ProviderValue = z.infer<typeof ProviderValueSchema>;
 
 // OCR engine options
-const ocrEngineTuple = ['tesseract', 'ocrmypdf', 'vision_api', 'native'] as const;
+//
+// `vision_api` was previously offered here but has no implementation anywhere in
+// the codebase: `tryOcrEngine` in src/lib/services/ocr-fallback.ts returned an
+// empty result for it, so selecting it silently produced zero OCR output. It is
+// therefore no longer a selectable capability.
+//
+// It is still ACCEPTED on read and coerced to a working engine (see
+// normalizeOcrEngineValue) so that a SystemSetting row already persisting
+// 'vision_api' neither fails validation nor leaves OCR silently dead.
+const ocrEngineTuple = ['tesseract', 'ocrmypdf', 'native'] as const;
 export const OcrEngineSchema = z.enum(ocrEngineTuple);
 export type OcrEngineValue = z.infer<typeof OcrEngineSchema>;
+
+/** OCR engine values that may still exist in the database but are not selectable. */
+const LEGACY_OCR_ENGINE_VALUES = ['vision_api', 'pdf_text'] as const;
+
+/**
+ * Coerce a persisted OCR engine value to one that actually works.
+ *
+ * Unknown or retired values fall back to 'tesseract', the default engine, so a
+ * stale setting can never silently disable OCR.
+ */
+export function normalizeOcrEngineValue(value: unknown): OcrEngineValue {
+  if (typeof value === 'string') {
+    const candidate = value.trim();
+    if ((ocrEngineTuple as readonly string[]).includes(candidate)) {
+      return candidate as OcrEngineValue;
+    }
+    if ((LEGACY_OCR_ENGINE_VALUES as readonly string[]).includes(candidate)) {
+      console.warn(
+        `[smart-upload] OCR engine "${candidate}" is no longer supported; ` +
+          'falling back to "tesseract". Save the settings to persist this.',
+      );
+      return 'tesseract';
+    }
+  }
+  return 'tesseract';
+}
 
 // OCR mode options
 const ocrModeTuple = ['header', 'full', 'both'] as const;

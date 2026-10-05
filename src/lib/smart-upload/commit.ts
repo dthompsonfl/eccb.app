@@ -128,22 +128,34 @@ function normalizeCommitErrorMessage(error: unknown): string {
 }
 
 /**
- * Verify the parts about to be committed tile their own page span with no gap
- * and no overlap. Returns a human-readable reason string, or `null` when the
- * parts are contiguous.
+ * Verify the parts about to be committed cover every page of the ORIGINAL
+ * score exactly once. Returns a human-readable reason string, or `null` when
+ * coverage is proven.
  *
- * Scope note: this proves contiguity over the span the parts actually occupy
- * (page 1 through the highest end page). It cannot detect a tail of pages that
- * the splitter never claimed at all, because nothing on the session records the
- * original page count in a comparable 1-indexed form — `MusicFile.pageCount` is
- * only written at commit time. Detecting a truncated tail stays the processor's
- * and the resplit route's job, both of which do hold the real `totalPages`; this
- * gate exists to stop an *interior* hole reaching the library, which is the case
- * those two paths cannot cover after a re-split.
+ * `sourcePageCount` is `SmartUploadSession.sourcePageCount`: the authoritative
+ * page count of the uploaded PDF, computed live by
+ * `src/lib/services/pdf-source.ts` (`getPdfSourceInfo` /
+ * `getAuthoritativePdfPageCount`) and persisted by the processor, the
+ * second-pass worker, and the resplit route.
+ *
+ * It must be used here rather than a `Math.max` over the parts' own ranges.
+ * Deriving the total from the produced parts makes the gate tautological on a
+ * truncated split: parts covering pages 1-8 of a 20-page score yield
+ * totalPages = 8, so pages 9-20 never exist as far as the gate is concerned
+ * and the commit proceeds with a third of the music missing. Interior holes
+ * were detectable that way; a truncated tail was not.
+ *
+ * When `sourcePageCount` is null the true document length was never recorded,
+ * so coverage cannot be proven at all. The gate then runs the older
+ * claimed-span contiguity check (so an interior hole is still a hole) and
+ * reports `unverified: true` so the caller can force human review — the same
+ * fail-closed posture `smart-upload-worker.ts` takes when the page count is
+ * unavailable. It never silently treats the claimed span as the document.
  */
 function assertPartsCoverTheirPages(
   parts: readonly ParsedPartRecord[],
-): string | null {
+  sourcePageCount: number | null | undefined,
+): { failure: string | null; unverified: boolean } {
   const withRanges = parts.filter(
     (p) =>
       Array.isArray(p.pageRange) &&
@@ -158,10 +170,25 @@ function assertPartsCoverTheirPages(
   if (withRanges.length !== parts.length) {
     if (withRanges.length > 0) {
       const missing = parts.filter((p) => !withRanges.includes(p));
-      return `${missing.length} part(s) have no valid page range (e.g. "${missing[0].partName}")`;
+      return {
+        failure: `${missing.length} part(s) have no valid page range (e.g. "${missing[0].partName}")`,
+        unverified: false,
+      };
     }
-    return null;
+    return { failure: null, unverified: false };
   }
+
+  const hasAuthoritativeCount =
+    typeof sourcePageCount === 'number' &&
+    Number.isInteger(sourcePageCount) &&
+    sourcePageCount > 0;
+
+  // With a recorded count the document length is known and a short split is a
+  // hard failure. Without one, fall back to the span the parts claim so the
+  // overlap/range checks stay meaningful — but report it as unverified.
+  const totalPages = hasAuthoritativeCount
+    ? sourcePageCount
+    : Math.max(...withRanges.map((p) => p.pageRange[1]));
 
   const report = analyzePageCoverage(
     withRanges.map((p) => ({
@@ -172,12 +199,14 @@ function assertPartsCoverTheirPages(
       partNumber: p.partNumber ?? 0,
       pageRange: p.pageRange,
     })),
-    // The span the produced parts claim to cover.
-    Math.max(...withRanges.map((p) => p.pageRange[1])),
+    totalPages,
     'one',
   );
 
-  return describePageCoverageFailure(report) || null;
+  return {
+    failure: describePageCoverageFailure(report) || null,
+    unverified: !hasAuthoritativeCount,
+  };
 }
 
 // =============================================================================
@@ -488,16 +517,27 @@ export async function commitSmartUploadSessionToLibrary(
   // So the invariant is re-proven here, from the persisted parts, immediately
   // before the transaction opens. It is checked against the actual page ranges
   // that will become MusicPart rows — not against the instructions the LLM
-  // proposed, which may no longer match what was actually cut.
-  //
-  // totalPages is derived from the union of the produced ranges, so this asserts
-  // contiguity and no-overlap rather than trusting a stored page count. That is
-  // the property that matters: a gap inside the produced set is a lost page, and
-  // a duplicate range is a page handed to two desks.
-  const coverageFailure = assertPartsCoverTheirPages(parsedParts);
-  if (coverageFailure) {
+  // proposed, which may no longer match what was actually cut — and against
+  // `sourcePageCount`, the real length of the uploaded PDF, so a truncated tail
+  // cannot pass as a complete split.
+  const coverage = assertPartsCoverTheirPages(
+    parsedParts,
+    uploadSession.sourcePageCount,
+  );
+  if (coverage.failure) {
     throw new Error(
-      `Cannot commit: ${coverageFailure} Re-split the score so every page belongs to exactly one part.`,
+      `Cannot commit: ${coverage.failure} Re-split the score so every page belongs to exactly one part.`,
+    );
+  }
+
+  // Fail closed when the true page count was never recorded. The split cannot be
+  // verified against the document, so a human must confirm it rather than the
+  // commit presenting an unproven pass as a clean one. Precedent: the
+  // second-pass worker forces review when it cannot obtain a page count.
+  if (coverage.unverified) {
+    logger.warn(
+      'Commit: source page count unknown — forcing human review rather than trusting the claimed span',
+      { sessionId, partsClaimed: parsedParts.length },
     );
   }
 
@@ -1077,6 +1117,10 @@ export async function commitSmartUploadSessionToLibrary(
             committedFileId: musicFile.id,
             commitError: null,
             ...(routingNote ? { routingDecision: routingNote } : {}),
+            // Fail-closed: no recorded sourcePageCount means page coverage was
+            // proven only against the span the parts themselves claim, so the
+            // session must never look like a verified clean import.
+            ...(coverage.unverified ? { requiresHumanReview: true } : {}),
           },
         });
 

@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   CACHE_VERSION,
+  LEGACY_QUEUE_DB_NAME,
   MAX_QUEUED_ANNOTATIONS,
   OFFLINE_CACHE_HEADER,
   OFFLINE_USER_HEADER,
+  QUEUE_DB_NAME,
   allCacheNamesFor,
   cacheBelongsToUser,
   cacheNameFor,
   classifyRequest,
   deriveSyncState,
   isAppCacheName,
+  markScoreResponseCacheable,
   mergeQueue,
+  queueDbNameFor,
   resolveReplay,
   shouldCacheScoreResponse,
   strategyFor,
@@ -154,6 +158,66 @@ describe('score response caching', () => {
   });
 });
 
+/**
+ * The server side of the opt-in.
+ *
+ * `shouldCacheScoreResponse` is the consumer; this is the producer. Nothing set
+ * `X-Eccb-Offline-Cacheable` anywhere, so the whole offline-score path was dead
+ * code that read as a working feature. These tests pin the three gates that
+ * make it safe to set the header at all.
+ */
+describe('markScoreResponseCacheable', () => {
+  it('opts a response in when the feature is on and a user is known', () => {
+    const h = markScoreResponseCacheable({ headers: new Headers(), enabled: true, userId: 'user-a' });
+    expect(h.get(OFFLINE_CACHE_HEADER)).toBe('true');
+    // The owner header is what stops a misrouted response being stored for the
+    // wrong person even if the opt-in is present.
+    expect(h.get(OFFLINE_USER_HEADER)).toBe('user-a');
+  });
+
+  it('stays silent when the admin setting disables offline', () => {
+    const h = markScoreResponseCacheable({ headers: new Headers(), enabled: false, userId: 'user-a' });
+    expect(h.get(OFFLINE_CACHE_HEADER)).toBeNull();
+    expect(h.get(OFFLINE_USER_HEADER)).toBeNull();
+  });
+
+  it('stays silent when there is no authenticated user', () => {
+    for (const userId of [null, undefined, '']) {
+      const h = markScoreResponseCacheable({ headers: new Headers(), enabled: true, userId });
+      expect(h.get(OFFLINE_CACHE_HEADER), String(userId)).toBeNull();
+    }
+  });
+
+  it('produces a response the consumer then accepts', () => {
+    // End-to-end through the real Headers object, not a fake getter.
+    const h = markScoreResponseCacheable({ headers: new Headers(), enabled: true, userId: 'user-a' });
+    expect(shouldCacheScoreResponse({ status: 200, headers: h, userId: 'user-a' }).cache).toBe(true);
+    // ...and still refuses it for anyone else.
+    expect(shouldCacheScoreResponse({ status: 200, headers: h, userId: 'user-b' }).cache).toBe(false);
+  });
+
+  it('never makes an error status cacheable, whatever the status', () => {
+    // The header alone is not enough: a 401/403/404/302 carrying it would be
+    // refused by shouldCacheScoreResponse, which is the second line of defence.
+    for (const status of [302, 401, 403, 404, 500]) {
+      const h = markScoreResponseCacheable({
+        headers: new Headers(),
+        enabled: true,
+        userId: 'user-a',
+      });
+      expect(shouldCacheScoreResponse({ status, headers: h, userId: 'user-a' }).cache, `status ${status}`).toBe(
+        false,
+      );
+    }
+  });
+
+  it('does not mutate unrelated headers', () => {
+    const h = new Headers({ 'Content-Type': 'application/pdf' });
+    markScoreResponseCacheable({ headers: h, enabled: true, userId: 'user-a' });
+    expect(h.get('Content-Type')).toBe('application/pdf');
+  });
+});
+
 function annotation(id: string, createdAt = '2026-01-01T00:00:00.000Z'): QueuedAnnotation {
   return {
     id,
@@ -222,6 +286,52 @@ describe('offline annotation queue', () => {
     const second = resolveReplay(queue, ['a', 'b']);
     expect(second.remaining).toHaveLength(0);
     expect(second.replayed).toHaveLength(0);
+  });
+});
+
+describe('per-user offline queue isolation', () => {
+  // The offline queue used to live in one fixed IndexedDB ('eccb-offline') with
+  // no user dimension, so on a shared rehearsal tablet user B loaded user A's
+  // queued strokes and POSTed them under B's session. The database NAME is the
+  // isolation boundary, exactly as it is for score caches.
+  it('gives two different users two different database names', () => {
+    expect(queueDbNameFor('user-a')).not.toBe(queueDbNameFor('user-b'));
+  });
+
+  it('includes the user id in the database name', () => {
+    expect(queueDbNameFor('user-a')).toContain('user-a');
+    expect(queueDbNameFor('user-b')).toContain('user-b');
+  });
+
+  it('never returns a name that could collide with another user', () => {
+    // Prefix collisions must not exist: 'a' and 'a-b' must not produce names
+    // where one is a prefix-concatenation of the other.
+    expect(queueDbNameFor('a')).not.toBe(queueDbNameFor('a-b'));
+  });
+
+  it('namespaces by cache version so a format bump discards old queues', () => {
+    expect(queueDbNameFor('user-a')).toContain(CACHE_VERSION);
+    expect(queueDbNameFor('user-a')).toContain(QUEUE_DB_NAME);
+  });
+
+  it('fails closed with no user id rather than falling back to a shared store', () => {
+    // null is the fail-closed answer: with no identity there is nothing to scope
+    // by, and a shared fallback is exactly the leak being fixed.
+    expect(queueDbNameFor(null)).toBeNull();
+    expect(queueDbNameFor(undefined)).toBeNull();
+    expect(queueDbNameFor('')).toBeNull();
+    expect(queueDbNameFor('   ')).toBeNull();
+    expect(queueDbNameFor('\t\n ')).toBeNull();
+  });
+
+  it('trims the user id so padding cannot fork one user into two queues', () => {
+    expect(queueDbNameFor('  user-a  ')).toBe(queueDbNameFor('user-a'));
+  });
+
+  it('exposes the legacy unscoped name only so the migration can retire it', () => {
+    expect(LEGACY_QUEUE_DB_NAME).toBe(QUEUE_DB_NAME);
+    // ...and it must never be a live queue name for a real user.
+    expect(queueDbNameFor('user-a')).not.toBe(LEGACY_QUEUE_DB_NAME);
   });
 });
 

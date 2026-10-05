@@ -64,6 +64,8 @@ import type {
 } from "@/types/smart-upload";
 import type { SmartUploadSecondPassJobData } from "@/lib/jobs/definitions";
 import {
+  accumulateTempFiles,
+  buildSmartUploadPartKey,
   parseSmartUploadJsonArray,
   parseSmartUploadJsonField,
   serializeSmartUploadSessionData,
@@ -420,6 +422,7 @@ async function finalizeSmartUploadSession(
     fileName: string;
     uploadSessionId: string;
     extractedMetadata: unknown;
+    tempFiles?: unknown;
   },
   updateData: Record<string, unknown>,
   finalMetadata: ExtractedMetadata,
@@ -451,6 +454,14 @@ async function finalizeSmartUploadSession(
   // Use a trusted page count for evaluation (gaps, split validation, etc.).
   const totalPages =
     (await getAuthoritativePdfPageCount(originalPdfBuffer)) ?? 0;
+
+  // Persist the authoritative page count of the ORIGINAL score on the session.
+  // The second pass can re-split the PDF, so commit must be able to prove the
+  // final parts tile the real document — not merely the span they claim. Null
+  // (count unavailable) is left as null and the commit gate fails closed.
+  if (totalPages > 0) {
+    updateData.sourcePageCount = totalPages;
+  }
 
   if (finalMetadata.segmentationConfidence === undefined) {
     if (hasSecondPassInstructions) {
@@ -706,14 +717,14 @@ async function finalizeSmartUploadSession(
         },
       );
       const newParsedParts: ParsedPartRecord[] = [];
-      const tempFiles: string[] = [];
+      const newTempFiles: string[] = [];
       for (const part of splitResults) {
         const slug =
           buildPartStorageSlug(part.instruction.partName, {
             partNumber: part.instruction.partNumber,
             pageRange: part.instruction.pageRange,
           }) || `part_${part.instruction.partNumber ?? 0}`;
-        const partStorageKey = `smart-upload/${sessionId}/parts/${slug}.pdf`;
+        const partStorageKey = buildSmartUploadPartKey(sessionId, slug, "secondpass");
         await uploadFile(partStorageKey, part.buffer, {
           contentType: "application/pdf",
           metadata: {
@@ -724,7 +735,7 @@ async function finalizeSmartUploadSession(
             originalUploadId: sessionId,
           },
         });
-        tempFiles.push(partStorageKey);
+        newTempFiles.push(partStorageKey);
         // Name from the work title + instrument, exactly as the first pass
         // does. Previously this used the bare partName, producing
         // "1st_Flute.pdf" with no indication of which work it belonged to.
@@ -752,7 +763,13 @@ async function finalizeSmartUploadSession(
         });
       }
       updateData.parsedParts = newParsedParts;
-      updateData.tempFiles = tempFiles;
+      // ACCUMULATE, never assign: tempFiles is the only index cleanup and
+      // commit have for this session's temporary objects. Replacing the list
+      // would orphan every first-pass object as unreachable garbage.
+      updateData.tempFiles = accumulateTempFiles(
+        smartSession.tempFiles,
+        newTempFiles,
+      );
       updateData.parseStatus = "PARSED";
 
       // Verify the pages the splitter actually produced cover the document.
@@ -793,13 +810,14 @@ async function finalizeSmartUploadSession(
         },
       );
       const newParsedParts: ParsedPartRecord[] = [];
+      const newTempFiles: string[] = [];
       for (const part of splitResults) {
         const slug =
           buildPartStorageSlug(part.instruction.partName, {
             partNumber: part.instruction.partNumber,
             pageRange: part.instruction.pageRange,
           }) || `part_${part.instruction.partNumber ?? 0}`;
-        const partStorageKey = `smart-upload/${sessionId}/parts/${slug}.pdf`;
+        const partStorageKey = buildSmartUploadPartKey(sessionId, slug, "resplit");
         const normalised = normalizeInstrumentLabel(
           part.instruction.partName || part.instruction.instrument,
         );
@@ -820,6 +838,7 @@ async function finalizeSmartUploadSession(
             originalUploadId: sessionId,
           },
         });
+        newTempFiles.push(partStorageKey);
         newParsedParts.push({
           partName: part.instruction.partName,
           instrument: part.instruction.instrument,
@@ -834,6 +853,13 @@ async function finalizeSmartUploadSession(
         });
       }
       updateData.parsedParts = newParsedParts;
+      // ACCUMULATE, never assign: a re-split replaces parsedParts but the
+      // objects it supersedes are still uncommitted temp objects that only
+      // tempFiles tracks, so they must be added or they leak forever.
+      updateData.tempFiles = accumulateTempFiles(
+        smartSession.tempFiles,
+        newTempFiles,
+      );
 
       // Same coverage proof as the fresh-split branch above.
       const reSplitCoverage = analyzePageCoverage(
@@ -870,13 +896,31 @@ async function finalizeSmartUploadSession(
       parsedParts ??
       [];
 
+    // Page coverage is a SAFETY gate: it detects dropped/duplicated pages. If we
+    // cannot determine the real page count we must NOT silently skip the check —
+    // doing so lets a partial or malformed split pass as complete. On failure we
+    // still run the gates with a sentinel derived from the parsed parts, and we
+    // force human review so a librarian confirms coverage.
     let totalPagesForGates = 0;
+    let pageCountUnavailable = false;
     try {
       const { PDFDocument: PDFDoc } = await import("pdf-lib");
       const tmpDoc = await PDFDoc.load(originalPdfBuffer);
       totalPagesForGates = tmpDoc.getPageCount();
-    } catch {
-      /* best-effort */
+    } catch (pdfErr) {
+      pageCountUnavailable = true;
+      logger.warn(
+        "Could not determine source page count for coverage gate — " +
+          "forcing human review rather than skipping coverage validation",
+        { sessionId, error: pdfErr instanceof Error ? pdfErr.message : String(pdfErr) },
+      );
+      // Best available estimate: the highest page any part claims to cover.
+      // This keeps overlap/range validation meaningful instead of inert.
+      totalPagesForGates = parts.reduce((max, part) => {
+        const range = part?.pageRange;
+        if (!Array.isArray(range) || range.length < 2) return max;
+        return Math.max(max, Number(range[1]) || 0);
+      }, 0);
     }
 
     const gateResult = evaluateQualityGates({
@@ -892,6 +936,14 @@ async function finalizeSmartUploadSession(
       for (const reason of gateResult.reasons) {
         logger.warn("Quality gate failed", { sessionId, reason });
       }
+    } else if (pageCountUnavailable) {
+      // The gate could not be fully evaluated. Default to review, never to
+      // silent autonomous approval.
+      updateData.requiresHumanReview = true;
+      logger.warn(
+        "Coverage gate skipped (source page count unavailable) — routing to human review",
+        { sessionId },
+      );
     }
     finalConfidence = gateResult.finalConfidence;
   }
@@ -1689,28 +1741,16 @@ Include a "corrections" field explaining any corrections made from the first pas
 // =============================================================================
 
 // NOTE: The separate BullMQ worker that used to live here has been removed.
-// All Smart Upload jobs are now handled by a single unified worker in
+// All Smart Upload jobs are handled by a single unified worker in
 // smart-upload-processor-worker.ts. This prevents jobs from being silently
 // lost when two workers consume the same queue and "skip" unowned jobs.
 //
-// The following legacy exports are kept for API compatibility in case any
-// module still imports them, but they are intentional no-ops.
-
-/** @deprecated Use startSmartUploadProcessorWorker() instead */
-export function startSmartUploadWorker(): void {
-  logger.warn(
-    "startSmartUploadWorker() is deprecated — secondPass jobs are now handled by the unified worker in smart-upload-processor-worker.ts",
-  );
-}
-
-/** @deprecated Use stopSmartUploadProcessorWorker() instead */
-export async function stopSmartUploadWorker(): Promise<void> {
-  // no-op: unified worker handles shutdown
-}
-
-/** @deprecated Use isSmartUploadProcessorWorkerRunning() instead */
-export function isSmartUploadWorkerRunning(): boolean {
-  return false;
-}
+// The legacy no-op exports that stood here (startSmartUploadWorker,
+// stopSmartUploadWorker, isSmartUploadWorkerRunning) were removed. They only
+// logged or hardcoded `false`, and a repo-wide search found ZERO importers —
+// so the "kept in case any module still imports them" comment described a
+// compatibility contract that did not exist. `isSmartUploadWorkerRunning()`
+// in particular could never return anything but `false`, which reads as a real
+// health signal to any future caller.
 
 export { processSecondPass };

@@ -181,6 +181,49 @@ export function shouldCacheScoreResponse(args: {
 }
 
 // =============================================================================
+// Response marking (server side)
+// =============================================================================
+
+/**
+ * Opt an authorized score response into offline caching.
+ *
+ * `shouldCacheScoreResponse` above is the consumer; this is the producer. Before
+ * this existed nothing set `OFFLINE_CACHE_HEADER`, so the whole offline-score
+ * path was dead code that read as a working feature.
+ *
+ * Three gates, all of which must hold:
+ *
+ *   1. `enabled` — the admin setting `stand.offlineEnabled`. Caching copyrighted
+ *      music on a shared tablet is a policy decision, not a default.
+ *   2. A real `userId`. Without an owner there is no cache to put the bytes in;
+ *      marking an anonymous response would only create an orphan entry.
+ *   3. The caller must invoke this AFTER its authorization check and ONLY on the
+ *      200 PDF path. This function cannot verify status or content type, so it is
+ *      deliberately unable to mark anything on its own — a 401, 403, 404,
+ *      redirect-to-login or error must never reach it. `shouldCacheScoreResponse`
+ *      re-checks the status as a second line of defence.
+ *
+ * Returns the same Headers instance so the caller cannot forget to use the
+ * result, and so unrelated headers are never rebuilt.
+ */
+export function markScoreResponseCacheable(args: {
+  headers: Headers;
+  enabled: boolean;
+  userId: string | null | undefined;
+}): Headers {
+  const { headers, enabled, userId } = args;
+  if (!enabled) return headers;
+  if (typeof userId !== 'string' || userId.trim() === '') return headers;
+
+  headers.set(OFFLINE_CACHE_HEADER, 'true');
+  // Defence in depth: `shouldCacheScoreResponse` refuses a response whose owner
+  // is not the requesting user, so a misrouted response cannot be stored for the
+  // wrong person.
+  headers.set(OFFLINE_USER_HEADER, userId);
+  return headers;
+}
+
+// =============================================================================
 // Offline annotation queue
 // =============================================================================
 
@@ -197,9 +240,33 @@ export interface QueuedAnnotation {
   attempts: number;
 }
 
-/** Store name for the offline queue. */
+/** Store prefix for the offline queue. Always followed by version and user id. */
 export const QUEUE_DB_NAME = 'eccb-offline';
 export const QUEUE_STORE_NAME = 'annotations';
+
+/**
+ * The pre-isolation queue database: a single fixed store with no user
+ * dimension. Exported ONLY so the migration in `use-offline-annotations` can
+ * find and retire it. It must never be used as a live queue name.
+ */
+export const LEGACY_QUEUE_DB_NAME = QUEUE_DB_NAME;
+
+/**
+ * Per-user offline queue database name. The user id is the isolation boundary,
+ * exactly as it is for the service worker's score caches.
+ *
+ * Returns `null` — never a shared fallback — when there is no usable user id.
+ * Failing closed matters: a queue with no owner is what allowed one musician's
+ * offline strokes to be replayed under another's session on a shared tablet.
+ * `CACHE_VERSION` is reused so a future queue-format bump discards old queues
+ * alongside old caches instead of leaving unparseable entries behind.
+ */
+export function queueDbNameFor(userId: string | null | undefined): string | null {
+  if (typeof userId !== 'string') return null;
+  const trimmed = userId.trim();
+  if (trimmed === '') return null;
+  return `${QUEUE_DB_NAME}-${CACHE_VERSION}-${trimmed}`;
+}
 
 /** Upper bound so a long offline stretch cannot grow without limit. */
 export const MAX_QUEUED_ANNOTATIONS = 500;

@@ -8,7 +8,7 @@ import { validateCSRF } from '@/lib/csrf';
 import { logger } from '@/lib/logger';
 import { Readable } from 'stream';
 
-import { CMS_EDIT } from '@/lib/auth/permission-constants';
+import { CMS_EDIT, CMS_VIEW_ALL } from '@/lib/auth/permission-constants';
 // =============================================================================
 // Route Handler - GET (Download/View Asset)
 // =============================================================================
@@ -23,25 +23,39 @@ export async function GET(
     return rateLimitResponse;
   }
 
-  try {
-    const { id } = await params;
+  // Authorization is checked BEFORE the database lookup, so an anonymous caller
+      // cannot distinguish "asset exists" from "asset does not exist" by comparing
+      // 404 vs 401/403. Assets include uploaded PDFs and Office documents (see
+      // /api/assets/upload), and on the S3 driver this route redirects to a
+      // directly-usable presigned URL — so an unauthenticated read here hands out
+      // the file itself.
+      //
+      // This previously called getSession() into an unused variable and streamed
+      // unconditionally, so ANY caller could fetch ANY asset by id. DELETE and
+      // PATCH in this same file already gate on CMS_EDIT; GET now gates on the
+      // read-level equivalent, CMS_VIEW_ALL.
+      const session = await getSession();
+      if (!session?.user?.id) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
 
-    // Get asset from database
-    const asset = await prisma.mediaAsset.findUnique({
-      where: { id },
-    });
+      const canView = await checkUserPermission(session.user.id, CMS_VIEW_ALL);
+      if (!canView) {
+        logger.warn('Asset view denied: missing permission', { userId: session.user.id });
+        return NextResponse.json({ error: 'Forbidden: CMS view permission required' }, { status: 403 });
+      }
 
-    if (!asset) {
-      return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
-    }
+      try {
+        const { id } = await params;
 
-    // Check if user has permission to view
-    // Public assets can be viewed by anyone
-    // Private assets require CMS_VIEW_ALL or CMS_VIEW_PUBLIC permission
-    const _session = await getSession();
+        // Get asset from database
+        const asset = await prisma.mediaAsset.findUnique({
+          where: { id },
+        });
 
-    // For now, all CMS assets are considered public
-    // In the future, we could add an `isPublic` field to MediaAsset
+        if (!asset) {
+          return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
+        }
 
     // Handle download based on storage driver
     const result = await downloadFile(asset.storageKey);

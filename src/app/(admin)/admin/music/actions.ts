@@ -4,7 +4,7 @@ import { MUSIC_ASSIGN, MUSIC_CREATE, MUSIC_DELETE, MUSIC_EDIT, MUSIC_VIEW_ALL } 
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { requirePermission, getSession } from '@/lib/auth/guards';
+import { requirePermission } from '@/lib/auth/guards';
 import { uploadFile, deleteFile } from '@/lib/services/storage';
 import { auditLog } from '@/lib/services/audit';
 import { MusicDifficulty, FileType, AssignmentStatus } from '@prisma/client';
@@ -683,10 +683,11 @@ export async function getAssignmentsForLibrarian(filters?: {
  * This should be run periodically (e.g., via cron job)
  */
 export async function markOverdueAssignments() {
-  const session = await getSession();
-  if (!session) {
-    return { success: false, error: 'Unauthorized' };
-  }
+  // Require the music-assignment permission, not merely a session. Every
+  // sibling action in this file uses requirePermission(MUSIC_ASSIGN); this one
+  // previously accepted ANY authenticated member, letting them flip assignment
+  // statuses to OVERDUE via a direct server-action call.
+  const session = await requirePermission(MUSIC_ASSIGN);
   
   try {
     const now = new Date();

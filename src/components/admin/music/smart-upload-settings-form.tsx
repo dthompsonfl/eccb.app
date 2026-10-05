@@ -59,8 +59,8 @@ import {
   SmartUploadSettingsSchema,
   type SmartUploadSettings,
   type ProviderValue,
-  type OcrEngineValue,
   type OcrModeValue,
+  normalizeOcrEngineValue,
   providerRequiresEndpoint,
 } from '@/lib/smart-upload/schema';
 
@@ -225,7 +225,10 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
       smart_upload_llm_max_pages: parseNum(settings['smart_upload_llm_max_pages']),
       smart_upload_llm_max_header_batches: parseNum(settings['smart_upload_llm_max_header_batches']),
       smart_upload_second_pass_max_images: parseNum(settings['smart_upload_second_pass_max_images']),
-      smart_upload_ocr_engine: (settings['smart_upload_ocr_engine'] as OcrEngineValue) || '' as OcrEngineValue,
+      // Normalize so a persisted-but-retired engine (e.g. 'vision_api' saved by an
+      // older release) resolves to a selectable value instead of rendering an
+      // empty/invalid select that blocks saving the settings form.
+      smart_upload_ocr_engine: normalizeOcrEngineValue(settings['smart_upload_ocr_engine']),
       smart_upload_ocr_mode: (settings['smart_upload_ocr_mode'] as OcrModeValue) || '' as OcrModeValue,
     },
   });
@@ -1263,7 +1266,6 @@ export function SmartUploadSettingsForm({ settings }: SmartUploadSettingsFormPro
                         <SelectContent>
                           <SelectItem value="tesseract">Tesseract</SelectItem>
                           <SelectItem value="ocrmypdf">ocrmypdf</SelectItem>
-                          <SelectItem value="vision_api">Vision API</SelectItem>
                           <SelectItem value="native">Native</SelectItem>
                         </SelectContent>
                       </Select>

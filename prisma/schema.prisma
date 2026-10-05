@@ -454,7 +454,7 @@ model SmartUploadSession {
   sourceSha256           String?                         @db.Char(64)
   /// JSON array of strategy attempts: [{strategy, confidence, failureReasons, durationMs, timestamp}]
   strategyHistory        String?                         @db.LongText
-  /// OCR engine used: tesseract, ocrmypdf, vision_api, native
+  /// OCR engine used: tesseract, ocrmypdf, native
   ocrEngineUsed          String?
   /// OCR mode used: header, full, both
   ocrModeUsed            String?
@@ -474,6 +474,15 @@ model SmartUploadSession {
   commitError            String?                         @db.Text
   /// Commit lifecycle status for idempotent ingest tracking
   commitStatus           SmartUploadSessionCommitStatus? @default(NOT_STARTED)
+  /// Page count of the ORIGINAL uploaded PDF. Authoritative: written by the
+  /// producing sites (processor, second-pass worker, resplit route) from
+  /// src/lib/services/pdf-source.ts (`getPdfSourceInfo` /
+  /// `getAuthoritativePdfPageCount`). The commit-time page-coverage gate
+  /// compares the produced parts against THIS count, not against the span the
+  /// parts themselves claim, so a truncated tail cannot reach the library.
+  /// Nullable with no default: pre-existing sessions simply read null and the
+  /// gate fails closed (forces human review) instead of guessing.
+  sourcePageCount        Int?
 
   @@index([uploadSessionId])
   @@index([status])

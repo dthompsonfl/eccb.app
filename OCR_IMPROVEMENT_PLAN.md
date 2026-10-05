@@ -87,7 +87,8 @@ This document describes **every file that must be created or updated** in order 
   - `smart_upload_llm_max_pages`: number, default `10`.
   - `smart_upload_llm_max_header_batches`: number, default `2`.
   - `smart_upload_store_raw_ocr_text`: boolean, default `false`.
-  - `smart_upload_ocr_engine`: enum `'tesseract'|'ocrmypdf'|'vision_api'|'native'`, default `'tesseract'`.
+  - `smart_upload_ocr_engine`: enum `'tesseract'|'ocrmypdf'|'native'`, default `'tesseract'`.
+  (`'vision_api'` was retired: it had no implementation and returned empty OCR.)
   - `smart_upload_ocr_rate_limit_rpm`: number, default `6`.
   - `smart_upload_text_probe_pages`: number, default `10`.
 - Update validation helpers where necessary (e.g. `JSON_KEYS` may need new additions).

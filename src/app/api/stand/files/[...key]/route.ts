@@ -12,6 +12,8 @@ import {
   WatermarkError,
 } from '@/lib/music/watermark-delivery';
 import { recordTelemetry } from '@/lib/stand/telemetry';
+import { getStandSettings } from '@/lib/stand/settings';
+import { markScoreResponseCacheable } from '@/lib/stand/offline';
 
 /**
  * Authenticated & scoped stand file proxy.
@@ -199,6 +201,21 @@ export async function GET(
     headers.set('Content-Length', String(deliverySize));
     headers.set('Content-Disposition', 'inline');
     headers.set('Cache-Control', 'private, max-age=86400, immutable');
+
+    // Opt in to offline caching — but only here, at the very end, on the 200 PDF
+    // path, after every authorization check above has passed and after the
+    // watermark has been applied. Every early return (401, 400, 404, the 500 from
+    // a failed watermark, and the S3 redirect above) returns before this line, so
+    // a denied or errored response can never carry the header. The S3 redirect is
+    // handled by returning earlier precisely because caching it would store a
+    // presigned URL, not the score.
+    if (metadata.contentType === 'application/pdf') {
+      markScoreResponseCacheable({
+        headers,
+        enabled: (await getStandSettings()).offlineEnabled,
+        userId: ctx.userId,
+      });
+    }
 
     return new Response(webStream, { status: 200, headers });
   } catch (error) {

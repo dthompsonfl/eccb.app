@@ -21,7 +21,7 @@ const adminMenuItems = [
   { icon: Music, label: 'Library', href: '/admin/music' },
   { icon: Upload, label: 'Uploads', href: '/admin/uploads/review' },
   { icon: Calendar, label: 'Events', href: '/admin/events' },
-  { icon: FileText, label: 'Announcements', href: '/admin/cms' },
+  { icon: FileText, label: 'Announcements', href: '/admin/announcements' },
   { icon: ShieldCheck, label: 'Audit Logs', href: '/admin/audit' },
   { icon: Settings, label: 'Settings', href: '/admin/settings' },
 ];

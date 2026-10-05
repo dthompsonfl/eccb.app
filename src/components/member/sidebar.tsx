@@ -25,6 +25,7 @@ const navigation = [
   { name: 'Home', href: '/member', icon: Home, featureKey: null },
   { name: 'My Music Stand', href: '/member/stand', icon: BookOpen, featureKey: 'musicStand' as const },
   { name: 'Your Music', href: '/member/music', icon: Music, featureKey: null },
+  { name: 'Practice Hub', href: '/member/practice', icon: Music, featureKey: null },
   { name: 'Dates & Times', href: '/member/calendar', icon: Calendar, featureKey: null },
   { name: 'Rehearsals I Came To', href: '/member/attendance', icon: ClipboardCheck, featureKey: null },
   { name: 'Messages', href: '/member/notifications', icon: Bell, featureKey: null },

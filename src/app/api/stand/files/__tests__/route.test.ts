@@ -12,6 +12,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Readable } from 'stream';
+import { OFFLINE_CACHE_HEADER, OFFLINE_USER_HEADER } from '@/lib/stand/offline';
 
 vi.mock('@/lib/rate-limit', () => ({
   applyRateLimit: vi.fn().mockResolvedValue(null),
@@ -44,7 +46,7 @@ vi.mock('@/lib/auth/permissions', () => ({
 }));
 
 vi.mock('@/lib/stand/settings', () => ({
-  getStandSettings: vi.fn().mockResolvedValue({ accessPolicy: 'any_member' }),
+  getStandSettings: vi.fn().mockResolvedValue({ accessPolicy: 'any_member', offlineEnabled: true }),
 }));
 
 vi.mock('@/lib/services/storage', () => ({
@@ -53,6 +55,18 @@ vi.mock('@/lib/services/storage', () => ({
 
 vi.mock('@/lib/stand/telemetry', () => ({
   recordTelemetry: vi.fn(),
+}));
+
+// Watermarking is covered for real in ./watermark.test.ts. Here it would reject
+// the synthetic PDF bytes these tests use, and the header is the subject.
+vi.mock('@/lib/music/watermark-delivery', () => ({
+  applyDeliveryWatermarkStream: vi.fn(async ({ stream }: { stream: NodeJS.ReadableStream }) => ({
+    bytes: new Uint8Array(Buffer.from('%PDF-1.7 body')),
+    size: 15,
+    stream,
+  })),
+  needsWatermark: () => false,
+  WatermarkError: class WatermarkError extends Error {},
 }));
 
 import { GET } from '@/app/api/stand/files/[...key]/route';
@@ -177,5 +191,123 @@ describe('Stand file proxy authorization', () => {
     const res = await GET(request('?pieceId=piece-1'), { params });
     expect(res.status).toBe(404);
     expect(downloadFile).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Offline opt-in header.
+ *
+ * `shouldCacheScoreResponse` in @/lib/stand/offline only stores a score the
+ * server explicitly marked. Until now no route set that header, so the entire
+ * offline-score path was dead code. Marking a response is therefore only safe
+ * under strict conditions: a DENIED response must never carry it, or the next
+ * requester could be served a cached 404 page (or, worse, a cached login page
+ * from a redirect) as if it were a score.
+ */
+describe('offline cache opt-in header', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.musicPiece.findFirst).mockResolvedValue({
+      isArchived: false,
+      deletedAt: null,
+    } as never);
+    vi.mocked(prisma.event.findFirst).mockResolvedValue({ id: 'event-1' } as never);
+  });
+
+  it('never marks a DENIED response cacheable', async () => {
+    asMember([]);
+    vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+      id: 'file-1',
+      pieceId: 'piece-1',
+    } as never);
+    vi.mocked(prisma.musicPart.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'part-1' } as never);
+
+    const res = await GET(request('?pieceId=piece-1'), { params });
+    expect(res.status).toBe(404);
+    expect(res.headers.get(OFFLINE_CACHE_HEADER)).toBeNull();
+    expect(res.headers.get(OFFLINE_USER_HEADER)).toBeNull();
+  });
+
+  it('never marks an unauthenticated response cacheable', async () => {
+    mockAuth.api.getSession.mockResolvedValue(null);
+    const res = await GET(request('?pieceId=piece-1'), { params });
+    expect(res.status).toBe(401);
+    expect(res.headers.get(OFFLINE_CACHE_HEADER)).toBeNull();
+  });
+
+  it('never marks a redirect-to-login cacheable', async () => {
+    asMember([{ partId: null }]);
+    const { downloadFile } = await import('@/lib/services/storage');
+    vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+      id: 'file-1',
+      pieceId: 'piece-1',
+    } as never);
+    // S3 driver: the local-stream branch is skipped entirely, so the route
+    // answers with a 307 to a presigned URL instead of PDF bytes.
+    vi.mocked(downloadFile).mockResolvedValue('https://s3.example.org/presigned.pdf');
+
+    const res = await GET(request('?pieceId=piece-1'), { params });
+    expect(res.status).toBe(307);
+    expect(res.headers.get(OFFLINE_CACHE_HEADER)).toBeNull();
+  });
+
+  it('marks an authorized 200 PDF cacheable and names its owner', async () => {
+    asMember([{ partId: null }]);
+    const { downloadFile } = await import('@/lib/services/storage');
+    vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+      id: 'file-1',
+      pieceId: 'piece-1',
+    } as never);
+    vi.mocked(downloadFile).mockResolvedValue({
+      stream: Readable.from(Buffer.from('%PDF-1.7 body')),
+      metadata: { contentType: 'application/pdf', size: 15 },
+    } as never);
+
+    const res = await GET(request('?pieceId=piece-1'), { params });
+    expect(res.status).toBe(200);
+    expect(res.headers.get(OFFLINE_CACHE_HEADER)).toBe('true');
+    expect(res.headers.get(OFFLINE_USER_HEADER)).toBe('user-1');
+  });
+
+  it('does not mark a non-PDF response cacheable', async () => {
+    asMember([{ partId: null }]);
+    const { downloadFile } = await import('@/lib/services/storage');
+    vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+      id: 'file-1',
+      pieceId: 'piece-1',
+    } as never);
+    vi.mocked(downloadFile).mockResolvedValue({
+      stream: Readable.from(Buffer.from('{}')),
+      metadata: { contentType: 'application/json', size: 2 },
+    } as never);
+
+    const res = await GET(request('?pieceId=piece-1'), { params });
+    expect(res.status).toBe(200);
+    expect(res.headers.get(OFFLINE_CACHE_HEADER)).toBeNull();
+  });
+
+  it('does not mark cacheable when the admin setting disables offline', async () => {
+    const { getStandSettings } = await import('@/lib/stand/settings');
+    vi.mocked(getStandSettings).mockResolvedValue({
+      accessPolicy: 'any_member',
+      offlineEnabled: false,
+    } as never);
+
+    asMember([{ partId: null }]);
+    const { downloadFile } = await import('@/lib/services/storage');
+    vi.mocked(prisma.musicFile.findFirst).mockResolvedValue({
+      id: 'file-1',
+      pieceId: 'piece-1',
+    } as never);
+    vi.mocked(downloadFile).mockResolvedValue({
+      stream: Readable.from(Buffer.from('%PDF-1.7 body')),
+      metadata: { contentType: 'application/pdf', size: 15 },
+    } as never);
+
+    const res = await GET(request('?pieceId=piece-1'), { params });
+    expect(res.status).toBe(200);
+    expect(res.headers.get(OFFLINE_CACHE_HEADER)).toBeNull();
   });
 });

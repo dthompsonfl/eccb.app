@@ -1050,14 +1050,7 @@ export async function processSmartUpload(
         pdfBuffer,
         filename: smartSession.fileName,
         options: {
-          ocrEngine:
-            (llmConfig.ocrEngine as
-              | "pdf_text"
-              | "tesseract"
-              | "ocrmypdf"
-              | "vision_api"
-              | "native"
-              | undefined) ?? "native",
+          ocrEngine: llmConfig.ocrEngine ?? "native",
           ocrMode:
             (llmConfig.ocrMode as "header" | "full" | "both" | undefined) ??
             "both",
@@ -2501,6 +2494,11 @@ if (
         finalConfidence,
         routingDecision,
         parseStatus: "PARSED",
+        // Authoritative page count of the ORIGINAL uploaded PDF, so the
+        // commit-time page-coverage gate can prove the parts tile the real
+        // document instead of only the span they themselves claim. A truncated
+        // tail (parts covering 1-8 of a 20-page score) is caught there.
+        sourcePageCount: totalPages,
         parsedParts: serializeSmartUploadJsonField(parsedParts),
         cuttingInstructions: serializeSmartUploadJsonField(
           extraction.cuttingInstructions ?? normalizedInstructionsOne,

@@ -16,6 +16,7 @@ import {
   X,
   Menu,
   Activity,
+  Server,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ const navigation = [
     children: [
       { name: 'All Events', href: '/admin/events' },
       { name: 'Create Event', href: '/admin/events/new' },
+      { name: 'Attendance', href: '/admin/attendance' },
     ],
   },
   {
@@ -89,6 +91,7 @@ const navigation = [
     ],
   },
   { name: 'Audit Logs', href: '/admin/audit', icon: Activity },
+  { name: 'Monitoring', href: '/admin/monitoring', icon: Server },
 ];
 
 export function AdminSidebar() {

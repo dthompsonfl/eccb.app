@@ -73,16 +73,31 @@ async function loadOcrConfig() {
 }
 
 /**
+ * Resolve whether the local Tesseract path may run for a given engine.
+ *
+ * Both 'tesseract' and 'native' drive Tesseract: 'native' means "use the native
+ * PDF text layer with fallback to tesseract", and the text-layer probe runs
+ * unconditionally before the OCR branch in extractOcrFallbackMetadata — so the
+ * native branch is only reachable when enableTesseractOcr is true.
+ * 'ocrmypdf' is a separate binary pipeline and is deliberately excluded.
+ */
+export function resolveEnableTesseractOcr(ocrEngine: 'tesseract' | 'ocrmypdf' | 'native'): boolean {
+  return ocrEngine === 'tesseract' || ocrEngine === 'native';
+}
+
+/**
  * Build default OCR options from DB config.
  * This is the DB-driven behavior - no runtime env fallbacks for OCR behavior.
+ *
+ * Pure and exported so the engine→OCR-enablement mapping can be tested without
+ * booting a worker; getDefaultOcrOptions() is the only real caller.
  */
-async function getDefaultOcrOptions(): Promise<OcrFallbackOptions> {
-  const cfg = await loadOcrConfig();
-
+export function buildOcrDefaults(
+  cfg: Awaited<ReturnType<typeof loadSmartUploadRuntimeConfig>>
+): OcrFallbackOptions {
   return {
     maxTextProbePages: cfg.textProbePages,
-    // Only tesseract is a local Tesseract OCR engine; ocrmypdf is a separate pipeline
-    enableTesseractOcr: cfg.ocrEngine === 'tesseract',
+    enableTesseractOcr: resolveEnableTesseractOcr(cfg.ocrEngine),
     ocrEngine: cfg.ocrEngine,
     ocrMode: cfg.ocrMode,
     maxOcrPages: cfg.ocrMaxPages ?? 0,
@@ -92,6 +107,28 @@ async function getDefaultOcrOptions(): Promise<OcrFallbackOptions> {
     renderQuality: 85,
     autoAcceptConfidenceThreshold: cfg.ocrConfidenceThreshold,
   };
+}
+
+/**
+ * Merge per-job OCR option overrides over the DB-derived defaults.
+ *
+ * A job may hard-disable OCR (`options.enableTesseractOcr: false`) even when the
+ * DB config would enable it; that operator override always wins.
+ */
+export function mergeOcrJobOptions(
+  defaults: OcrFallbackOptions,
+  overrides: Partial<OcrFallbackOptions> | undefined
+): OcrFallbackOptions {
+  return {
+    ...defaults,
+    ...(overrides || {}),
+    // enforce enableTesseractOcr by DB config if you want a hard kill-switch:
+    enableTesseractOcr: (overrides?.enableTesseractOcr ?? defaults.enableTesseractOcr),
+  };
+}
+
+async function getDefaultOcrOptions(): Promise<OcrFallbackOptions> {
+  return buildOcrDefaults(await loadOcrConfig());
 }
 
 // =============================================================================
@@ -269,12 +306,7 @@ async function processOcrJob(job: Job<OcrProcessJobData>): Promise<void> {
 
   // 3) Run deterministic OCR fallback extraction
   const defaultOptions = await getDefaultOcrOptions();
-  const mergedOptions: OcrFallbackOptions = {
-    ...defaultOptions,
-    ...(job.data.options || {}),
-    // enforce enableTesseractOcr by DB config if you want a hard kill-switch:
-    enableTesseractOcr: (job.data.options?.enableTesseractOcr ?? defaultOptions.enableTesseractOcr),
-  };
+  const mergedOptions = mergeOcrJobOptions(defaultOptions, job.data.options);
 
   const ocrStart = nowMs();
   const ocrMeta = await extractOcrFallbackMetadata({

@@ -181,6 +181,24 @@ describe('wakeLock utility', () => {
       const { isWakeLockActive } = await import('../wakeLock');
       expect(isWakeLockActive()).toBe(false);
     });
+
+    it('does NOT report active when only the best-effort fallback is running', async () => {
+      // Regression guard: the fallback cannot prevent device sleep, so
+      // reporting a guaranteed wake lock here would be a false promise.
+      // Callers must be able to distinguish degraded mode via
+      // isUsingFallbackWakeLock() instead.
+      Object.defineProperty(global, 'navigator', {
+        value: {}, // no native Wake Lock API
+        writable: true,
+      });
+
+      const { acquireWakeLock, isWakeLockActive, isUsingFallbackWakeLock } =
+        await import('../wakeLock');
+      await acquireWakeLock();
+
+      expect(isUsingFallbackWakeLock()).toBe(true);
+      expect(isWakeLockActive()).toBe(false);
+    });
   });
 
   describe('isUsingFallbackWakeLock', () => {

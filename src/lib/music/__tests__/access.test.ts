@@ -332,11 +332,29 @@ describe('stand music access policy', () => {
     });
 
     it('ALLOWs an unassigned member the published event program', async () => {
-      // withinEvent relaxes only for members with no assignment at all.
+      // withinEvent relaxes only for members with no assignment at all — and
+      // only for the piece-level program/score, never an individual part.
       asMemberWithAssignments([]);
+      // The score file is not registered as a MusicPart, so partId resolves null.
+      vi.mocked(prisma.musicPart.findFirst).mockResolvedValue(null);
+      await expect(
+        canReadPieceFile(USER, PIECE, SCORE_KEY, true)
+      ).resolves.toBe(true);
+    });
+
+    it('DENIES an unassigned member another player\'s individual part', async () => {
+      // Regression guard. This previously ALLOWED an unassigned member to
+      // stream any sibling part for any piece on an event they could attend,
+      // because the withinEvent relaxation returned true before the part check.
+      // An event programme is not a licence to read other musicians' parts.
+      asMemberWithAssignments([]);
+      // The key IS registered as a MusicPart — this is the sibling-part case.
+      vi.mocked(prisma.musicPart.findFirst).mockResolvedValue({
+        id: SIBLING_PART,
+      } as never);
       await expect(
         canReadPieceFile(USER, PIECE, MY_PART_KEY, true)
-      ).resolves.toBe(true);
+      ).resolves.toBe(false);
     });
 
     it('DENIES an unassigned member the same file in library mode', async () => {

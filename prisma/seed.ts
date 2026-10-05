@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+// `better-auth/crypto` is the public subpath of the direct `better-auth`
+// dependency. Importing from the transitive `@better-auth/utils` package would
+// rely on npm hoisting and break under pnpm/Yarn PnP.
+import { hashPassword, verifyPassword } from 'better-auth/crypto';
 import { auth } from '@/lib/auth/config';
 import { getDefaultEndpointForProvider } from '@/lib/llm/providers';
 import type { LLMProviderValue } from '@/lib/llm/providers';
@@ -477,6 +481,84 @@ async function main() {
       console.error('❌ Error creating admin user via Auth API:', error);
       throw error;
     }
+  }
+
+  // 6.5. Ensure the credential account password matches SUPER_ADMIN_PASSWORD.
+  //
+  // Better Auth authenticates against `Account.password` (scrypt `salt:key`),
+  // NOT `User.password`. Seeding only `User.password` leaves the user unable to
+  // sign in, which is a silent failure — the account row exists and looks healthy.
+  const adminUser = await prisma.user.findUnique({
+    where: { email: adminEmail },
+    select: { id: true },
+  });
+
+  if (adminUser) {
+    const credentialAccount = await prisma.account.findFirst({
+      where: { userId: adminUser.id, providerId: 'credential' },
+      select: { id: true, password: true },
+    });
+
+    const storedHash = credentialAccount?.password ?? null;
+    const credentialsValid = storedHash
+      ? await verifyPassword({ hash: storedHash, password: adminPassword })
+      : false;
+
+    if (credentialsValid) {
+      console.log(`✅ Verified credential account password for ${adminEmail}`);
+    } else {
+      const reason = storedHash
+        ? 'existing password does not match SUPER_ADMIN_PASSWORD'
+        : 'no credential account found';
+
+      if (process.env.NODE_ENV === 'production') {
+        // Never silently rotate a production root credential from a seed run.
+        // Surface it as a hard failure the operator must resolve deliberately.
+        throw new Error(
+          `SUPER_ADMIN_PASSWORD does not match the stored credential for ${adminEmail} (${reason}). ` +
+          'Refusing to rotate a production root credential automatically. ' +
+          'Use the password-reset flow, or set the new password directly and re-run.',
+        );
+      }
+
+      const rehashed = await hashPassword(adminPassword);
+      if (credentialAccount) {
+        await prisma.account.update({
+          where: { id: credentialAccount.id },
+          data: { password: rehashed },
+        });
+      } else {
+        await prisma.account.create({
+          data: {
+            userId: adminUser.id,
+            accountId: adminUser.id,
+            providerId: 'credential',
+            password: rehashed,
+          },
+        });
+      }
+      console.log(`✅ Reset credential account password for ${adminEmail} (${reason})`);
+    }
+  }
+
+  // 6.6. Print the seeded login credentials.
+  //
+  // Gated to non-production so this can never write a root password into
+  // production CI logs. Set SEED_PRINT_CREDENTIALS=1 to force it on anywhere.
+  const shouldPrintCredentials =
+    process.env.SEED_PRINT_CREDENTIALS === '1' || process.env.NODE_ENV !== 'production';
+
+  if (shouldPrintCredentials) {
+    console.log('');
+    console.log('┌──────────────────────────────────────────────────────────────┐');
+    console.log('│  🔑  SUPER ADMIN LOGIN CREDENTIALS                            │');
+    console.log('├──────────────────────────────────────────────────────────────┤');
+    console.log(`│  URL      http://localhost:3000/login                        │`);
+    console.log(`│  Email    ${adminEmail.padEnd(51)}│`);
+    console.log(`│  Password ${adminPassword.padEnd(51)}│`);
+    console.log('└──────────────────────────────────────────────────────────────┘');
+    console.log('   Development only — do not use these credentials in production.');
+    console.log('');
   }
 
   // 10. Digital Music Stand E2E fixture (idempotent)

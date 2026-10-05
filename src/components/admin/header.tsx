@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import Link from 'next/link';
 import { signOut } from '@/lib/auth/client';
+import { purgeOfflineScores } from '@/components/providers/service-worker-provider';
+import { performSignOut } from '@/lib/auth/sign-out';
 import { useRouter } from 'next/navigation';
 
 export function AdminHeader() {
@@ -21,8 +23,14 @@ export function AdminHeader() {
   const router = useRouter();
 
   const handleSignOut = async () => {
-    await signOut();
-    router.push('/');
+    // Purge per-user offline state before ending the session — an admin signing
+    // out on a shared rehearsal tablet must not leave their cached scores behind
+    // for the next person. Shared with the member header.
+    await performSignOut({
+      purgeOfflineScores,
+      signOut,
+      redirect: () => router.push('/'),
+    });
   };
 
   return (

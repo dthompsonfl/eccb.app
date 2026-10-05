@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -12,7 +12,10 @@ import {
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useStandStore } from '@/store/standStore';
+import { useOfflineAnnotations } from '@/lib/stand/use-offline-annotations';
+import type { QueuedAnnotation } from '@/lib/stand/offline';
 import { StandCanvas } from './StandCanvas';
+import { OfflineStatus } from './OfflineStatus';
 import { Toolbar } from './Toolbar';
 import { GestureHandler } from './GestureHandler';
 import { KeyboardHandler } from './KeyboardHandler';
@@ -80,7 +83,51 @@ export function LibraryStandViewer({ piece, userId, missingStorageKeys = [] }: L
     nextPage,
     prevPage,
     setCurrentPage,
+    setOfflineAnnotationQueue,
   } = useStandStore();
+
+  // ── Offline annotation queue ────────────────────────────────────────────
+  //
+  // The library route (practice-room sessions) previously never registered a
+  // queue, so standStore's offline branch was unreachable here and an offline
+  // stroke fell through to a fetch that fails against a dead socket — the
+  // musician's mark was silently lost. This mirrors the wiring in StandViewer
+  // (the event route) so both surfaces behave identically.
+  const [offlineEnabled, setOfflineEnabled] = useState(false);
+  const [offlineMusicId, setOfflineMusicId] = useState<string | null>(null);
+
+  const offlineAnnotations = useOfflineAnnotations({
+    musicId: offlineMusicId,
+    userId,
+    enabled: offlineEnabled,
+    send: useCallback(async (items: QueuedAnnotation[]): Promise<string[]> => {
+      const accepted: string[] = [];
+      for (const item of items) {
+        try {
+          const res = await fetch('/api/stand/annotations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              musicId: item.musicId,
+              page: item.page,
+              layer: item.layer,
+              strokeData: item.strokeData,
+              sectionId: item.sectionId ?? undefined,
+              clientId: item.id,
+            }),
+          });
+          if (res.ok) {
+            const body = (await res.json().catch(() => null)) as { id?: string } | null;
+            accepted.push(body?.id ?? item.id);
+          }
+        } catch {
+          // Leave this item queued; a later flush retries it. Replay is keyed on
+          // the client id, so a retry cannot duplicate the stroke.
+        }
+      }
+      return accepted;
+    }, []),
+  });
 
   // Build the list of available views (must come before the selectedPartId state
   // so the initial value calculation can reference partOptions)
@@ -144,6 +191,40 @@ export function LibraryStandViewer({ piece, userId, missingStorageKeys = [] }: L
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPart?.storageKey, piece.id]);
 
+  // Gate offline queueing on the admin's `stand.offlineEnabled` setting, matching
+  // StandViewer. Fetched best-effort: if it fails, offline queueing stays off.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/stand/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg: { offlineEnabled?: boolean } | null) => {
+        if (!cancelled && cfg) setOfflineEnabled(cfg.offlineEnabled === true);
+      })
+      .catch(() => {
+        /* best-effort: leave offline queueing disabled */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Scope the queue to the piece currently open.
+  useEffect(() => {
+    setOfflineMusicId(piece?.id ?? null);
+  }, [piece?.id]);
+
+  // Register the queue with the store so standStore routes offline strokes into
+  // IndexedDB instead of firing a request that will fail. Always deregister on
+  // unmount so a stale queue cannot outlive this viewer.
+  useEffect(() => {
+    if (!offlineEnabled) {
+      setOfflineAnnotationQueue(null);
+      return;
+    }
+    setOfflineAnnotationQueue({ enqueue: offlineAnnotations.enqueue });
+    return () => setOfflineAnnotationQueue(null);
+  }, [offlineEnabled, offlineAnnotations.enqueue, setOfflineAnnotationQueue]);
+
   // Set user context and load annotations once on mount.
   useEffect(() => {
     setUserContext({
@@ -181,6 +262,18 @@ export function LibraryStandViewer({ piece, userId, missingStorageKeys = [] }: L
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [piece.id, userId]);
 
+  // Tell the musician whether their marks are saved, queued, or pending. Without
+  // this an offline stroke sits in IndexedDB with no visible sign, which is the
+  // other half of the wiring gap: the queue existed but the musician could not
+  // see it.
+  const syncStatus = offlineEnabled ? (
+    <OfflineStatus
+      state={offlineAnnotations.syncState}
+      pendingCount={offlineAnnotations.queue.length}
+      onRetry={offlineAnnotations.flush}
+    />
+  ) : null;
+
   return (
     <div
       className={cn(
@@ -188,6 +281,7 @@ export function LibraryStandViewer({ piece, userId, missingStorageKeys = [] }: L
         nightMode && 'bg-zinc-900 text-zinc-100'
       )}
     >
+      {syncStatus}
       {/* Controls bar – hidden in gig mode or fullscreen-without-controls */}
       <div
         className={cn(

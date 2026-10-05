@@ -1,5 +1,7 @@
 'use client';
 
+import { logger } from '@/lib/logger';
+
 // Type definitions for Wake Lock API
 interface WakeLockSentinel {
   released: boolean;
@@ -32,21 +34,29 @@ let fallbackIntervalId: NodeJS.Timeout | null = null;
 let wakeLockFallbackActive = false;
 
 /**
- * Fallback mechanism using setInterval to keep screen awake
- * This plays a short, silent video or uses other techniques when Wake Lock API is unavailable
+ * Fallback mechanism used when the native Wake Lock API is unavailable.
+ *
+ * IMPORTANT: there is NO reliable way to keep a screen awake from a web page
+ * without the native API. A no-op requestAnimationFrame does NOT prevent device
+ * sleep — it only keeps the main thread scheduled. This fallback therefore
+ * cannot honour the guarantee its name implies, so it is explicitly best-effort:
+ * it exists so the rehearsal UI can TELL the user their screen may sleep and
+ * suggest Fullscreen (which demonstrably suppresses idle-sleep on iOS/iPadOS),
+ * rather than silently implying the display is being held awake.
+ *
+ * The browser exposes no "screen kept awake" signal, so the honest contract is
+ * to report best-effort status distinctly from a real sentinel — see
+ * isUsingFallbackWakeLock().
  */
 function startFallbackWakeLock(): void {
   if (fallbackIntervalId !== null) {
     return; // Already running
   }
 
-  // Use a combination of techniques for fallback:
-  // 1. Periodic visibility change simulation
-  // 2. Request animation frame to keep the main thread active
   wakeLockFallbackActive = true;
-  
-  // Create a no-op wake lock simulation
-  // This isn't as effective as the real Wake Lock API but helps in some browsers
+
+  // Periodic best-effort keep-alive. This does NOT guarantee the screen stays
+  // on; it only nudges some browsers to keep rendering while the tab is visible.
   fallbackIntervalId = setInterval(() => {
     if (!wakeLockFallbackActive) {
       if (fallbackIntervalId) {
@@ -55,15 +65,15 @@ function startFallbackWakeLock(): void {
       }
       return;
     }
-    
-    // Use requestAnimationFrame to keep the page active
-    // This helps prevent some browsers from sleeping
     requestAnimationFrame(() => {
-      // No-op, just keeping the main thread active
+      // No-op: scheduling a frame cannot prevent device sleep.
     });
   }, 15000); // Every 15 seconds
 
-  console.log('[WakeLock] Fallback wake lock started (Wake Lock API not available)');
+  logger.warn(
+    'Wake Lock API unavailable — screen-wake is BEST-EFFORT ONLY. ' +
+      'Request Fullscreen to reduce the chance of the display sleeping.',
+  );
 }
 
 /**
@@ -169,11 +179,18 @@ export async function releaseWakeLock(): Promise<boolean> {
 }
 
 /**
- * Checks if a wake lock is currently active.
- * @returns True if a wake lock is held (real or fallback), false otherwise
+ * Checks whether a NATIVE wake lock sentinel is held.
+ *
+ * This deliberately reports ONLY the real sentinel. The best-effort fallback
+ * cannot prevent device sleep, so counting it here would hand callers a false
+ * guarantee ("screen will stay awake") that the platform never made. Use
+ * isUsingFallbackWakeLock() to detect degraded mode, and show the user an
+ * explicit warning.
+ *
+ * @returns True only when the native Wake Lock API is holding the screen awake
  */
 export function isWakeLockActive(): boolean {
-  return (currentWakeLock !== null && !currentWakeLock.released) || wakeLockFallbackActive;
+  return currentWakeLock !== null && !currentWakeLock.released;
 }
 
 /**

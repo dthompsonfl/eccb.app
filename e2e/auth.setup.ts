@@ -7,6 +7,7 @@ setup('authenticate seeded administrator', async ({ page }) => {
   const email = process.env.E2E_ADMIN_EMAIL || process.env.SUPER_ADMIN_EMAIL;
   const password = process.env.E2E_ADMIN_PASSWORD || process.env.SUPER_ADMIN_PASSWORD;
 
+  // Environment-dependent: skips only when no credentials are configured.
   setup.skip(!email || !password, 'Set E2E_ADMIN_EMAIL/E2E_ADMIN_PASSWORD or SUPER_ADMIN_EMAIL/SUPER_ADMIN_PASSWORD to run authenticated E2E tests.');
 
   await page.goto('/login', { waitUntil: 'domcontentloaded' });

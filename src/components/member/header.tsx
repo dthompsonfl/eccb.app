@@ -1,6 +1,7 @@
 'use client';
 
 import { useTheme } from 'next-themes';
+import { useEffect } from 'react';
 import { Bell, Moon, Sun, LogOut, User, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,6 +14,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import Link from 'next/link';
 import { signOut } from '@/lib/auth/client';
+import {
+  purgeOfflineScores,
+  setServiceWorkerUser,
+} from '@/components/providers/service-worker-provider';
+import { performSignOut } from '@/lib/auth/sign-out';
+import { purgeOfflineAnnotationQueue } from '@/lib/stand/use-offline-annotations';
 import { useRouter } from 'next/navigation';
 import { HelpControl } from '@/components/accessibility/help-control';
 import { TextSizeControl } from '@/components/accessibility/text-size-control';
@@ -27,19 +34,40 @@ interface MemberHeaderProps {
       lastName: string;
     } | null;
   } | null;
+  /** Session user id, used to namespace per-user offline caches. */
+  userId?: string | null;
 }
 
-export function MemberHeader({ user }: MemberHeaderProps) {
+export function MemberHeader({ user, userId = null }: MemberHeaderProps) {
   const { theme, setTheme } = useTheme();
   const router = useRouter();
+
+  // Tell the service worker which user is signed in. Offline score caches are
+  // namespaced per user id so one musician's music is never shown to another on
+  // a shared tablet. This had NO call sites, so the worker ran with a null user
+  // and the namespacing it performs could never engage.
+  useEffect(() => {
+    setServiceWorkerUser(userId);
+  }, [userId]);
 
   const memberName = user?.member
     ? `${user.member.firstName} ${user.member.lastName}`
     : user?.name || 'Member';
 
   const handleSignOut = async () => {
-    await signOut();
-    router.push('/');
+    await performSignOut({
+      // The departing user's id. The offline annotation queue is IndexedDB
+      // namespaced by user, so it MUST be purged at sign-out: on a shared
+      // rehearsal tablet the next musician to sign in would otherwise load and
+      // replay the previous musician's queued strokes under their own session.
+      userId,
+      purgeOfflineScores,
+      purgeUserData: (id) => {
+        void purgeOfflineAnnotationQueue(id);
+      },
+      signOut,
+      redirect: () => router.push('/'),
+    });
   };
 
   return (

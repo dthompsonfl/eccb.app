@@ -1,0 +1,17 @@
+-- Migration: Add SmartUploadSession.sourcePageCount — authoritative page count of the original PDF
+-- Created: 2026-10-04
+-- Purpose: Persist the real page count of the uploaded score (computed by
+--   src/lib/services/pdf-source.ts) so the commit-time page-coverage gate can
+--   compare the produced parts against the REAL document length instead of the
+--   span the parts themselves claim. Without it a truncated tail (parts cover
+--   pages 1-8 of a 20-page score) passed the gate silently.
+--
+-- NULLABLE WITH NO DEFAULT, deliberately:
+--   * no backfill, so no existing SmartUploadSession row is rewritten;
+--   * on MariaDB/InnoDB an ADD COLUMN of a NULL column is an INSTANT/INPLACE
+--     metadata-only operation — no table rewrite and no exclusive lock window;
+--   * a NOT NULL column would need a default + backfill to satisfy existing
+--     rows, which is exactly the rewrite we are avoiding;
+--   * sessions already in flight read null, and the commit gate fails closed
+--     for them (forces human review) rather than trusting the claimed span.
+ALTER TABLE `SmartUploadSession` ADD COLUMN `sourcePageCount` INT NULL;

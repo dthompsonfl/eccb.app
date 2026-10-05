@@ -1269,7 +1269,7 @@ model SmartUploadSession {
   strategyHistory    Json?
   /// Total LLM calls consumed by this session (persisted so retries don't reset the budget).
   llmCallCount       Int              @default(0)
-  /// OCR engine used: tesseract, ocrmypdf, vision_api, native
+  /// OCR engine used: tesseract, ocrmypdf, native
   ocrEngineUsed     String?
   /// OCR mode used: header, full, both
   ocrModeUsed       String?

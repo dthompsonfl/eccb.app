@@ -74,8 +74,13 @@ export default defineConfig({
     // stand specs do not also run unauthenticated.
     {
       name: 'chromium',
-      use: { 
+      use: {
         ...devices['Desktop Chrome'],
+        // Required so the documented PLAYWRIGHT_CHROME_EXE override actually
+        // applies here. Without it this project silently ignored the override
+        // and failed to launch on hosts where `playwright install` is unsupported
+        // (e.g. Ubuntu 26.04), while the `setup` project worked.
+        ...chromeLaunch,
       },
       testIgnore: [
         /admin\/.*\.spec\.ts/,

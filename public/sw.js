@@ -31,6 +31,9 @@ var CACHE_PREFIX = 'eccb-stand';
 var OFFLINE_CACHE_HEADER = 'x-eccb-offline-cacheable';
 var OFFLINE_USER_HEADER = 'x-eccb-cache-user';
 
+/** Shared cache bucket for signed-out / pre-SET_USER state. */
+var ANON_USER = 'anon';
+
 /** Minimal shell so the app can boot offline. */
 var APP_SHELL = ['/', '/offline', '/manifest.json'];
 
@@ -49,10 +52,13 @@ self.addEventListener('message', function (event) {
 
   if (data.type === 'SET_USER') {
     // Switching user MUST purge the previous user's scores, or the next
-    // musician could read them from cache while offline.
+    // musician could read them from cache while offline. The anon bucket goes
+    // too: it was populated by an install-time fetch carrying the previous
+    // session's cookies.
     var nextId = typeof data.userId === 'string' && data.userId ? data.userId : null;
-    if (currentUserId && currentUserId !== nextId) {
-      purgeUserCaches(currentUserId);
+    if (currentUserId) {
+      if (currentUserId !== nextId) purgeUserCaches(currentUserId);
+      purgeAnonCaches();
     }
     currentUserId = nextId;
     return;
@@ -61,6 +67,7 @@ self.addEventListener('message', function (event) {
   if (data.type === 'LOGOUT') {
     // Copyrighted music must not survive the session on a shared device.
     if (currentUserId) purgeUserCaches(currentUserId);
+    purgeAnonCaches();
     currentUserId = null;
     return;
   }
@@ -193,16 +200,34 @@ function staleWhileRevalidate(request) {
 // Cache helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * The ONE implementation of cache naming in this file.
+ *
+ * The user id is the isolation boundary, so every kind is namespaced — including
+ * app-shell, which used to be written as the fixed `eccb-stand-v1-app-shell`
+ * while `matchForUser` read it and `purgeUserCaches` deleted it per user. That
+ * mismatch meant the shell was never served and never purged, so a shell cached
+ * while a member was signed in survived logout; and because a cached
+ * `/member/...` navigation embeds that member's name, it is a cross-user leak
+ * the moment anything makes app-shell caching live.
+ *
+ * This mirrors `appShellCacheName` / `staticAssetCacheName` / `scoreCacheName` in
+ * src/lib/stand/sw-cache-names.ts, which the worker cannot import. The parity is
+ * enforced, not hoped for: __tests__/sw-cache-names.test.ts executes this file
+ * against a fake Cache API and asserts the two agree.
+ */
 function cacheNameForUser(kind, userId) {
-  return CACHE_PREFIX + '-' + CACHE_VERSION + '-' + kind + '-' + userId;
+  var bucket =
+    typeof userId === 'string' && userId.trim() !== '' ? userId.trim() : ANON_USER;
+  return CACHE_PREFIX + '-' + CACHE_VERSION + '-' + kind + '-' + bucket;
 }
 
 function appShellCache() {
-  return CACHE_PREFIX + '-' + CACHE_VERSION + '-app-shell';
+  return cacheNameForUser('app-shell', currentUserId);
 }
 
 function staticAssetCache() {
-  return CACHE_PREFIX + '-' + CACHE_VERSION + '-static-asset-' + (currentUserId || 'anon');
+  return cacheNameForUser('static-asset', currentUserId);
 }
 
 function purgeUserCaches(userId) {
@@ -210,6 +235,23 @@ function purgeUserCaches(userId) {
   return Promise.all(
     ['app-shell', 'static-asset', 'score'].map(function (kind) {
       return caches.delete(cacheNameForUser(kind, userId));
+    }),
+  );
+}
+
+/**
+ * Drop the shared `anon` bucket.
+ *
+ * `install` pre-caches `/`, `/offline` and `/manifest.json` into the anon bucket
+ * because no user id is known yet, and that install-time fetch carries the
+ * browser's cookies — so the "anonymous" shell can actually contain the signed-in
+ * member's page. On a shared tablet the next musician would otherwise boot
+ * offline into the previous one's shell. Logout and user-switch both purge it.
+ */
+function purgeAnonCaches() {
+  return Promise.all(
+    ['app-shell', 'static-asset', 'score'].map(function (kind) {
+      return caches.delete(cacheNameForUser(kind, ANON_USER));
     }),
   );
 }

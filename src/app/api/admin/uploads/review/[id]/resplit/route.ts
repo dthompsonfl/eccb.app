@@ -264,6 +264,10 @@ params }: { params: Promise<{ id: string }> }
       where: { uploadSessionId: id },
       data: {
         cuttingInstructions: serializeSmartUploadJsonField(validatedData.cuttingInstructions),
+        // Authoritative page count of the ORIGINAL score. Persisted so the
+        // commit-time coverage gate proves these re-split parts tile the real
+        // document rather than only the span they claim.
+        sourcePageCount: totalPages,
         parsedParts: serializeSmartUploadJsonField(parsedParts),
         tempFiles: serializeSmartUploadJsonField(tempFiles),
         updatedAt: new Date(),
