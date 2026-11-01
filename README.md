@@ -1,6 +1,15 @@
 # Emerald Coast Community Band Platform
 
-A comprehensive web platform for the Emerald Coast Community Band, built with Next.js 16, React 19, and modern web technologies.
+**Development-stage web application** for a community music organization, combining public information, member services and administrative workflows in a Next.js/React codebase.
+
+## The operating problem and public evidence
+
+A community music organization has to coordinate members, events, documents and access to shared materials. This repository explores how those processes can work together in one application rather than across disconnected spreadsheets and messages.
+
+- **What the source demonstrates:** [role-aware authentication](src/lib/auth/config.ts), [background job processing](src/lib/jobs/queue.ts) and [structured Prisma data models](prisma/schema.prisma).
+- **Contribution scope:** My work has included requirements, workflow direction and project review, with AI-assisted implementation. I do not claim sole authorship of every module.
+- **Status:** Public development code with setup instructions. End-to-end deployment, active user numbers, permission correctness and external production outcomes have **not** been independently verified in this portfolio review.
+- **To inspect or run:** Continue with the prerequisites and local setup below, and the [local setup guide](LOCAL_SETUP.md). Runtime testing requires suitable dependencies and environment secrets.
 
 ## Overview
 
@@ -48,7 +57,7 @@ This platform provides:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/eccb.app.git
+git clone https://github.com/dthompsonfl/eccb.app.git
 cd eccb.app
 
 # Install dependencies
