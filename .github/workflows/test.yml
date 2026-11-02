@@ -75,6 +75,7 @@ jobs:
 
     env:
       DATABASE_URL: mysql://root:root@127.0.0.1:3306/eccb_test
+      ERASURE_TEST_DATABASE_URL: mysql://root:root@127.0.0.1:3306/eccb_test
       REDIS_URL: redis://localhost:6379
       NODE_ENV: test
       AUTH_SECRET: test-secret-key-for-testing-min-32-chars
@@ -135,7 +136,7 @@ jobs:
         run: npm ci
 
       - name: Run link integrity check
-        run: tsx scripts/check-routes.ts
+        run: npm run check-routes
 
   # ===========================================================================
   # Build
