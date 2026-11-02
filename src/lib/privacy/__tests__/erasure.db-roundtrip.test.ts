@@ -39,12 +39,18 @@ import { PrismaMariaDb } from '@prisma/adapter-mariadb';
  * below would "pass" without touching a database — the exact false-green this
  * file exists to rule out.
  *
- * Instead we read the developer's real DATABASE_URL out of .env and build a
- * client ourselves, then hand it to the module under test by mocking
+ * Instead we read ERASURE_TEST_DATABASE_URL (set by CI), or the developer's
+ * real DATABASE_URL out of .env, and build a client ourselves, then hand it
+ * to the module under test by mocking
  * `@/lib/db` with it. If the database cannot be reached the suite FAILS rather
  * than skipping; see the reachability assertion below.
  */
 function readRealDatabaseUrl(): string | undefined {
+  // The shared Vitest setup replaces DATABASE_URL with a mocked Postgres URL.
+  // Only this dedicated integration-test value may bypass the local .env file.
+  // CI supplies a real MariaDB service URL; no simulated database is accepted.
+  const ciUrl = process.env.ERASURE_TEST_DATABASE_URL?.trim();
+  if (ciUrl) return ciUrl;
   try {
     const contents = readFileSync('.env', 'utf8');
     const match = /^DATABASE_URL\s*=\s*["']?([^"'\n]+)["']?/m.exec(contents);
@@ -84,7 +90,7 @@ vi.mock('@/lib/db', () => {
   const client = buildRealClient();
   if (!client) {
     throw new Error(
-      '[privacy db round-trip] could not build a real Prisma client — no usable DATABASE_URL in .env',
+      '[privacy db round-trip] could not build a real Prisma client — no usable ERASURE_TEST_DATABASE_URL or DATABASE_URL in .env',
     );
   }
   (globalThis as { __privacyRealPrisma?: PrismaClient }).__privacyRealPrisma = client;
